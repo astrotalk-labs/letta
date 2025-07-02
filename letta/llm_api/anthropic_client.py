@@ -56,6 +56,7 @@ class AnthropicClient(LLMClientBase):
     async def request_async(self, request_data: dict, llm_config: LLMConfig) -> dict:
         client = await self._get_anthropic_client_async(llm_config, async_client=True)
         response = await client.beta.messages.create(**request_data, betas=["tools-2024-04-04"])
+        logger.info("This is the usage response from calude %s", response.usage)
         return response.model_dump()
 
     @trace_method
@@ -243,7 +244,9 @@ class AnthropicClient(LLMClientBase):
         # Move 'system' to the top level
         if messages[0].role != "system":
             raise RuntimeError(f"First message is not a system message, instead has role {messages[0].role}")
-        data["system"] = messages[0].content if isinstance(messages[0].content, str) else messages[0].content[0].text
+        system_content = messages[0].content if isinstance(messages[0].content, str) else messages[0].content[0].text
+        static_part_1, dynamic_part_1, static_part_2, dynamic_part_2 = self._split_system_message_for_caching(system_content)
+        data["system"] = self._add_cache_control_to_system_message(static_part_1, dynamic_part_1, static_part_2, dynamic_part_2)
         data["messages"] = [
             m.to_anthropic_dict(
                 inner_thoughts_xml_tag=inner_thoughts_xml_tag,
@@ -270,6 +273,79 @@ class AnthropicClient(LLMClientBase):
             )
 
         return data
+
+    def _split_system_message_for_caching(self, system_content: str) -> tuple:
+
+
+
+        persona_end = system_content.find("</persona>")
+        memory_blocks_end = system_content.find("</memory_blocks>")
+        memory_metadata_start = system_content.find("<memory_metadata>")
+
+        if persona_end != -1 and memory_blocks_end != -1:
+            # Include closing tags in appropriate sections
+            persona_end += len("</persona>")
+            memory_blocks_end += len("</memory_blocks>")
+
+            # Split into 4 parts
+            static_part_1 = system_content[:persona_end].strip()        # Base + persona
+            dynamic_part_1 = system_content[persona_end:memory_blocks_end].strip()  # human + conversation
+
+            if memory_metadata_start != -1 and memory_metadata_start > memory_blocks_end:
+                # Split the remaining content at memory_metadata
+                static_part_2 = system_content[memory_blocks_end:memory_metadata_start].strip()  # tool_usage + files
+                dynamic_part_2 = system_content[memory_metadata_start:].strip()  # memory_metadata
+            else:
+                # No memory_metadata found after memory_blocks
+                static_part_2 = system_content[memory_blocks_end:].strip()  # tool_usage + files
+                dynamic_part_2 = ""
+
+            return static_part_1, dynamic_part_1, static_part_2, dynamic_part_2
+
+        # Fallback - use your original 2-part split
+        metadata_start = system_content.find("<memory_metadata>")
+        if metadata_start != -1:
+            static_part = system_content[:metadata_start].strip()
+            dynamic_part = system_content[metadata_start:].strip()
+            return static_part, dynamic_part, "", ""
+
+        return system_content, "", "", ""
+
+    def _add_cache_control_to_system_message(self, static_part_1, dynamic_part_1, static_part_2, dynamic_part_2):
+        """Add cache control to 4-part system message structure"""
+        system_parts = []
+
+        # Add first static part with cache control (base instructions + persona)
+        if static_part_1:
+            system_parts.append({
+                "type": "text",
+                "text": static_part_1,
+                "cache_control": {"type": "ephemeral"}
+            })
+
+        # Add first dynamic part without cache control (human + conversation_summary)
+        if dynamic_part_1:
+            system_parts.append({
+                "type": "text",
+                "text": dynamic_part_1
+            })
+
+        # Add second static part with cache control (tool_usage_rules + files)
+        if static_part_2:
+            system_parts.append({
+                "type": "text",
+                "text": static_part_2,
+                "cache_control": {"type": "ephemeral"}
+            })
+
+        # Add second dynamic part without cache control (memory_metadata)
+        if dynamic_part_2:
+            system_parts.append({
+                "type": "text",
+                "text": dynamic_part_2
+            })
+
+        return system_parts
 
     async def count_tokens(self, messages: List[dict] = None, model: str = None, tools: List[OpenAITool] = None) -> int:
         logging.getLogger("httpx").setLevel(logging.WARNING)
