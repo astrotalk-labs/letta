@@ -169,7 +169,7 @@ class ProviderManager:
             providers = await ProviderModel.list_async(
                 db_session=session,
                 after=after,
-                limit=limit,
+                limit=l imit,
                 actor=actor,
                 check_is_deleted=True,
                 **filter_kwargs,

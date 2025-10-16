@@ -9,9 +9,45 @@ from letta.settings import model_settings
 def has_valid_aws_credentials() -> bool:
     """
     Check if AWS credentials are properly configured.
+    Checks both environment variables AND model_settings.
+    Supports multiple naming conventions for compatibility.
     """
-    valid_aws_credentials = os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY") and os.getenv("AWS_DEFAULT_REGION")
-    return valid_aws_credentials
+    # Check environment variables (support both naming conventions)
+    env_aws_access_key = os.getenv("AWS_ACCESS_KEY_ID") or os.getenv("AWS_ACCESS_KEY")
+    env_aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY") or os.getenv("AWS_SECRET_KEY")
+    env_aws_region = os.getenv("AWS_DEFAULT_REGION") or os.getenv("AWS_REGION")
+    
+    has_env_credentials = bool(env_aws_access_key and env_aws_secret_key and env_aws_region)
+    
+    # Check model_settings as fallback
+    settings_aws_access_key = None
+    settings_aws_secret_key = None
+    settings_aws_region = None
+    
+    try:
+        # Try different possible field names
+        settings_aws_access_key = (
+            getattr(model_settings, 'aws_access_key_id', None) or 
+            getattr(model_settings, 'aws_access_key', None)
+        )
+        settings_aws_secret_key = (
+            getattr(model_settings, 'aws_secret_access_key', None) or
+            getattr(model_settings, 'aws_secret_key', None)
+        )
+        settings_aws_region = (
+            getattr(model_settings, 'aws_default_region', None) or
+            getattr(model_settings, 'aws_region', None)
+        )
+    except Exception:
+        pass
+    
+    has_settings_credentials = bool(
+        settings_aws_access_key and 
+        settings_aws_secret_key and 
+        settings_aws_region
+    )
+    
+    return has_env_credentials or has_settings_credentials
 
 
 def get_bedrock_client(
@@ -20,15 +56,33 @@ def get_bedrock_client(
     default_region: Optional[str] = None,
 ):
     """
-    Get a Bedrock client
+    Get a Bedrock client.
+    Falls back to model_settings if parameters not provided.
     """
     import boto3
 
+    # Use provided credentials or fall back to model_settings or environment
+    access_key = (
+        access_key_id or 
+        getattr(model_settings, 'aws_access_key_id', None) or 
+        getattr(model_settings, 'aws_access_key', None)
+    )
+    secret_key = (
+        secret_key or 
+        getattr(model_settings, 'aws_secret_access_key', None) or 
+        getattr(model_settings, 'aws_secret_key', None)
+    )
+    region = (
+        default_region or 
+        getattr(model_settings, 'aws_default_region', None) or 
+        getattr(model_settings, 'aws_region', None)
+    )
+    
     sts_client = boto3.client(
         "sts",
-        aws_access_key_id=access_key_id or model_settings.aws_access_key_id,
-        aws_secret_access_key=secret_key or model_settings.aws_secret_access_key,
-        region_name=default_region or model_settings.aws_default_region,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        region_name=region,
     )
     credentials = sts_client.get_session_token()["Credentials"]
 
@@ -36,7 +90,7 @@ def get_bedrock_client(
         aws_access_key=credentials["AccessKeyId"],
         aws_secret_key=credentials["SecretAccessKey"],
         aws_session_token=credentials["SessionToken"],
-        aws_region=default_region or model_settings.aws_default_region,
+        aws_region=region,
     )
     return bedrock
 
