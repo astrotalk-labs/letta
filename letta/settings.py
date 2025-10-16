@@ -94,11 +94,33 @@ class ModelSettings(BaseSettings):
     # groq
     groq_api_key: Optional[str] = None
 
-    # Bedrock
+    # Bedrock - Support multiple environment variable names
     aws_access_key_id: Optional[str] = None
+    aws_access_key: Optional[str] = None  # Alternate name
+    
     aws_secret_access_key: Optional[str] = None
+    aws_secret_key: Optional[str] = None  # Alternate name
+    
     aws_default_region: Optional[str] = None
+    aws_region: Optional[str] = None  # Alternate name
+    
     bedrock_anthropic_version: Optional[str] = "bedrock-2023-05-31"
+    
+    # Helper properties to get credentials from either field name
+    @property
+    def bedrock_access_key(self) -> Optional[str]:
+        """Get AWS access key from either field name"""
+        return self.aws_access_key_id or self.aws_access_key
+    
+    @property
+    def bedrock_secret_key(self) -> Optional[str]:
+        """Get AWS secret key from either field name"""
+        return self.aws_secret_access_key or self.aws_secret_key
+    
+    @property
+    def bedrock_region(self) -> Optional[str]:
+        """Get AWS region from either field name"""
+        return self.aws_default_region or self.aws_region
 
     # anthropic
     anthropic_api_key: Optional[str] = None
