@@ -446,6 +446,11 @@ def create(
         if llm_config.enable_reasoner:
             llm_config.put_inner_thoughts_in_kwargs = False
 
+        # ✅ CRITICAL: Initialize Vertex client
+        from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
+        vertex_client = AnthropicVertexClient()
+        anthropic_client = vertex_client._get_client()
+
         # Force tool calling
         tool_call = None
         if functions is None:
@@ -488,6 +493,7 @@ def create(
                 provider_category=llm_config.provider_category,
                 name=name,
                 user_id=user_id,
+                anthropic_client=anthropic_client,  # ✅ CRITICAL: Pass Vertex client
             )
         else:
             # Client did not request token streaming
@@ -499,6 +505,7 @@ def create(
                 provider_name=llm_config.provider_name,
                 provider_category=llm_config.provider_category,
                 user_id=user_id,
+                anthropic_client=anthropic_client,  # ✅ CRITICAL: Pass Vertex client
             )
 
         if llm_config.put_inner_thoughts_in_kwargs:
@@ -542,6 +549,7 @@ def create(
     #             # max_tokens=1024,  # TODO make dynamic
     #         ),
     #     )
+
     elif llm_config.model_endpoint_type == "groq":
         if stream:
             raise NotImplementedError(f"Streaming not yet implemented for Groq.")
