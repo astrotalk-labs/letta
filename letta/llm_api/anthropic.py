@@ -6,7 +6,7 @@ import warnings
 from typing import Any, Generator, List, Optional, Union
 
 import anthropic
-from anthropic import PermissionDeniedError
+from anthropic import AnthropicVertex, PermissionDeniedError
 from anthropic.types.beta import (
     BetaRawContentBlockDeltaEvent,
     BetaRawContentBlockStartEvent,
@@ -845,10 +845,19 @@ def anthropic_chat_completions_request(
         max_reasoning_tokens=max_reasoning_tokens,
     )
     log_event(name="llm_request_sent", attributes=data)
-    response = anthropic_client.beta.messages.create(
-        **data,
-        betas=betas,
-    )
+
+    # Check if using Vertex AI (doesn't support beta features)
+    is_vertex = isinstance(anthropic_client, AnthropicVertex)
+
+    if is_vertex:
+        # Vertex AI doesn't support beta features like prompt caching
+        response = anthropic_client.messages.create(**data)
+    else:
+        # Direct Anthropic API supports beta features
+        response = anthropic_client.beta.messages.create(
+            **data,
+            betas=betas,
+        )
     log_event(name="llm_response_received", attributes={"response": response.json()})
     return convert_anthropic_response_to_chatcompletion(response=response, inner_thoughts_xml_tag=inner_thoughts_xml_tag)
 
@@ -927,10 +936,18 @@ def anthropic_chat_completions_request_stream(
         else:
             raise ValueError("No available Anthropic API key")
 
-    with anthropic_client.beta.messages.stream(
-            **data,
-            betas=betas,
-    ) as stream:
+
+    # Check if using Vertex AI (doesn't support beta features)
+    is_vertex = isinstance(anthropic_client, AnthropicVertex)
+
+    if is_vertex:
+        # Vertex AI doesn't support beta features
+        stream_manager = anthropic_client.messages.stream(**data)
+    else:
+        # Direct Anthropic API supports beta features
+        stream_manager = anthropic_client.beta.messages.stream(**data, betas=betas)
+
+    with stream_manager as stream:
         # Stream: https://github.com/anthropics/anthropic-sdk-python/blob/d212ec9f6d5e956f13bc0ddc3d86b5888a954383/src/anthropic/lib/streaming/_beta_messages.py#L22
         message_id = None
         model = None
