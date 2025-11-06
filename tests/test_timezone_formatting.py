@@ -69,7 +69,7 @@ class TestTimezoneFormatting:
         # Check that times are within tolerance
         time_diff = abs((parsed_time - current_time_in_tz).total_seconds())
         assert time_diff <= tolerance_minutes * 60, (
-            f"Time difference too large: {time_diff}s. " f"Parsed: {parsed_time}, Expected timezone: {current_time_in_tz}"
+            f"Time difference too large: {time_diff}s. Parsed: {parsed_time}, Expected timezone: {current_time_in_tz}"
         )
 
         # Verify timezone info exists and format looks reasonable

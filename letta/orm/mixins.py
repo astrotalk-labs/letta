@@ -62,3 +62,37 @@ class SandboxConfigMixin(Base):
     __abstract__ = True
 
     sandbox_config_id: Mapped[str] = mapped_column(String, ForeignKey("sandbox_configs.id"))
+
+
+class ProjectMixin(Base):
+    """Mixin for models that belong to a project."""
+
+    __abstract__ = True
+
+    project_id: Mapped[str] = mapped_column(String, nullable=True, doc="The associated project id.")
+
+
+class ArchiveMixin(Base):
+    """Mixin for models that belong to an archive."""
+
+    __abstract__ = True
+
+    archive_id: Mapped[str] = mapped_column(String, ForeignKey("archives.id", ondelete="CASCADE"))
+
+
+class TemplateMixin(Base):
+    """TemplateMixin for models that belong to a template."""
+
+    __abstract__ = True
+
+    base_template_id: Mapped[str] = mapped_column(nullable=True, doc="The id of the base template.")
+    template_id: Mapped[str] = mapped_column(nullable=True, doc="The id of the template.")
+    deployment_id: Mapped[str] = mapped_column(nullable=True, doc="The id of the deployment.")
+
+
+class TemplateEntityMixin(Base):
+    """Mixin for models that belong to an entity (only used for templates)."""
+
+    __abstract__ = True
+
+    entity_id: Mapped[str] = mapped_column(nullable=True, doc="The id of the entity within the template.")

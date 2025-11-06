@@ -1,5 +1,6 @@
-import math
-from typing import Any, Dict, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Literal, Optional
+from zoneinfo import ZoneInfo
 
 from letta.constants import (
     CORE_MEMORY_LINE_NUMBER_WARNING,
@@ -8,16 +9,18 @@ from letta.constants import (
     RETRIEVAL_QUERY_DEFAULT_PAGE_SIZE,
 )
 from letta.helpers.json_helpers import json_dumps
+from letta.log import get_logger
 from letta.schemas.agent import AgentState
+from letta.schemas.block import BlockUpdate
+from letta.schemas.enums import MessageRole, TagMatchMode
 from letta.schemas.sandbox_config import SandboxConfig
 from letta.schemas.tool import Tool
 from letta.schemas.tool_execution_result import ToolExecutionResult
 from letta.schemas.user import User
-from letta.services.agent_manager import AgentManager
-from letta.services.message_manager import MessageManager
-from letta.services.passage_manager import PassageManager
 from letta.services.tool_executor.tool_executor_base import ToolExecutor
 from letta.utils import get_friendly_error_msg
+
+logger = get_logger(__name__)
 
 
 class LettaCoreToolExecutor(ToolExecutor):
@@ -44,8 +47,12 @@ class LettaCoreToolExecutor(ToolExecutor):
             "core_memory_replace": self.core_memory_replace,
             "memory_replace": self.memory_replace,
             "memory_insert": self.memory_insert,
+            "memory_apply_patch": self.memory_apply_patch,
+            "memory_str_replace": self.memory_str_replace,
+            "memory_str_insert": self.memory_str_insert,
             "memory_rethink": self.memory_rethink,
             "memory_finish_edits": self.memory_finish_edits,
+            "memory": self.memory,
         }
 
         if function_name not in function_map:
@@ -69,137 +76,235 @@ class LettaCoreToolExecutor(ToolExecutor):
             )
 
     async def send_message(self, agent_state: AgentState, actor: User, message: str) -> Optional[str]:
-        """
-        Sends a message to the human user.
-
-        Args:
-            message (str): Message contents. All unicode (including emojis) are supported.
-
-        Returns:
-            Optional[str]: None is always returned as this function does not produce a response.
-        """
         return "Sent message successfully."
 
-    async def conversation_search(self, agent_state: AgentState, actor: User, query: str, page: Optional[int] = 0) -> Optional[str]:
-        """
-        Search prior conversation history using case-insensitive string matching.
-
-        Args:
-            query (str): String to search for.
-            page (int): Allows you to page through results. Only use on a follow-up query. Defaults to 0 (first page).
-
-        Returns:
-            str: Query result string
-        """
-        if page is None or (isinstance(page, str) and page.lower().strip() == "none"):
-            page = 0
-        try:
-            page = int(page)
-        except:
-            raise ValueError(f"'page' argument must be an integer")
-
-        count = RETRIEVAL_QUERY_DEFAULT_PAGE_SIZE
-        messages = await MessageManager().list_user_messages_for_agent_async(
-            agent_id=agent_state.id,
-            actor=actor,
-            query_text=query,
-            limit=count,
-        )
-
-        total = len(messages)
-        num_pages = math.ceil(total / count) - 1  # 0 index
-
-        if len(messages) == 0:
-            results_str = f"No results found."
-        else:
-            results_pref = f"Showing {len(messages)} of {total} results (page {page}/{num_pages}):"
-            results_formatted = [message.content[0].text for message in messages]
-            results_str = f"{results_pref} {json_dumps(results_formatted)}"
-
-        return results_str
-
-    async def archival_memory_search(
-        self, agent_state: AgentState, actor: User, query: str, page: Optional[int] = 0, start: Optional[int] = 0
+    async def conversation_search(
+        self,
+        agent_state: AgentState,
+        actor: User,
+        query: str,
+        roles: Optional[List[Literal["assistant", "user", "tool"]]] = None,
+        limit: Optional[int] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> Optional[str]:
-        """
-        Search archival memory using semantic (embedding-based) search.
-
-        Args:
-            query (str): String to search for.
-            page (Optional[int]): Allows you to page through results. Only use on a follow-up query. Defaults to 0 (first page).
-            start (Optional[int]): Starting index for the search results. Defaults to 0.
-
-        Returns:
-            str: Query result string
-        """
-        if page is None or (isinstance(page, str) and page.lower().strip() == "none"):
-            page = 0
         try:
-            page = int(page)
-        except:
-            raise ValueError(f"'page' argument must be an integer")
+            # Parse datetime parameters if provided
+            start_datetime = None
+            end_datetime = None
 
-        count = RETRIEVAL_QUERY_DEFAULT_PAGE_SIZE
+            if start_date:
+                try:
+                    # Try parsing as full datetime first (with time)
+                    start_datetime = datetime.fromisoformat(start_date)
+                except ValueError:
+                    try:
+                        # Fall back to date-only format
+                        start_datetime = datetime.strptime(start_date, "%Y-%m-%d")
+                        # Set to beginning of day
+                        start_datetime = start_datetime.replace(hour=0, minute=0, second=0, microsecond=0)
+                    except ValueError:
+                        raise ValueError(f"Invalid start_date format: {start_date}. Use ISO 8601 format (YYYY-MM-DD or YYYY-MM-DDTHH:MM)")
 
-        try:
-            # Get results using passage manager
-            all_results = await AgentManager().list_agent_passages_async(
-                actor=actor,
+                # Apply agent's timezone if datetime is naive
+                if start_datetime.tzinfo is None and agent_state.timezone:
+                    tz = ZoneInfo(agent_state.timezone)
+                    start_datetime = start_datetime.replace(tzinfo=tz)
+
+            if end_date:
+                try:
+                    # Try parsing as full datetime first (with time)
+                    end_datetime = datetime.fromisoformat(end_date)
+                except ValueError:
+                    try:
+                        # Fall back to date-only format
+                        end_datetime = datetime.strptime(end_date, "%Y-%m-%d")
+                        # Set to end of day for end dates
+                        end_datetime = end_datetime.replace(hour=23, minute=59, second=59, microsecond=999999)
+                    except ValueError:
+                        raise ValueError(f"Invalid end_date format: {end_date}. Use ISO 8601 format (YYYY-MM-DD or YYYY-MM-DDTHH:MM)")
+
+                # Apply agent's timezone if datetime is naive
+                if end_datetime.tzinfo is None and agent_state.timezone:
+                    tz = ZoneInfo(agent_state.timezone)
+                    end_datetime = end_datetime.replace(tzinfo=tz)
+
+            # Convert string roles to MessageRole enum if provided
+            message_roles = None
+            if roles:
+                message_roles = [MessageRole(role) for role in roles]
+
+            # Use provided limit or default
+            search_limit = limit if limit is not None else RETRIEVAL_QUERY_DEFAULT_PAGE_SIZE
+
+            # Search using the message manager's search_messages_async method
+            message_results = await self.message_manager.search_messages_async(
                 agent_id=agent_state.id,
+                actor=actor,
                 query_text=query,
-                limit=count + start,  # Request enough results to handle offset
-                embedding_config=agent_state.embedding_config,
-                embed_query=True,
+                roles=message_roles,
+                limit=search_limit,
+                start_date=start_datetime,
+                end_date=end_datetime,
             )
 
-            # Apply pagination
-            end = min(count + start, len(all_results))
-            paged_results = all_results[start:end]
+            if len(message_results) == 0:
+                results_str = "No results found."
+            else:
+                results_pref = f"Showing {len(message_results)} results:"
+                results_formatted = []
+                # get current time in UTC, then convert to agent timezone for consistent comparison
+                from datetime import timezone
 
-            # Format results to match previous implementation
-            formatted_results = [{"timestamp": str(result.created_at), "content": result.text} for result in paged_results]
+                now_utc = datetime.now(timezone.utc)
+                if agent_state.timezone:
+                    try:
+                        tz = ZoneInfo(agent_state.timezone)
+                        now = now_utc.astimezone(tz)
+                    except Exception:
+                        now = now_utc
+                else:
+                    now = now_utc
 
-            return formatted_results, len(formatted_results)
+                for message, metadata in message_results:
+                    # Format timestamp in agent's timezone if available
+                    timestamp = message.created_at
+                    time_delta_str = ""
+
+                    if timestamp and agent_state.timezone:
+                        try:
+                            # Convert to agent's timezone
+                            tz = ZoneInfo(agent_state.timezone)
+                            local_time = timestamp.astimezone(tz)
+                            # Format as ISO string with timezone
+                            formatted_timestamp = local_time.isoformat()
+
+                            # Calculate time delta
+                            delta = now - local_time
+                            total_seconds = int(delta.total_seconds())
+
+                            if total_seconds < 60:
+                                time_delta_str = f"{total_seconds}s ago"
+                            elif total_seconds < 3600:
+                                minutes = total_seconds // 60
+                                time_delta_str = f"{minutes}m ago"
+                            elif total_seconds < 86400:
+                                hours = total_seconds // 3600
+                                time_delta_str = f"{hours}h ago"
+                            else:
+                                days = total_seconds // 86400
+                                time_delta_str = f"{days}d ago"
+
+                        except Exception:
+                            # Fallback to ISO format if timezone conversion fails
+                            formatted_timestamp = str(timestamp)
+                    else:
+                        # Use ISO format if no timezone is set
+                        formatted_timestamp = str(timestamp) if timestamp else "Unknown"
+
+                    content = self.message_manager._extract_message_text(message)
+
+                    # Create the base result dict
+                    result_dict = {
+                        "timestamp": formatted_timestamp,
+                        "time_ago": time_delta_str,
+                        "role": message.role,
+                    }
+
+                    # Add search relevance metadata if available
+                    if metadata:
+                        # Only include non-None values
+                        relevance_info = {
+                            k: v
+                            for k, v in {
+                                "rrf_score": metadata.get("combined_score"),
+                                "vector_rank": metadata.get("vector_rank"),
+                                "fts_rank": metadata.get("fts_rank"),
+                                "search_mode": metadata.get("search_mode"),
+                            }.items()
+                            if v is not None
+                        }
+
+                        if relevance_info:  # Only add if we have metadata
+                            result_dict["relevance"] = relevance_info
+
+                    # _extract_message_text returns already JSON-encoded strings
+                    # We need to parse them to get the actual content structure
+                    if content:
+                        try:
+                            import json
+
+                            parsed_content = json.loads(content)
+
+                            # Add the parsed content directly to avoid double JSON encoding
+                            if isinstance(parsed_content, dict):
+                                # Merge the parsed content into result_dict
+                                result_dict.update(parsed_content)
+                            else:
+                                # If it's not a dict, add as content
+                                result_dict["content"] = parsed_content
+                        except (json.JSONDecodeError, ValueError):
+                            # if not valid JSON, add as plain content
+                            result_dict["content"] = content
+
+                    results_formatted.append(result_dict)
+
+                # Don't double-encode - results_formatted already has the parsed content
+                results_str = f"{results_pref} {json_dumps(results_formatted)}"
+
+            return results_str
 
         except Exception as e:
             raise e
 
-    async def archival_memory_insert(self, agent_state: AgentState, actor: User, content: str) -> Optional[str]:
-        """
-        Add to archival memory. Make sure to phrase the memory contents such that it can be easily queried later.
+    async def archival_memory_search(
+        self,
+        agent_state: AgentState,
+        actor: User,
+        query: str,
+        tags: Optional[list[str]] = None,
+        tag_match_mode: Literal["any", "all"] = "any",
+        top_k: Optional[int] = None,
+        start_datetime: Optional[str] = None,
+        end_datetime: Optional[str] = None,
+    ) -> Optional[str]:
+        try:
+            # Use the shared service method to get results
+            formatted_results = await self.agent_manager.search_agent_archival_memory_async(
+                agent_id=agent_state.id,
+                actor=actor,
+                query=query,
+                tags=tags,
+                tag_match_mode=tag_match_mode,
+                top_k=top_k,
+                start_datetime=start_datetime,
+                end_datetime=end_datetime,
+            )
 
-        Args:
-            content (str): Content to write to the memory. All unicode (including emojis) are supported.
+            return formatted_results
 
-        Returns:
-            Optional[str]: None is always returned as this function does not produce a response.
-        """
-        await PassageManager().insert_passage_async(
+        except Exception as e:
+            raise e
+
+    async def archival_memory_insert(
+        self, agent_state: AgentState, actor: User, content: str, tags: Optional[list[str]] = None
+    ) -> Optional[str]:
+        await self.passage_manager.insert_passage(
             agent_state=agent_state,
-            agent_id=agent_state.id,
             text=content,
             actor=actor,
+            tags=tags,
         )
-        await AgentManager().rebuild_system_prompt_async(agent_id=agent_state.id, actor=actor, force=True)
+        await self.agent_manager.rebuild_system_prompt_async(agent_id=agent_state.id, actor=actor, force=True)
         return None
 
     async def core_memory_append(self, agent_state: AgentState, actor: User, label: str, content: str) -> Optional[str]:
-        """
-        Append to the contents of core memory.
-
-        Args:
-            label (str): Section of the memory to be edited (persona or human).
-            content (str): Content to write to the memory. All unicode (including emojis) are supported.
-
-        Returns:
-            Optional[str]: None is always returned as this function does not produce a response.
-        """
         if agent_state.memory.get_block(label).read_only:
             raise ValueError(f"{READ_ONLY_BLOCK_EDIT_ERROR}")
         current_value = str(agent_state.memory.get_block(label).value)
         new_value = current_value + "\n" + str(content)
         agent_state.memory.update_block_value(label=label, value=new_value)
-        await AgentManager().update_memory_if_changed_async(agent_id=agent_state.id, new_memory=agent_state.memory, actor=actor)
+        await self.agent_manager.update_memory_if_changed_async(agent_id=agent_state.id, new_memory=agent_state.memory, actor=actor)
         return None
 
     async def core_memory_replace(
@@ -210,17 +315,6 @@ class LettaCoreToolExecutor(ToolExecutor):
         old_content: str,
         new_content: str,
     ) -> Optional[str]:
-        """
-        Replace the contents of core memory. To delete memories, use an empty string for new_content.
-
-        Args:
-            label (str): Section of the memory to be edited (persona or human).
-            old_content (str): String to replace. Must be an exact match.
-            new_content (str): Content to write to the memory. All unicode (including emojis) are supported.
-
-        Returns:
-            Optional[str]: None is always returned as this function does not produce a response.
-        """
         if agent_state.memory.get_block(label).read_only:
             raise ValueError(f"{READ_ONLY_BLOCK_EDIT_ERROR}")
         current_value = str(agent_state.memory.get_block(label).value)
@@ -228,32 +322,10 @@ class LettaCoreToolExecutor(ToolExecutor):
             raise ValueError(f"Old content '{old_content}' not found in memory block '{label}'")
         new_value = current_value.replace(str(old_content), str(new_content))
         agent_state.memory.update_block_value(label=label, value=new_value)
-        await AgentManager().update_memory_if_changed_async(agent_id=agent_state.id, new_memory=agent_state.memory, actor=actor)
+        await self.agent_manager.update_memory_if_changed_async(agent_id=agent_state.id, new_memory=agent_state.memory, actor=actor)
         return None
 
-    async def memory_replace(
-        self,
-        agent_state: AgentState,
-        actor: User,
-        label: str,
-        old_str: str,
-        new_str: Optional[str] = None,
-    ) -> str:
-        """
-        The memory_replace command allows you to replace a specific string in a memory
-        block with a new string. This is used for making precise edits.
-
-        Args:
-            label (str): Section of the memory to be edited, identified by its label.
-            old_str (str): The text to replace (must match exactly, including whitespace
-                and indentation). Do not include line number prefixes.
-            new_str (Optional[str]): The new text to insert in place of the old text.
-                Omit this argument to delete the old_str. Do not include line number prefixes.
-
-        Returns:
-            str: The success message
-        """
-
+    async def memory_replace(self, agent_state: AgentState, actor: User, label: str, old_str: str, new_str: str) -> str:
         if agent_state.memory.get_block(label).read_only:
             raise ValueError(f"{READ_ONLY_BLOCK_EDIT_ERROR}")
 
@@ -284,14 +356,13 @@ class LettaCoreToolExecutor(ToolExecutor):
         occurences = current_value.count(old_str)
         if occurences == 0:
             raise ValueError(
-                f"No replacement was performed, old_str `{old_str}` did not appear " f"verbatim in memory block with label `{label}`."
+                f"No replacement was performed, old_str `{old_str}` did not appear verbatim in memory block with label `{label}`."
             )
         elif occurences > 1:
             content_value_lines = current_value.split("\n")
             lines = [idx + 1 for idx, line in enumerate(content_value_lines) if old_str in line]
             raise ValueError(
-                f"No replacement was performed. Multiple occurrences of "
-                f"old_str `{old_str}` in lines {lines}. Please ensure it is unique."
+                f"No replacement was performed. Multiple occurrences of old_str `{old_str}` in lines {lines}. Please ensure it is unique."
             )
 
         # Replace old_str with new_str
@@ -300,7 +371,7 @@ class LettaCoreToolExecutor(ToolExecutor):
         # Write the new content to the block
         agent_state.memory.update_block_value(label=label, value=new_value)
 
-        await AgentManager().update_memory_if_changed_async(agent_id=agent_state.id, new_memory=agent_state.memory, actor=actor)
+        await self.agent_manager.update_memory_if_changed_async(agent_id=agent_state.id, new_memory=agent_state.memory, actor=actor)
 
         # Create a snippet of the edited section
         SNIPPET_LINES = 3
@@ -323,6 +394,116 @@ class LettaCoreToolExecutor(ToolExecutor):
         # return None
         return success_msg
 
+    async def memory_apply_patch(self, agent_state: AgentState, actor: User, label: str, patch: str) -> str:
+        """Apply a simplified unified-diff style patch to a memory block, anchored on content and context.
+
+        Args:
+            label: The memory block label to modify.
+            patch: Patch text with lines starting with " ", "-", or "+" and optional "@@" hunk headers.
+
+        Returns:
+            Success message on clean application; raises ValueError on mismatch/ambiguity.
+        """
+        if agent_state.memory.get_block(label).read_only:
+            raise ValueError(f"{READ_ONLY_BLOCK_EDIT_ERROR}")
+
+        # Guardrails: forbid visual line numbers and warning banners
+        if MEMORY_TOOLS_LINE_NUMBER_PREFIX_REGEX.search(patch or ""):
+            raise ValueError(
+                "Patch contains a line number prefix, which is not allowed. Do not include line numbers (they are for display only)."
+            )
+        if CORE_MEMORY_LINE_NUMBER_WARNING in (patch or ""):
+            raise ValueError("Patch contains the line number warning banner, which is not allowed. Provide only the text to edit.")
+
+        current_value = str(agent_state.memory.get_block(label).value).expandtabs()
+        patch = str(patch).expandtabs()
+
+        current_lines = current_value.split("\n")
+        # Ignore common diff headers
+        raw_lines = patch.splitlines()
+        patch_lines = [ln for ln in raw_lines if not ln.startswith("*** ") and not ln.startswith("---") and not ln.startswith("+++")]
+
+        # Split into hunks using '@@' as delimiter
+        hunks: list[list[str]] = []
+        h: list[str] = []
+        for ln in patch_lines:
+            if ln.startswith("@@"):
+                if h:
+                    hunks.append(h)
+                    h = []
+                continue
+            if ln.startswith(" ") or ln.startswith("-") or ln.startswith("+"):
+                h.append(ln)
+            elif ln.strip() == "":
+                # Treat blank line as context for empty string line
+                h.append(" ")
+            else:
+                # Skip unknown metadata lines
+                continue
+        if h:
+            hunks.append(h)
+
+        if not hunks:
+            raise ValueError("No applicable hunks found in patch. Ensure lines start with ' ', '-', or '+'.")
+
+        def find_all_subseq(hay: list[str], needle: list[str]) -> list[int]:
+            out: list[int] = []
+            n = len(needle)
+            if n == 0:
+                return out
+            for i in range(0, len(hay) - n + 1):
+                if hay[i : i + n] == needle:
+                    out.append(i)
+            return out
+
+        # Apply each hunk sequentially against the rolling buffer
+        for hunk in hunks:
+            expected: list[str] = []
+            replacement: list[str] = []
+            for ln in hunk:
+                if ln.startswith(" "):
+                    line = ln[1:]
+                    expected.append(line)
+                    replacement.append(line)
+                elif ln.startswith("-"):
+                    line = ln[1:]
+                    expected.append(line)
+                elif ln.startswith("+"):
+                    line = ln[1:]
+                    replacement.append(line)
+
+            if not expected and replacement:
+                # Pure insertion with no context: append at end
+                current_lines = current_lines + replacement
+                continue
+
+            matches = find_all_subseq(current_lines, expected)
+            if len(matches) == 0:
+                sample = "\n".join(expected[:4])
+                raise ValueError(
+                    "Failed to apply patch: expected hunk context not found in the memory block. "
+                    f"Verify the target lines exist and try providing more context. Expected start:\n{sample}"
+                )
+            if len(matches) > 1:
+                raise ValueError(
+                    "Failed to apply patch: hunk context matched multiple places in the memory block. "
+                    "Please add more unique surrounding context to disambiguate."
+                )
+
+            idx = matches[0]
+            end = idx + len(expected)
+            current_lines = current_lines[:idx] + replacement + current_lines[end:]
+
+        new_value = "\n".join(current_lines)
+        agent_state.memory.update_block_value(label=label, value=new_value)
+        await self.agent_manager.update_memory_if_changed_async(agent_id=agent_state.id, new_memory=agent_state.memory, actor=actor)
+
+        return (
+            f"The core memory block with label `{label}` has been edited. "
+            "Review the changes and make sure they are as expected (correct indentation, no duplicate lines, etc). "
+            "Edit the memory block again if necessary."
+        )
+
     async def memory_insert(
         self,
         agent_state: AgentState,
@@ -331,20 +512,6 @@ class LettaCoreToolExecutor(ToolExecutor):
         new_str: str,
         insert_line: int = -1,
     ) -> str:
-        """
-        The memory_insert command allows you to insert text at a specific location
-        in a memory block.
-
-        Args:
-            label (str): Section of the memory to be edited, identified by its label.
-            new_str (str): The text to insert. Do not include line number prefixes.
-            insert_line (int): The line number after which to insert the text (0 for
-                beginning of file). Defaults to -1 (end of the file).
-
-        Returns:
-            str: The success message
-        """
-
         if agent_state.memory.get_block(label).read_only:
             raise ValueError(f"{READ_ONLY_BLOCK_EDIT_ERROR}")
 
@@ -393,7 +560,7 @@ class LettaCoreToolExecutor(ToolExecutor):
         # Write into the block
         agent_state.memory.update_block_value(label=label, value=new_value)
 
-        await AgentManager().update_memory_if_changed_async(agent_id=agent_state.id, new_memory=agent_state.memory, actor=actor)
+        await self.agent_manager.update_memory_if_changed_async(agent_id=agent_state.id, new_memory=agent_state.memory, actor=actor)
 
         # Prepare the success message
         success_msg = f"The core memory block with label `{label}` has been edited. "
@@ -411,20 +578,6 @@ class LettaCoreToolExecutor(ToolExecutor):
         return success_msg
 
     async def memory_rethink(self, agent_state: AgentState, actor: User, label: str, new_memory: str) -> str:
-        """
-        The memory_rethink command allows you to completely rewrite the contents of a
-        memory block. Use this tool to make large sweeping changes (e.g. when you want
-        to condense or reorganize the memory blocks), do NOT use this tool to make small
-        precise edits (e.g. add or remove a line, replace a specific string, etc).
-
-        Args:
-            label (str): The memory block to be rewritten, identified by its label.
-            new_memory (str): The new memory contents with information integrated from
-                existing memory blocks and the conversation context. Do not include line number prefixes.
-
-        Returns:
-            str: The success message
-        """
         if agent_state.memory.get_block(label).read_only:
             raise ValueError(f"{READ_ONLY_BLOCK_EDIT_ERROR}")
 
@@ -441,12 +594,18 @@ class LettaCoreToolExecutor(ToolExecutor):
                 "are for display purposes only)."
             )
 
-        if agent_state.memory.get_block(label) is None:
-            agent_state.memory.create_block(label=label, value=new_memory)
+        try:
+            agent_state.memory.get_block(label)
+        except KeyError:
+            # Block doesn't exist, create it
+            from letta.schemas.block import Block
+
+            new_block = Block(label=label, value=new_memory)
+            agent_state.memory.set_block(new_block)
 
         agent_state.memory.update_block_value(label=label, value=new_memory)
 
-        await AgentManager().update_memory_if_changed_async(agent_id=agent_state.id, new_memory=agent_state.memory, actor=actor)
+        await self.agent_manager.update_memory_if_changed_async(agent_id=agent_state.id, new_memory=agent_state.memory, actor=actor)
 
         # Prepare the success message
         success_msg = f"The core memory block with label `{label}` has been edited. "
@@ -463,12 +622,389 @@ class LettaCoreToolExecutor(ToolExecutor):
         return success_msg
 
     async def memory_finish_edits(self, agent_state: AgentState, actor: User) -> None:
-        """
-        Call the memory_finish_edits command when you are finished making edits
-        (integrating all new information) into the memory blocks. This function
-        is called when the agent is done rethinking the memory.
-
-        Returns:
-            Optional[str]: None is always returned as this function does not produce a response.
-        """
         return None
+
+    async def memory_delete(self, agent_state: AgentState, actor: User, path: str) -> str:
+        """Delete a memory block by detaching it from the agent."""
+        # Extract memory block label from path
+        label = path.removeprefix("/memories/").replace("/", "_")
+
+        try:
+            # Check if memory block exists
+            memory_block = agent_state.memory.get_block(label)
+            if memory_block is None:
+                raise ValueError(f"Error: Memory block '{label}' does not exist")
+
+            # Detach the block from the agent
+            updated_agent_state = await self.agent_manager.detach_block_async(
+                agent_id=agent_state.id, block_id=memory_block.id, actor=actor
+            )
+
+            # Update the agent state with the updated memory from the database
+            agent_state.memory = updated_agent_state.memory
+
+            return f"Successfully deleted memory block '{label}'"
+
+        except Exception as e:
+            return f"Error performing delete: {str(e)}"
+
+    async def memory_update_description(self, agent_state: AgentState, actor: User, path: str, description: str) -> str:
+        """Update the description of a memory block."""
+        label = path.removeprefix("/memories/").replace("/", "_")
+
+        try:
+            # Check if old memory block exists
+            memory_block = agent_state.memory.get_block(label)
+            if memory_block is None:
+                raise ValueError(f"Error: Memory block '{label}' does not exist")
+
+            await self.block_manager.update_block_async(
+                block_id=memory_block.id, block_update=BlockUpdate(description=description), actor=actor
+            )
+            await self.agent_manager.rebuild_system_prompt_async(agent_id=agent_state.id, actor=actor, force=True)
+
+            return f"Successfully updated description of memory block '{label}'"
+
+        except Exception as e:
+            raise Exception(f"Error performing update_description: {str(e)}")
+
+    async def memory_rename(self, agent_state: AgentState, actor: User, old_path: str, new_path: str) -> str:
+        """Rename a memory block by copying content to new label and detaching old one."""
+        # Extract memory block labels from paths
+        old_label = old_path.removeprefix("/memories/").replace("/", "_")
+        new_label = new_path.removeprefix("/memories/").replace("/", "_")
+
+        try:
+            # Check if old memory block exists
+            memory_block = agent_state.memory.get_block(old_label)
+            if memory_block is None:
+                raise ValueError(f"Error: Memory block '{old_label}' does not exist")
+
+            await self.block_manager.update_block_async(block_id=memory_block.id, block_update=BlockUpdate(label=new_label), actor=actor)
+            await self.agent_manager.rebuild_system_prompt_async(agent_id=agent_state.id, actor=actor, force=True)
+
+            return f"Successfully renamed memory block '{old_label}' to '{new_label}'"
+
+        except Exception as e:
+            raise Exception(f"Error performing rename: {str(e)}")
+
+    async def memory_view(self, agent_state: AgentState, actor: User, path: str, view_range: Optional[int] = None) -> str:
+        """View the content of a memory block with optional line range."""
+        try:
+            # Special case: if path is "/memories", list all blocks
+            if path == "/memories":
+                blocks = agent_state.memory.get_blocks()
+
+                if not blocks:
+                    raise ValueError("No memory blocks found.")
+
+                result_lines = [f"Found {len(blocks)} memory block(s):\n"]
+
+                for i, block in enumerate(blocks, 1):
+                    content = str(block.value)
+                    content_length = len(content)
+                    line_count = len(content.split("\n")) if content else 0
+
+                    # Basic info
+                    block_info = [f"{i}. {block.label}"]
+
+                    # Add description if available
+                    if block.description:
+                        block_info.append(f"   Description: {block.description}")
+
+                    # Add read-only status
+                    if block.read_only:
+                        block_info.append("   Read-only: true")
+
+                    # Add content stats
+                    block_info.append(f"   Character limit: {block.limit}")
+                    block_info.append(f"   Current length: {content_length} characters")
+                    block_info.append(f"   Lines: {line_count}")
+
+                    # Add content preview (first 100 characters)
+                    if content:
+                        preview = content[:100].replace("\n", "\\n")
+                        if len(content) > 100:
+                            preview += "..."
+                        block_info.append(f"   Preview: {preview}")
+                    else:
+                        block_info.append("   Preview: (empty)")
+
+                    result_lines.append("\n".join(block_info))
+                    if i < len(blocks):  # Add separator between blocks
+                        result_lines.append("")
+
+                return "\n".join(result_lines)
+
+            # Extract memory block label from path (e.g., "/memories/preferences.txt" -> "preferences.txt")
+            if path.startswith("/memories/"):
+                label = path[10:]  # Remove "/memories/" prefix
+            else:
+                label = path
+
+            # Get the memory block
+            memory_block = agent_state.memory.get_block(label)
+            if memory_block is None:
+                raise ValueError(f"Error: Memory block '{label}' does not exist")
+
+            # Get the content
+            content = str(memory_block.value)
+            if not content:
+                raise ValueError(f"Memory block '{label}' is empty")
+
+            # Split content into lines
+            lines = content.split("\n")
+            total_lines = len(lines)
+
+            # Handle view_range parameter
+            if view_range is not None:
+                if view_range <= 0:
+                    raise ValueError(f"Error: view_range must be positive, got {view_range}")
+
+                # Show only the first view_range lines
+                lines_to_show = lines[:view_range]
+                range_info = f" (showing first {view_range} of {total_lines} lines)"
+            else:
+                lines_to_show = lines
+                range_info = f" ({total_lines} lines total)"
+
+            # Format output with line numbers
+            numbered_lines = []
+            for i, line in enumerate(lines_to_show, start=1):
+                numbered_lines.append(f"Line {i}: {line}")
+
+            numbered_content = "\n".join(numbered_lines)
+
+            # Add metadata information
+            metadata_info = []
+            if memory_block.description:
+                metadata_info.append(f"Description: {memory_block.description}")
+            if memory_block.read_only:
+                metadata_info.append("Read-only: true")
+            metadata_info.append(f"Character limit: {memory_block.limit}")
+            metadata_info.append(f"Current length: {len(content)} characters")
+
+            metadata_str = "\n".join(metadata_info)
+
+            result = f"Memory block: {label}{range_info}\n"
+            result += f"Metadata:\n{metadata_str}\n\n"
+            result += f"Content:\n{numbered_content}"
+
+            return result
+
+        except KeyError:
+            raise ValueError(f"Error: Memory block '{label}' does not exist")
+        except Exception as e:
+            raise Exception(f"Error viewing memory block: {str(e)}")
+
+    async def memory_create(
+        self, agent_state: AgentState, actor: User, path: str, description: str, file_text: Optional[str] = None
+    ) -> str:
+        """Create a memory block by setting its value to an empty string."""
+        from letta.schemas.block import Block
+
+        label = path.removeprefix("/memories/").replace("/", "_")
+
+        # Create a new block and persist it to the database
+        new_block = Block(label=label, value=file_text if file_text else "", description=description)
+        persisted_block = await self.block_manager.create_or_update_block_async(new_block, actor)
+
+        # Attach the block to the agent
+        await self.agent_manager.attach_block_async(agent_id=agent_state.id, block_id=persisted_block.id, actor=actor)
+
+        # Add the persisted block to memory
+        agent_state.memory.set_block(persisted_block)
+
+        await self.agent_manager.update_memory_if_changed_async(agent_id=agent_state.id, new_memory=agent_state.memory, actor=actor)
+        return f"Successfully created memory block '{label}'"
+
+    async def memory_str_replace(self, agent_state: AgentState, actor: User, path: str, old_str: str, new_str: str) -> str:
+        """Replace text in a memory block."""
+        label = path.removeprefix("/memories/").replace("/", "_")
+
+        memory_block = agent_state.memory.get_block(label)
+        if memory_block is None:
+            raise ValueError(f"Error: Memory block '{label}' does not exist")
+
+        if memory_block.read_only:
+            raise ValueError(f"{READ_ONLY_BLOCK_EDIT_ERROR}")
+
+        if bool(MEMORY_TOOLS_LINE_NUMBER_PREFIX_REGEX.search(old_str)):
+            raise ValueError(
+                "old_str contains a line number prefix, which is not allowed. "
+                "Do not include line numbers when calling memory tools (line "
+                "numbers are for display purposes only)."
+            )
+        if CORE_MEMORY_LINE_NUMBER_WARNING in old_str:
+            raise ValueError(
+                "old_str contains a line number warning, which is not allowed. "
+                "Do not include line number information when calling memory tools "
+                "(line numbers are for display purposes only)."
+            )
+        if bool(MEMORY_TOOLS_LINE_NUMBER_PREFIX_REGEX.search(new_str)):
+            raise ValueError(
+                "new_str contains a line number prefix, which is not allowed. "
+                "Do not include line numbers when calling memory tools (line "
+                "numbers are for display purposes only)."
+            )
+
+        old_str = str(old_str).expandtabs()
+        new_str = str(new_str).expandtabs()
+        current_value = str(memory_block.value).expandtabs()
+
+        # Check if old_str is unique in the block
+        occurences = current_value.count(old_str)
+        if occurences == 0:
+            raise ValueError(
+                f"No replacement was performed, old_str `{old_str}` did not appear verbatim in memory block with label `{label}`."
+            )
+        elif occurences > 1:
+            content_value_lines = current_value.split("\n")
+            lines = [idx + 1 for idx, line in enumerate(content_value_lines) if old_str in line]
+            raise ValueError(
+                f"No replacement was performed. Multiple occurrences of old_str `{old_str}` in lines {lines}. Please ensure it is unique."
+            )
+
+        # Replace old_str with new_str
+        new_value = current_value.replace(str(old_str), str(new_str))
+
+        # Write the new content to the block
+        await self.block_manager.update_block_async(block_id=memory_block.id, block_update=BlockUpdate(value=new_value), actor=actor)
+        await self.agent_manager.rebuild_system_prompt_async(agent_id=agent_state.id, actor=actor, force=True)
+
+        # Prepare the success message
+        success_msg = f"The core memory block with label `{label}` has been edited. "
+        success_msg += (
+            "Review the changes and make sure they are as expected (correct indentation, "
+            "no duplicate lines, etc). Edit the memory block again if necessary."
+        )
+
+        return success_msg
+
+    async def memory_str_insert(self, agent_state: AgentState, actor: User, path: str, insert_text: str, insert_line: int = -1) -> str:
+        """Insert text into a memory block at a specific line."""
+        label = path.removeprefix("/memories/").replace("/", "_")
+
+        memory_block = agent_state.memory.get_block(label)
+        if memory_block is None:
+            raise ValueError(f"Error: Memory block '{label}' does not exist")
+
+        if memory_block.read_only:
+            raise ValueError(f"{READ_ONLY_BLOCK_EDIT_ERROR}")
+
+        if bool(MEMORY_TOOLS_LINE_NUMBER_PREFIX_REGEX.search(insert_text)):
+            raise ValueError(
+                "insert_text contains a line number prefix, which is not allowed. "
+                "Do not include line numbers when calling memory tools (line "
+                "numbers are for display purposes only)."
+            )
+        if CORE_MEMORY_LINE_NUMBER_WARNING in insert_text:
+            raise ValueError(
+                "insert_text contains a line number warning, which is not allowed. "
+                "Do not include line number information when calling memory tools "
+                "(line numbers are for display purposes only)."
+            )
+
+        current_value = str(memory_block.value).expandtabs()
+        insert_text = str(insert_text).expandtabs()
+        current_value_lines = current_value.split("\n")
+        n_lines = len(current_value_lines)
+
+        # Check if we're in range, from 0 (pre-line), to 1 (first line), to n_lines (last line)
+        if insert_line == -1:
+            insert_line = n_lines
+        elif insert_line < 0 or insert_line > n_lines:
+            raise ValueError(
+                f"Invalid `insert_line` parameter: {insert_line}. It should be within "
+                f"the range of lines of the memory block: {[0, n_lines]}, or -1 to "
+                f"append to the end of the memory block."
+            )
+
+        # Insert the new text as a line
+        SNIPPET_LINES = 3
+        insert_text_lines = insert_text.split("\n")
+        new_value_lines = current_value_lines[:insert_line] + insert_text_lines + current_value_lines[insert_line:]
+        snippet_lines = (
+            current_value_lines[max(0, insert_line - SNIPPET_LINES) : insert_line]
+            + insert_text_lines
+            + current_value_lines[insert_line : insert_line + SNIPPET_LINES]
+        )
+
+        # Collate into the new value to update
+        new_value = "\n".join(new_value_lines)
+        snippet = "\n".join(snippet_lines)
+
+        # Write into the block
+        await self.block_manager.update_block_async(block_id=memory_block.id, block_update=BlockUpdate(value=new_value), actor=actor)
+        await self.agent_manager.rebuild_system_prompt_async(agent_id=agent_state.id, actor=actor, force=True)
+
+        # Prepare the success message
+        success_msg = f"The core memory block with label `{label}` has been edited. "
+        success_msg += (
+            "Review the changes and make sure they are as expected (correct indentation, "
+            "no duplicate lines, etc). Edit the memory block again if necessary."
+        )
+
+        return success_msg
+
+    async def memory(
+        self,
+        agent_state: AgentState,
+        actor: User,
+        command: str,
+        file_text: Optional[str] = None,
+        description: Optional[str] = None,
+        path: Optional[str] = None,
+        old_str: Optional[str] = None,
+        new_str: Optional[str] = None,
+        insert_line: Optional[int] = None,
+        insert_text: Optional[str] = None,
+        old_path: Optional[str] = None,
+        new_path: Optional[str] = None,
+        view_range: Optional[int] = None,
+    ) -> Optional[str]:
+        if command == "view":
+            if path is None:
+                raise ValueError("Error: path is required for view command")
+            return await self.memory_view(agent_state, actor, path, view_range)
+
+        elif command == "create":
+            if path is None:
+                raise ValueError("Error: path is required for create command")
+            if description is None:
+                raise ValueError("Error: description is required for create command")
+            return await self.memory_create(agent_state, actor, path, description, file_text)
+
+        elif command == "str_replace":
+            if path is None:
+                raise ValueError("Error: path is required for str_replace command")
+            if old_str is None:
+                raise ValueError("Error: old_str is required for str_replace command")
+            if new_str is None:
+                raise ValueError("Error: new_str is required for str_replace command")
+            return await self.memory_str_replace(agent_state, actor, path, old_str, new_str)
+
+        elif command == "insert":
+            if path is None:
+                raise ValueError("Error: path is required for insert command")
+            if insert_text is None:
+                raise ValueError("Error: insert_text is required for insert command")
+            return await self.memory_str_insert(agent_state, actor, path, insert_text, insert_line)
+
+        elif command == "delete":
+            if path is None:
+                raise ValueError("Error: path is required for delete command")
+            return await self.memory_delete(agent_state, actor, path)
+
+        elif command == "rename":
+            if path and description:
+                return await self.memory_update_description(agent_state, actor, path, description)
+            elif old_path and new_path:
+                return await self.memory_rename(agent_state, actor, old_path, new_path)
+            else:
+                raise ValueError(
+                    "Error: path and description are required for update_description command, or old_path and new_path are required for rename command"
+                )
+
+        else:
+            raise ValueError(f"Error: Unknown command '{command}'. Supported commands: str_replace, str_insert, insert, delete, rename")

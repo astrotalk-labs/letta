@@ -3,6 +3,7 @@ from typing import Annotated, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
+from letta.schemas.enums import PrimitiveType
 from letta.schemas.letta_base import LettaBase
 
 
@@ -15,8 +16,12 @@ class ManagerType(str, Enum):
     swarm = "swarm"
 
 
+class ManagerConfig(BaseModel):
+    manager_type: ManagerType = Field(..., description="")
+
+
 class GroupBase(LettaBase):
-    __id_prefix__ = "group"
+    __id_prefix__ = PrimitiveType.GROUP.value
 
 
 class Group(GroupBase):
@@ -24,6 +29,11 @@ class Group(GroupBase):
     manager_type: ManagerType = Field(..., description="")
     agent_ids: List[str] = Field(..., description="")
     description: str = Field(..., description="")
+    project_id: Optional[str] = Field(None, description="The associated project id.")
+    # Template fields
+    template_id: Optional[str] = Field(None, description="The id of the template.")
+    base_template_id: Optional[str] = Field(None, description="The base template id.")
+    deployment_id: Optional[str] = Field(None, description="The id of the deployment.")
     shared_block_ids: List[str] = Field([], description="")
     # Pattern fields
     manager_agent_id: Optional[str] = Field(None, description="")
@@ -40,10 +50,35 @@ class Group(GroupBase):
         None,
         description="The desired minimum length of messages in the context window of the convo agent. This is a best effort, and may be off-by-one due to user/assistant interleaving.",
     )
+    hidden: Optional[bool] = Field(
+        None,
+        description="If set to True, the group will be hidden.",
+    )
 
-
-class ManagerConfig(BaseModel):
-    manager_type: ManagerType = Field(..., description="")
+    @property
+    def manager_config(self) -> ManagerConfig:
+        match self.manager_type:
+            case ManagerType.round_robin:
+                return RoundRobinManager(max_turns=self.max_turns)
+            case ManagerType.supervisor:
+                return SupervisorManager(manager_agent_id=self.manager_agent_id)
+            case ManagerType.dynamic:
+                return DynamicManager(
+                    manager_agent_id=self.manager_agent_id,
+                    termination_token=self.termination_token,
+                    max_turns=self.max_turns,
+                )
+            case ManagerType.sleeptime:
+                return SleeptimeManager(
+                    manager_agent_id=self.manager_agent_id,
+                    sleeptime_agent_frequency=self.sleeptime_agent_frequency,
+                )
+            case ManagerType.voice_sleeptime:
+                return VoiceSleeptimeManager(
+                    manager_agent_id=self.manager_agent_id,
+                    max_message_buffer_length=self.max_message_buffer_length,
+                    min_message_buffer_length=self.min_message_buffer_length,
+                )
 
 
 class RoundRobinManager(ManagerConfig):
@@ -138,11 +173,25 @@ class GroupCreate(BaseModel):
     agent_ids: List[str] = Field(..., description="")
     description: str = Field(..., description="")
     manager_config: ManagerConfigUnion = Field(RoundRobinManager(), description="")
+    project_id: Optional[str] = Field(None, description="The associated project id.")
     shared_block_ids: List[str] = Field([], description="")
+    hidden: Optional[bool] = Field(
+        None,
+        description="If set to True, the group will be hidden.",
+    )
+
+
+class InternalTemplateGroupCreate(GroupCreate):
+    """Used for Letta Cloud"""
+
+    base_template_id: str = Field(..., description="The id of the base template.")
+    template_id: str = Field(..., description="The id of the template.")
+    deployment_id: str = Field(..., description="The id of the deployment.")
 
 
 class GroupUpdate(BaseModel):
     agent_ids: Optional[List[str]] = Field(None, description="")
     description: Optional[str] = Field(None, description="")
     manager_config: Optional[ManagerConfigUpdateUnion] = Field(None, description="")
+    project_id: Optional[str] = Field(None, description="The associated project id.")
     shared_block_ids: Optional[List[str]] = Field(None, description="")

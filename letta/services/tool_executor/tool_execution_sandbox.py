@@ -13,7 +13,8 @@ from letta.functions.helpers import generate_model_from_args_json_schema
 from letta.log import get_logger
 from letta.otel.tracing import log_event, trace_method
 from letta.schemas.agent import AgentState
-from letta.schemas.sandbox_config import SandboxConfig, SandboxType
+from letta.schemas.enums import SandboxType
+from letta.schemas.sandbox_config import SandboxConfig
 from letta.schemas.tool import Tool
 from letta.schemas.tool_execution_result import ToolExecutionResult
 from letta.schemas.user import User
@@ -99,7 +100,7 @@ class ToolExecutionSandbox:
         logger.debug(f"Executed tool '{self.tool_name}', logging output from tool run: \n")
         for log_line in (result.stdout or []) + (result.stderr or []):
             logger.debug(f"{log_line}")
-        logger.debug(f"Ending output log from tool run.")
+        logger.debug("Ending output log from tool run.")
 
         # Return result
         return result
@@ -223,8 +224,10 @@ class ToolExecutionSandbox:
             with open(temp_file_path, "r") as f:
                 code = f.read()
 
-            logger.error(f"Executing tool {self.tool_name} has process error: {e}")
-            logger.error(f"Logging out tool {self.tool_name} auto-generated code for debugging: \n\n{code}")
+            # Tool errors are expected behavior - tools can raise exceptions as part of their normal operation
+            # Only log at debug level to avoid triggering Sentry alerts for expected errors
+            logger.debug(f"Tool {self.tool_name} process error: {e}")
+            logger.debug(f"Tool {self.tool_name} auto-generated code for debugging: \n\n{code}")
             func_return = get_friendly_error_msg(
                 function_name=self.tool_name,
                 exception_name=type(e).__name__,
@@ -246,7 +249,6 @@ class ToolExecutionSandbox:
             logger.error(f"Executing tool {self.tool_name} has an unexpected error: {e}")
             raise e
 
-    @trace_method
     def run_local_dir_sandbox_directly(
         self,
         sbx_config: SandboxConfig,
@@ -265,7 +267,6 @@ class ToolExecutionSandbox:
 
         try:
             with self.temporary_env_vars(env):
-
                 # Read and compile the Python script
                 with open(temp_file_path, "r", encoding="utf-8") as f:
                     source = f.read()
@@ -370,8 +371,10 @@ class ToolExecutionSandbox:
                 },
             )
         elif execution.error:
-            logger.error(f"Executing tool {self.tool_name} raised a {execution.error.name} with message: \n{execution.error.value}")
-            logger.error(f"Traceback from e2b sandbox: \n{execution.error.traceback}")
+            # Tool errors are expected behavior - tools can raise exceptions as part of their normal operation
+            # Only log at debug level to avoid triggering Sentry alerts for expected errors
+            logger.debug(f"Tool {self.tool_name} raised a {execution.error.name}: {execution.error.value}")
+            logger.debug(f"Traceback from e2b sandbox: \n{execution.error.traceback}")
             func_return = get_friendly_error_msg(
                 function_name=self.tool_name, exception_name=execution.error.name, exception_message=execution.error.value
             )
@@ -471,7 +474,7 @@ class ToolExecutionSandbox:
             return None, None
         result = pickle.loads(base64.b64decode(text))
         agent_state = None
-        if not result["agent_state"] is None:
+        if result["agent_state"] is not None:
             agent_state = result["agent_state"]
         return result["results"], agent_state
 

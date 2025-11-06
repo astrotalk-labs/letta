@@ -36,7 +36,7 @@ def swap_letta_config():
 
 
 def test_letta_run_create_new_agent(swap_letta_config):
-    child = pexpect.spawn("poetry run letta run", encoding="utf-8")
+    child = pexpect.spawn("uv run letta run", encoding="utf-8")
     # Start the letta run command
     child.logfile = sys.stdout
     child.expect("Creating new agent", timeout=20)
@@ -71,15 +71,15 @@ def test_letta_run_create_new_agent(swap_letta_config):
     assert full_output is not None, "No output was captured."
     # Count occurrences of inner thoughts
     cloud_emoji_count = full_output.count(INNER_THOUGHTS_CLI_SYMBOL)
-    assert cloud_emoji_count == 1, f"It appears that there are multiple instances of inner thought outputted."
+    assert cloud_emoji_count == 1, "It appears that there are multiple instances of inner thought outputted."
     # Count occurrences of assistant messages
     robot = full_output.count(ASSISTANT_MESSAGE_CLI_SYMBOL)
-    assert robot == 1, f"It appears that there are multiple instances of assistant messages outputted."
+    assert robot == 1, "It appears that there are multiple instances of assistant messages outputted."
 
 
 def test_letta_version_prints_only_version(swap_letta_config):
     # Start the letta version command
-    output = pexpect.run("poetry run letta version", encoding="utf-8")
+    output = pexpect.run("uv run letta version", encoding="utf-8")
 
     # Remove ANSI escape sequences and whitespace
     output = re.sub(r"\x1b\[[0-9;]*[mK]", "", output).strip()

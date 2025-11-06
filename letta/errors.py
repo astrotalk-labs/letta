@@ -18,6 +18,8 @@ class ErrorCode(Enum):
     CONTEXT_WINDOW_EXCEEDED = "CONTEXT_WINDOW_EXCEEDED"
     RATE_LIMIT_EXCEEDED = "RATE_LIMIT_EXCEEDED"
     TIMEOUT = "TIMEOUT"
+    CONFLICT = "CONFLICT"
+    EXPIRED = "EXPIRED"
 
 
 class LettaError(Exception):
@@ -40,6 +42,17 @@ class LettaError(Exception):
         return f"{self.__class__.__name__}(message='{self.message}', code='{self.code}', details={self.details})"
 
 
+class PendingApprovalError(LettaError):
+    """Error raised when attempting an operation while agent is waiting for tool approval."""
+
+    def __init__(self, pending_request_id: Optional[str] = None):
+        self.pending_request_id = pending_request_id
+        message = "Cannot send a new message: The agent is waiting for approval on a tool call. Please approve or deny the pending request before continuing."
+        code = ErrorCode.CONFLICT
+        details = {"error_code": "PENDING_APPROVAL", "pending_request_id": pending_request_id}
+        super().__init__(message=message, code=code, details=details)
+
+
 class LettaToolCreateError(LettaError):
     """Error raised when a tool cannot be created."""
 
@@ -47,6 +60,26 @@ class LettaToolCreateError(LettaError):
 
     def __init__(self, message=None):
         super().__init__(message=message or self.default_error_message)
+
+
+class LettaToolNameConflictError(LettaError):
+    """Error raised when a tool name already exists."""
+
+    def __init__(self, tool_name: str):
+        super().__init__(
+            message=f"Tool with name '{tool_name}' already exists in your organization",
+            code=ErrorCode.INVALID_ARGUMENT,
+            details={"tool_name": tool_name},
+        )
+
+
+class LettaToolNameSchemaMismatchError(LettaToolCreateError):
+    """Error raised when a tool name our source codedoes not match the name in the JSON schema."""
+
+    def __init__(self, tool_name: str, json_schema_name: str, source_code: str):
+        super().__init__(
+            message=f"Tool name '{tool_name}' does not match the name in the JSON schema '{json_schema_name}' or in the source code `{source_code}`",
+        )
 
 
 class LettaConfigurationError(LettaError):
@@ -63,6 +96,69 @@ class LettaAgentNotFoundError(LettaError):
 
 class LettaUserNotFoundError(LettaError):
     """Error raised when a user is not found."""
+
+
+class LettaUnsupportedFileUploadError(LettaError):
+    """Error raised when an unsupported file upload is attempted."""
+
+
+class LettaInvalidArgumentError(LettaError):
+    """Error raised when an invalid argument is provided."""
+
+    def __init__(self, message: str, argument_name: Optional[str] = None):
+        details = {"argument_name": argument_name} if argument_name else {}
+        super().__init__(message=message, code=ErrorCode.INVALID_ARGUMENT, details=details)
+
+
+class LettaMCPError(LettaError):
+    """Base error for MCP-related issues."""
+
+
+class LettaInvalidMCPSchemaError(LettaMCPError):
+    """Error raised when an invalid MCP schema is provided."""
+
+    def __init__(self, server_name: str, mcp_tool_name: str, reasons: List[str]):
+        details = {"server_name": server_name, "mcp_tool_name": mcp_tool_name, "reasons": reasons}
+        super().__init__(
+            message=f"MCP tool {mcp_tool_name} has an invalid schema and cannot be attached - reasons: {reasons}",
+            code=ErrorCode.INVALID_ARGUMENT,
+            details=details,
+        )
+
+
+class LettaMCPConnectionError(LettaMCPError):
+    """Error raised when unable to connect to MCP server."""
+
+    def __init__(self, message: str, server_name: Optional[str] = None):
+        details = {"server_name": server_name} if server_name else {}
+        super().__init__(message=message, code=ErrorCode.INTERNAL_SERVER_ERROR, details=details)
+
+
+class LettaMCPTimeoutError(LettaMCPError):
+    """Error raised when MCP server operation times out."""
+
+    def __init__(self, message: str, server_name: Optional[str] = None):
+        details = {"server_name": server_name} if server_name else {}
+        super().__init__(message=message, code=ErrorCode.TIMEOUT, details=details)
+
+
+class LettaServiceUnavailableError(LettaError):
+    """Error raised when a required service is unavailable."""
+
+    def __init__(self, message: str, service_name: Optional[str] = None):
+        details = {"service_name": service_name} if service_name else {}
+        super().__init__(message=message, code=ErrorCode.INTERNAL_SERVER_ERROR, details=details)
+
+
+class LettaUnexpectedStreamCancellationError(LettaError):
+    """Error raised when a streaming request is terminated unexpectedly."""
+
+
+class LettaExpiredError(LettaError):
+    """Error raised when a resource has expired."""
+
+    def __init__(self, message: str):
+        super().__init__(message=message, code=ErrorCode.EXPIRED)
 
 
 class LLMError(LettaError):
@@ -219,3 +315,39 @@ class HandleNotFoundError(LettaError):
             message=f"Handle {handle} not found, must be one of {available_handles}",
             code=ErrorCode.NOT_FOUND,
         )
+
+
+class AgentFileExportError(Exception):
+    """Exception raised during agent file export operations"""
+
+
+class AgentNotFoundForExportError(AgentFileExportError):
+    """Exception raised when requested agents are not found during export"""
+
+    def __init__(self, missing_ids: List[str]):
+        self.missing_ids = missing_ids
+        super().__init__(f"The following agent IDs were not found: {missing_ids}")
+
+
+class AgentExportIdMappingError(AgentFileExportError):
+    """Exception raised when ID mapping fails during export conversion"""
+
+    def __init__(self, db_id: str, entity_type: str):
+        self.db_id = db_id
+        self.entity_type = entity_type
+        super().__init__(
+            f"Unexpected new {entity_type} ID '{db_id}' encountered during conversion. "
+            f"All IDs should have been mapped during agent processing."
+        )
+
+
+class AgentExportProcessingError(AgentFileExportError):
+    """Exception raised when general export processing fails"""
+
+    def __init__(self, message: str, original_error: Optional[Exception] = None):
+        self.original_error = original_error
+        super().__init__(f"Export failed: {message}")
+
+
+class AgentFileImportError(Exception):
+    """Exception raised during agent file import operations"""

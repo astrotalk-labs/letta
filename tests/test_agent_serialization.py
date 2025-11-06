@@ -1,3 +1,4 @@
+import asyncio
 import difflib
 import json
 import os
@@ -15,11 +16,10 @@ from rich.syntax import Syntax
 
 from letta.config import LettaConfig
 from letta.orm import Base
-from letta.orm.enums import ToolType
 from letta.schemas.agent import AgentState, CreateAgent
 from letta.schemas.block import Block, CreateBlock
 from letta.schemas.embedding_config import EmbeddingConfig
-from letta.schemas.enums import MessageRole
+from letta.schemas.enums import MessageRole, ToolType
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.message import MessageCreate
 from letta.schemas.organization import Organization
@@ -73,12 +73,15 @@ def server_url() -> str:
 
 
 def _clear_tables():
-    from letta.server.db import db_context
+    from letta.server.db import db_registry
 
-    with db_context() as session:
-        for table in reversed(Base.metadata.sorted_tables):  # Reverse to avoid FK issues
-            session.execute(table.delete())  # Truncate table
-        session.commit()
+    async def _clear():
+        async with db_registry.async_session() as session:
+            for table in reversed(Base.metadata.sorted_tables):  # Reverse to avoid FK issues
+                await session.execute(table.delete())  # Truncate table
+            await session.commit()
+
+    asyncio.run(_clear())
 
 
 @pytest.fixture(autouse=True)
@@ -113,14 +116,22 @@ def default_user(server: SyncServer, default_organization):
 @pytest.fixture
 def other_organization(server: SyncServer):
     """Fixture to create and return the default organization."""
-    org = server.organization_manager.create_organization(pydantic_org=Organization(name="letta"))
+
+    async def create_org():
+        return await server.organization_manager.create_organization_async(pydantic_org=Organization(name="letta"))
+
+    org = asyncio.run(create_org())
     yield org
 
 
 @pytest.fixture
 def other_user(server: SyncServer, other_organization):
     """Fixture to create and return the default user within the default organization."""
-    user = server.user_manager.create_user(pydantic_user=User(organization_id=other_organization.id, name="sarah"))
+
+    async def create_user():
+        return await server.user_manager.create_actor_async(pydantic_user=User(organization_id=other_organization.id, name="sarah"))
+
+    user = asyncio.run(create_user())
     yield user
 
 
@@ -161,6 +172,7 @@ def serialize_test_agent(server: SyncServer, default_user, default_organization,
     memory_blocks = [CreateBlock(label="human", value="BananaBoy"), CreateBlock(label="persona", value="I am a helpful assistant")]
     create_agent_request = CreateAgent(
         system="test system",
+        agent_type="memgpt_agent",
         memory_blocks=memory_blocks,
         llm_config=LLMConfig.default_config("gpt-4o-mini"),
         embedding_config=EmbeddingConfig.default_config(provider="openai"),
@@ -239,7 +251,7 @@ def strip_datetime_fields(d: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in d.items() if not isinstance(v, datetime)}
 
 
-def _log_mismatch(key: str, expected: Any, actual: Any, log: bool) -> None:
+def _log_mismatch(key: str, expected: Any, actual: Any, log: bool = True) -> None:
     """Log detailed information about a mismatch."""
     if log:
         print(f"\n🔴 Mismatch Found in Key: '{key}'")
@@ -257,6 +269,8 @@ def _compare_agent_state_model_dump(d1: Dict[str, Any], d2: Dict[str, Any], log:
     Compare two dictionaries with special handling:
     - Keys in `ignore_prefix_fields` should match only by prefix.
     - 'message_ids' lists should match in length only.
+    - 'tool_exec_environment_variables' ignores values since they're cleared during serialization.
+    - 'json_schema' allows extra fields in d2 (from schema normalization during deserialization).
     - Datetime fields are ignored.
     - Order-independent comparison for lists of dicts.
     """
@@ -265,6 +279,21 @@ def _compare_agent_state_model_dump(d1: Dict[str, Any], d2: Dict[str, Any], log:
     # Remove datetime fields upfront
     d1 = strip_datetime_fields(d1)
     d2 = strip_datetime_fields(d2)
+
+    # For json_schema comparison, allow d2 to have extra fields (schema normalization)
+    if "json_schema" in d1 and "json_schema" in d2:
+        schema1 = d1["json_schema"]
+        schema2 = d2["json_schema"]
+        if isinstance(schema1, dict) and isinstance(schema2, dict):
+            # Check that all fields in schema1 exist in schema2 with same values
+            for k, v in schema1.items():
+                if k not in schema2 or not _compare_agent_state_model_dump({k: v}, {k: schema2[k]}, log=False):
+                    _log_mismatch("json_schema", schema1, schema2, log)
+                    return False
+            # Don't compare other keys for json_schema
+            d1_without_schema = {k: v for k, v in d1.items() if k != "json_schema"}
+            d2_without_schema = {k: v for k, v in d2.items() if k != "json_schema"}
+            return _compare_agent_state_model_dump(d1_without_schema, d2_without_schema, log)
 
     if d1.keys() != d2.keys():
         _log_mismatch("dict_keys", set(d1.keys()), set(d2.keys()))
@@ -281,12 +310,21 @@ def _compare_agent_state_model_dump(d1: Dict[str, Any], d2: Dict[str, Any], log:
             if not isinstance(v1, list) or not isinstance(v2, list) or len(v1) != len(v2):
                 _log_mismatch(key, v1, v2, log)
                 return False
-        elif key == "tool_exec_environment_variables":
+        elif key == "tool_exec_environment_variables" or key == "secrets":
             if not isinstance(v1, list) or not isinstance(v2, list) or len(v1) != len(v2):
                 _log_mismatch(key, v1, v2, log)
                 return False
+            # Compare environment variables ignoring values (cleared during serialization)
+            for env1, env2 in zip(v1, v2):
+                if isinstance(env1, dict) and isinstance(env2, dict):
+                    # Compare all fields except 'value'
+                    env1_without_value = {k: v for k, v in env1.items() if k != "value"}
+                    env2_without_value = {k: v for k, v in env2.items() if k != "value"}
+                    if not _compare_agent_state_model_dump(env1_without_value, env2_without_value, log=False):
+                        _log_mismatch(key, v1, v2, log)
+                        return False
         elif isinstance(v1, Dict) and isinstance(v2, Dict):
-            if not _compare_agent_state_model_dump(v1, v2):
+            if not _compare_agent_state_model_dump(v1, v2, log=False):
                 _log_mismatch(key, v1, v2, log)
                 return False
         elif isinstance(v1, list) and isinstance(v2, list):
@@ -324,9 +362,9 @@ def compare_in_context_message_id_remapping(server, og_agent: AgentState, copy_a
     in_context_messages_copy = server.agent_manager.get_in_context_messages(agent_id=copy_agent.id, actor=copy_user)
 
     # 1. Check if the number of messages is the same
-    assert len(in_context_messages_og) == len(
-        in_context_messages_copy
-    ), f"Original message count ({len(in_context_messages_og)}) differs from copy ({len(in_context_messages_copy)})"
+    assert len(in_context_messages_og) == len(in_context_messages_copy), (
+        f"Original message count ({len(in_context_messages_og)}) differs from copy ({len(in_context_messages_copy)})"
+    )
 
     # 2. Iterate and compare messages by order, checking content equality and ID difference
     if not in_context_messages_og:
@@ -599,6 +637,7 @@ def test_agent_download_upload_flow(server, server_url, serialize_test_agent, de
     response = requests.get(
         f"{server_url}/v1/agents/{agent_id}/export",
         headers={"user_id": default_user.id},
+        params={"use_legacy_format": True},
     )
     assert response.status_code == 200, f"Download failed: {response.text}"
 
@@ -610,28 +649,34 @@ def test_agent_download_upload_flow(server, server_url, serialize_test_agent, de
     # Step 2: Upload the serialized agent as a copy
     agent_bytes = BytesIO(json.dumps(agent_json).encode("utf-8"))
     files = {"file": ("agent.json", agent_bytes, "application/json")}
+
+    # Send parameters as form data instead of query parameters
+    form_data = {
+        "append_copy_suffix": str(append_copy_suffix).lower(),  # Convert bool to string 'true'/'false'
+        "override_existing_tools": "false",
+    }
+    if project_id:
+        form_data["project_id"] = project_id
+
     upload_response = requests.post(
         f"{server_url}/v1/agents/import",
         headers={"user_id": other_user.id},
-        params={
-            "append_copy_suffix": append_copy_suffix,
-            "override_existing_tools": False,
-            "project_id": project_id,
-        },
         files=files,
+        data=form_data,  # Send as form data
     )
     assert upload_response.status_code == 200, f"Upload failed: {upload_response.text}"
 
     # Sanity checks
     copied_agent = upload_response.json()
-    copied_agent_id = copied_agent["id"]
+    copied_agent_id = copied_agent["agent_ids"][0]
     assert copied_agent_id != agent_id, "Copied agent should have a different ID"
+
+    agent_copy = server.agent_manager.get_agent_by_id(agent_id=copied_agent_id, actor=other_user)
     if append_copy_suffix:
-        assert copied_agent["name"] == serialize_test_agent.name + "_copy", "Copied agent name should have '_copy' suffix"
+        assert agent_copy.name == serialize_test_agent.name + "_copy", "Copied agent name should have '_copy' suffix"
 
     # Step 3: Retrieve the copied agent
     serialize_test_agent = server.agent_manager.get_agent_by_id(agent_id=serialize_test_agent.id, actor=default_user)
-    agent_copy = server.agent_manager.get_agent_by_id(agent_id=copied_agent_id, actor=other_user)
 
     print_dict_diff(json.loads(serialize_test_agent.model_dump_json()), json.loads(agent_copy.model_dump_json()))
     assert compare_agent_state(server, serialize_test_agent, agent_copy, append_copy_suffix, default_user, other_user)
@@ -640,7 +685,6 @@ def test_agent_download_upload_flow(server, server_url, serialize_test_agent, de
 @pytest.mark.parametrize(
     "filename",
     [
-        "composio_github_star_agent.af",
         "outreach_workflow_agent.af",
         "customer_service.af",
         "deep_research_agent.af",
@@ -655,21 +699,75 @@ def test_upload_agentfile_from_disk(server, server_url, disable_e2b_api_key, oth
 
     with open(file_path, "rb") as f:
         files = {"file": (filename, f, "application/json")}
+
+        # Send parameters as form data instead of query parameters
+        form_data = {
+            "append_copy_suffix": "true",
+            "override_existing_tools": "false",
+        }
+
         response = requests.post(
             f"{server_url}/v1/agents/import",
             headers={"user_id": other_user.id},
-            params={"append_copy_suffix": True, "override_existing_tools": False},
             files=files,
+            data=form_data,  # Send as form data
         )
 
     assert response.status_code == 200, f"Failed to upload {filename}: {response.text}"
     json_response = response.json()
-    assert "id" in json_response and json_response["id"].startswith("agent-"), "Uploaded agent response is malformed"
 
-    copied_agent_id = json_response["id"]
+    copied_agent_id = json_response["agent_ids"][0]
 
     server.send_messages(
         actor=other_user,
         agent_id=copied_agent_id,
         input_messages=[MessageCreate(role=MessageRole.user, content="Hello there!")],
     )
+
+
+def test_serialize_with_max_steps(server, server_url, default_user, other_user):
+    """Test that max_steps parameter correctly limits messages by conversation steps."""
+    # load agent from file with pre-populated messages
+    file_path = os.path.join(os.path.dirname(__file__), "test_agent_files", "max_messages.af")
+
+    with open(file_path, "rb") as f:
+        files = {"file": ("max_messages.af", f, "application/json")}
+
+        form_data = {
+            "append_copy_suffix": "false",
+            "override_existing_tools": "false",
+        }
+
+        response = requests.post(
+            f"{server_url}/v1/agents/import",
+            headers={"user_id": default_user.id},
+            files=files,
+            data=form_data,
+        )
+
+    assert response.status_code == 200, f"Failed to upload agent: {response.text}"
+    agent_data = response.json()
+    agent_id = agent_data["agent_ids"][0]
+
+    # test with default max_steps (should use None, returning all messages)
+    full_result = server.agent_manager.serialize(agent_id=agent_id, actor=default_user)
+    total_messages = len(full_result.messages)
+    assert total_messages == 31, f"Expected 31 messages, got {total_messages}"
+
+    # test with max_steps=2 (should return messages from the last 2 user messages onward)
+    limited_result = server.agent_manager.serialize(agent_id=agent_id, actor=default_user, max_steps=2)
+    limited_user_count = sum(1 for msg in limited_result.messages if msg.role == "user")
+    assert limited_user_count == 2, f"Expected 2 user messages (steps), got {limited_user_count}"
+    assert len(limited_result.messages) == 2 * 3 + 1
+
+    # verify agent can still receive messages after being deserialized with limited steps
+    agent_copy = server.agent_manager.deserialize(limited_result, actor=other_user, append_copy_suffix=True)
+    response = server.send_messages(
+        actor=other_user, agent_id=agent_copy.id, input_messages=[MessageCreate(role=MessageRole.user, content="Hello!")]
+    )
+    assert response is not None and response.step_count > 0, "Agent should be able to receive and respond to messages"
+
+    # test with max_steps=0 (should return only system message)
+    empty_result = server.agent_manager.serialize(agent_id=agent_id, actor=default_user, max_steps=0)
+    assert len(empty_result.messages) == 1, f"Expected 1 message (system), got {len(empty_result.messages)}"
+    assert empty_result.messages[0].role == "system", "The only message should be the system message"

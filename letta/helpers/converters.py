@@ -1,15 +1,14 @@
-import base64
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 from anthropic.types.beta.messages import BetaMessageBatch, BetaMessageBatchIndividualResponse
-from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall as OpenAIToolCall
-from openai.types.chat.chat_completion_message_tool_call import Function as OpenAIFunction
+from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall as OpenAIToolCall, Function as OpenAIFunction
 from sqlalchemy import Dialect
 
 from letta.functions.mcp_client.types import StdioServerConfig
 from letta.schemas.embedding_config import EmbeddingConfig
 from letta.schemas.enums import ProviderType, ToolRuleType
+from letta.schemas.letta_message import ApprovalReturn, MessageReturnType
 from letta.schemas.letta_message_content import (
     ImageContent,
     ImageSourceType,
@@ -18,6 +17,7 @@ from letta.schemas.letta_message_content import (
     OmittedReasoningContent,
     ReasoningContent,
     RedactedReasoningContent,
+    SummarizedReasoningContent,
     TextContent,
     ToolCallContent,
     ToolReturnContent,
@@ -40,10 +40,20 @@ from letta.schemas.tool_rule import (
     MaxCountPerStepToolRule,
     ParentToolRule,
     RequiredBeforeExitToolRule,
+    RequiresApprovalToolRule,
     TerminalToolRule,
     ToolRule,
 )
+from letta.settings import DatabaseChoice, settings
 
+# Only import sqlite_vec if we're actually using SQLite database
+# This is a runtime dependency only needed for SQLite vector operations
+try:
+    if settings.database_engine == DatabaseChoice.SQLITE:
+        import sqlite_vec
+except ImportError:
+    # If sqlite_vec is not installed, it's fine for client usage
+    pass
 # --------------------------
 # LLMConfig Serialization
 # --------------------------
@@ -89,8 +99,11 @@ def serialize_tool_rules(tool_rules: Optional[List[ToolRule]]) -> List[Dict[str,
     if not tool_rules:
         return []
 
+    # de-duplicate tool rules using dict.fromkeys (preserves order in Python 3.7+)
+    deduplicated_rules = list(dict.fromkeys(tool_rules))
+
     data = [
-        {**rule.model_dump(mode="json"), "type": rule.type.value} for rule in tool_rules
+        {**rule.model_dump(mode="json"), "type": rule.type.value} for rule in deduplicated_rules
     ]  # Convert Enum to string for JSON compatibility
 
     # Validate ToolRule structure
@@ -134,6 +147,8 @@ def deserialize_tool_rule(
         return ParentToolRule(**data)
     elif rule_type == ToolRuleType.required_before_exit:
         return RequiredBeforeExitToolRule(**data)
+    elif rule_type == ToolRuleType.requires_approval:
+        return RequiresApprovalToolRule(**data)
     raise ValueError(f"Unknown ToolRule type: {rule_type}")
 
 
@@ -166,6 +181,7 @@ def deserialize_tool_calls(data: Optional[List[Dict]]) -> List[OpenAIToolCall]:
 
     calls = []
     for item in data:
+        item.pop("requires_approval", None)  # legacy field
         func_data = item.pop("function", None)
         tool_call_function = OpenAIFunction(**func_data)
         calls.append(OpenAIToolCall(function=tool_call_function, **item))
@@ -208,6 +224,49 @@ def deserialize_tool_returns(data: Optional[List[Dict]]) -> List[ToolReturn]:
     return tool_returns
 
 
+# --------------------------
+# Approvals Serialization
+# --------------------------
+
+
+def serialize_approvals(approvals: Optional[List[Union[ApprovalReturn, ToolReturn, dict]]]) -> List[Dict]:
+    """Convert a list of ToolReturn objects into JSON-serializable format."""
+    if not approvals:
+        return []
+
+    serialized_approvals = []
+    for approval in approvals:
+        if isinstance(approval, ApprovalReturn):
+            serialized_approvals.append(approval.model_dump(mode="json"))
+        elif isinstance(approval, ToolReturn):
+            serialized_approvals.append(approval.model_dump(mode="json"))
+        elif isinstance(approval, dict):
+            serialized_approvals.append(approval)  # Already a dictionary, leave it as-is
+        else:
+            raise TypeError(f"Unexpected approval type: {type(approval)}")
+
+    return serialized_approvals
+
+
+def deserialize_approvals(data: Optional[List[Dict]]) -> List[Union[ApprovalReturn, ToolReturn]]:
+    """Convert a JSON list back into ApprovalReturn and ToolReturn objects."""
+    if not data:
+        return []
+
+    approvals = []
+    for item in data:
+        if "type" in item and item.get("type") == MessageReturnType.approval:
+            approval_return = ApprovalReturn(**item)
+            approvals.append(approval_return)
+        elif "status" in item:
+            tool_return = ToolReturn(**item)
+            approvals.append(tool_return)
+        else:
+            continue
+
+    return approvals
+
+
 # ----------------------------
 # MessageContent Serialization
 # ----------------------------
@@ -245,7 +304,7 @@ def deserialize_message_content(data: Optional[List[Dict]]) -> List[MessageConte
         if content_type == MessageContentType.text:
             content = TextContent(**item)
         elif content_type == MessageContentType.image:
-            assert item["source"]["type"] == ImageSourceType.letta, f'Invalid image source type: {item["source"]["type"]}'
+            assert item["source"]["type"] == ImageSourceType.letta, f"Invalid image source type: {item['source']['type']}"
             content = ImageContent(**item)
         elif content_type == MessageContentType.tool_call:
             content = ToolCallContent(**item)
@@ -257,6 +316,8 @@ def deserialize_message_content(data: Optional[List[Dict]]) -> List[MessageConte
             content = RedactedReasoningContent(**item)
         elif content_type == MessageContentType.omitted_reasoning:
             content = OmittedReasoningContent(**item)
+        elif content_type == MessageContentType.summarized_reasoning:
+            content = SummarizedReasoningContent(**item)
         else:
             # Skip invalid content
             continue
@@ -272,22 +333,28 @@ def deserialize_message_content(data: Optional[List[Dict]]) -> List[MessageConte
 
 
 def serialize_vector(vector: Optional[Union[List[float], np.ndarray]]) -> Optional[bytes]:
-    """Convert a NumPy array or list into a base64-encoded byte string."""
+    """Convert a NumPy array or list into serialized format using sqlite-vec."""
     if vector is None:
         return None
     if isinstance(vector, list):
         vector = np.array(vector, dtype=np.float32)
+    else:
+        vector = vector.astype(np.float32)
 
-    return base64.b64encode(vector.tobytes())
+    return sqlite_vec.serialize_float32(vector.tolist())
 
 
 def deserialize_vector(data: Optional[bytes], dialect: Dialect) -> Optional[np.ndarray]:
-    """Convert a base64-encoded byte string back into a NumPy array."""
+    """Convert serialized data back into a NumPy array using sqlite-vec format."""
     if not data:
         return None
 
     if dialect.name == "sqlite":
-        data = base64.b64decode(data)
+        # Use sqlite-vec format
+        if len(data) % 4 == 0:  # Must be divisible by 4 for float32
+            return np.frombuffer(data, dtype=np.float32)
+        else:
+            raise ValueError(f"Invalid sqlite-vec binary data length: {len(data)}")
 
     return np.frombuffer(data, dtype=np.float32)
 
@@ -387,6 +454,24 @@ def deserialize_agent_step_state(data: Optional[Dict]) -> Optional[AgentStepStat
     if not data:
         return None
 
+    if solver_data := data.get("tool_rules_solver"):
+        # Get existing tool_rules or reconstruct from categorized fields for backwards compatibility
+        tool_rules_data = solver_data.get("tool_rules", [])
+
+        if not tool_rules_data:
+            for field_name in (
+                "init_tool_rules",
+                "continue_tool_rules",
+                "child_based_tool_rules",
+                "parent_tool_rules",
+                "terminal_tool_rules",
+                "required_before_exit_tool_rules",
+            ):
+                if field_data := solver_data.get(field_name):
+                    tool_rules_data.extend(field_data)
+
+        solver_data["tool_rules"] = deserialize_tool_rules(tool_rules_data)
+
     return AgentStepState(**data)
 
 
@@ -410,6 +495,7 @@ def deserialize_response_format(data: Optional[Dict]) -> Optional[ResponseFormat
         return JsonSchemaResponseFormat(**data)
     if data["type"] == ResponseFormatType.json_object:
         return JsonObjectResponseFormat(**data)
+    raise ValueError(f"Unknown Response Format type: {data['type']}")
 
 
 # --------------------------
@@ -418,14 +504,43 @@ def deserialize_response_format(data: Optional[Dict]) -> Optional[ResponseFormat
 
 
 def serialize_mcp_stdio_config(config: Union[Optional[StdioServerConfig], Dict]) -> Optional[Dict]:
-    """Convert an StdioServerConfig object into a JSON-serializable dictionary."""
+    """Convert an StdioServerConfig object into a JSON-serializable dictionary.
+
+    Persist required fields for successful deserialization back into a
+    StdioServerConfig model (namely `server_name` and `type`). The
+    `to_dict()` helper intentionally omits these since they're not needed
+    by MCP transport, but our ORM deserializer reconstructs the pydantic
+    model and requires them.
+    """
     if config and isinstance(config, StdioServerConfig):
-        return config.to_dict()
+        data = config.to_dict()
+        # Preserve required fields for pydantic reconstruction
+        data["server_name"] = config.server_name
+        # Store enum as its value; pydantic will coerce on load
+        data["type"] = config.type.value if hasattr(config.type, "value") else str(config.type)
+        return data
     return config
 
 
 def deserialize_mcp_stdio_config(data: Optional[Dict]) -> Optional[StdioServerConfig]:
-    """Convert a dictionary back into an StdioServerConfig object."""
+    """Convert a dictionary back into an StdioServerConfig object.
+
+    Backwards-compatibility notes:
+    - Older rows may only include `transport`, `command`, `args`, `env`.
+      In that case, provide defaults for `server_name` and `type` to
+      satisfy the pydantic model requirements.
+    - If both `type` and `transport` are present, prefer `type`.
+    """
     if not data:
         return None
-    return StdioServerConfig(**data)
+
+    payload = dict(data)
+    # Map legacy `transport` field to required `type` if missing
+    if "type" not in payload and "transport" in payload:
+        payload["type"] = payload["transport"]
+
+    # Ensure required field exists; use a sensible placeholder when unknown
+    if "server_name" not in payload:
+        payload["server_name"] = payload.get("name", "unknown")
+
+    return StdioServerConfig(**payload)

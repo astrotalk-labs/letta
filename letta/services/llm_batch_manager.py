@@ -11,9 +11,7 @@ from letta.orm.llm_batch_items import LLMBatchItem
 from letta.orm.llm_batch_job import LLMBatchJob
 from letta.otel.tracing import trace_method
 from letta.schemas.enums import AgentStepStatus, JobStatus, ProviderType
-from letta.schemas.llm_batch_job import AgentStepState
-from letta.schemas.llm_batch_job import LLMBatchItem as PydanticLLMBatchItem
-from letta.schemas.llm_batch_job import LLMBatchJob as PydanticLLMBatchJob
+from letta.schemas.llm_batch_job import AgentStepState, LLMBatchItem as PydanticLLMBatchItem, LLMBatchJob as PydanticLLMBatchJob
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.message import Message as PydanticMessage
 from letta.schemas.user import User as PydanticUser
@@ -45,8 +43,10 @@ class LLMBatchManager:
                 organization_id=actor.organization_id,
                 letta_batch_job_id=letta_batch_job_id,
             )
-            await batch.create_async(session, actor=actor)
-            return batch.to_pydantic()
+            await batch.create_async(session, actor=actor, no_commit=True, no_refresh=True)
+            pydantic_batch = batch.to_pydantic()
+            await session.commit()
+            return pydantic_batch
 
     @enforce_types
     @trace_method
@@ -216,7 +216,7 @@ class LLMBatchManager:
                 query = query.where(LLMBatchJob.organization_id == actor.organization_id)
 
             if weeks is not None:
-                cutoff_datetime = datetime.datetime.utcnow() - datetime.timedelta(weeks=weeks)
+                cutoff_datetime = datetime.datetime.now(datetime.UTC) - datetime.timedelta(weeks=weeks)
                 query = query.where(LLMBatchJob.created_at >= cutoff_datetime)
 
             if batch_size is not None:
@@ -282,10 +282,11 @@ class LLMBatchManager:
                 )
                 orm_items.append(orm_item)
 
-            created_items = await LLMBatchItem.batch_create_async(orm_items, session, actor=actor)
+            created_items = await LLMBatchItem.batch_create_async(orm_items, session, actor=actor, no_commit=True, no_refresh=True)
 
-            # Convert back to Pydantic models
-            return [item.to_pydantic() for item in created_items]
+            pydantic_items = [item.to_pydantic() for item in created_items]
+            await session.commit()
+            return pydantic_items
 
     @enforce_types
     @trace_method
@@ -403,7 +404,7 @@ class LLMBatchManager:
                 missing = requested - found
                 if missing:
                     raise ValueError(
-                        f"Cannot bulk-update batch items: no records for the following " f"(llm_batch_id, agent_id) pairs: {missing}"
+                        f"Cannot bulk-update batch items: no records for the following (llm_batch_id, agent_id) pairs: {missing}"
                     )
 
             # Build mappings, skipping any missing when strict=False

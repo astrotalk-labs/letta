@@ -1,30 +1,30 @@
+import asyncio
 import traceback
 from typing import Any, Dict, Optional, Type
 
 from letta.constants import FUNCTION_RETURN_VALUE_TRUNCATED
 from letta.helpers.datetime_helpers import AsyncTimer
 from letta.log import get_logger
-from letta.orm.enums import ToolType
 from letta.otel.context import get_ctx_attributes
 from letta.otel.metric_registry import MetricRegistry
 from letta.otel.tracing import trace_method
 from letta.schemas.agent import AgentState
+from letta.schemas.enums import ToolType
 from letta.schemas.sandbox_config import SandboxConfig
 from letta.schemas.tool import Tool
 from letta.schemas.tool_execution_result import ToolExecutionResult
 from letta.schemas.user import User
 from letta.services.agent_manager import AgentManager
 from letta.services.block_manager import BlockManager
-from letta.services.job_manager import JobManager
 from letta.services.message_manager import MessageManager
 from letta.services.passage_manager import PassageManager
+from letta.services.run_manager import RunManager
 from letta.services.tool_executor.builtin_tool_executor import LettaBuiltinToolExecutor
-from letta.services.tool_executor.composio_tool_executor import ExternalComposioToolExecutor
 from letta.services.tool_executor.core_tool_executor import LettaCoreToolExecutor
 from letta.services.tool_executor.files_tool_executor import LettaFileToolExecutor
 from letta.services.tool_executor.mcp_tool_executor import ExternalMCPToolExecutor
 from letta.services.tool_executor.multi_agent_tool_executor import LettaMultiAgentToolExecutor
-from letta.services.tool_executor.tool_executor import SandboxToolExecutor
+from letta.services.tool_executor.sandbox_tool_executor import SandboxToolExecutor
 from letta.services.tool_executor.tool_executor_base import ToolExecutor
 from letta.utils import get_friendly_error_msg
 
@@ -39,7 +39,6 @@ class ToolExecutorFactory:
         ToolType.LETTA_MULTI_AGENT_CORE: LettaMultiAgentToolExecutor,
         ToolType.LETTA_BUILTIN: LettaBuiltinToolExecutor,
         ToolType.LETTA_FILES_CORE: LettaFileToolExecutor,
-        ToolType.EXTERNAL_COMPOSIO: ExternalComposioToolExecutor,
         ToolType.EXTERNAL_MCP: ExternalMCPToolExecutor,
     }
 
@@ -50,7 +49,7 @@ class ToolExecutorFactory:
         message_manager: MessageManager,
         agent_manager: AgentManager,
         block_manager: BlockManager,
-        job_manager: JobManager,
+        run_manager: RunManager,
         passage_manager: PassageManager,
         actor: User,
     ) -> ToolExecutor:
@@ -60,7 +59,7 @@ class ToolExecutorFactory:
             message_manager=message_manager,
             agent_manager=agent_manager,
             block_manager=block_manager,
-            job_manager=job_manager,
+            run_manager=run_manager,
             passage_manager=passage_manager,
             actor=actor,
         )
@@ -74,7 +73,7 @@ class ToolExecutionManager:
         message_manager: MessageManager,
         agent_manager: AgentManager,
         block_manager: BlockManager,
-        job_manager: JobManager,
+        run_manager: RunManager,
         passage_manager: PassageManager,
         actor: User,
         agent_state: Optional[AgentState] = None,
@@ -84,7 +83,7 @@ class ToolExecutionManager:
         self.message_manager = message_manager
         self.agent_manager = agent_manager
         self.block_manager = block_manager
-        self.job_manager = job_manager
+        self.run_manager = run_manager
         self.passage_manager = passage_manager
         self.agent_state = agent_state
         self.logger = get_logger(__name__)
@@ -106,7 +105,7 @@ class ToolExecutionManager:
                 message_manager=self.message_manager,
                 agent_manager=self.agent_manager,
                 block_manager=self.block_manager,
-                job_manager=self.job_manager,
+                run_manager=self.run_manager,
                 passage_manager=self.passage_manager,
                 actor=self.actor,
             )
@@ -129,9 +128,21 @@ class ToolExecutionManager:
                 result.func_return = FUNCTION_RETURN_VALUE_TRUNCATED(return_str, len(return_str), tool.return_char_limit)
             return result
 
+        except asyncio.CancelledError as e:
+            self.logger.error(f"Aysnc cancellation error executing tool {function_name}: {str(e)}")
+            error_message = get_friendly_error_msg(
+                function_name=function_name,
+                exception_name=type(e).__name__,
+                exception_message=str(e),
+            )
+            return ToolExecutionResult(
+                status="error",
+                func_return=error_message,
+                stderr=[traceback.format_exc()],
+            )
         except Exception as e:
             status = "error"
-            self.logger.error(f"Error executing tool {function_name}: {str(e)}")
+            self.logger.info(f"Error executing tool {function_name}: {str(e)}")
             error_message = get_friendly_error_msg(
                 function_name=function_name,
                 exception_name=type(e).__name__,

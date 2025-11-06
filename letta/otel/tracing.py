@@ -1,6 +1,8 @@
+import asyncio
 import inspect
 import re
 import time
+import traceback
 from functools import wraps
 from typing import Any, Dict, List, Optional
 
@@ -84,6 +86,9 @@ async def _update_trace_attributes(request: Request):
         "x-agent-id": "agent.id",
         "x-template-id": "template.id",
         "x-base-template-id": "base_template.id",
+        "user-agent": "client",
+        "x-stainless-package-version": "sdk.version",
+        "x-stainless-lang": "sdk.language",
     }
     for header_key, span_key in header_attributes.items():
         header_value = request.headers.get(header_key)
@@ -143,7 +148,43 @@ def setup_tracing(
     if settings.sqlalchemy_tracing:
         from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
-        SQLAlchemyInstrumentor().instrument()
+        from letta.server.db import db_registry
+
+        # For OpenTelemetry SQLAlchemy instrumentation, we need to use the sync_engine
+        async_engine = db_registry.get_async_engine()
+        if async_engine:
+            # Access the sync_engine attribute safely
+            try:
+                SQLAlchemyInstrumentor().instrument(
+                    engine=async_engine.sync_engine,
+                    enable_commenter=True,
+                    commenter_options={},
+                    enable_attribute_commenter=True,
+                )
+            except Exception:
+                # Fall back to instrumenting without specifying an engine
+                # This will still capture some SQL operations
+                SQLAlchemyInstrumentor().instrument(
+                    enable_commenter=True,
+                    commenter_options={},
+                    enable_attribute_commenter=True,
+                )
+        else:
+            # If no async engine is available, instrument without an engine
+            SQLAlchemyInstrumentor().instrument(
+                enable_commenter=True,
+                commenter_options={},
+                enable_attribute_commenter=True,
+            )
+
+        # Additionally set up our custom instrumentation
+        try:
+            from letta.otel.sqlalchemy_instrumentation_integration import setup_letta_db_instrumentation
+
+            setup_letta_db_instrumentation(enable_joined_monitoring=True)
+        except Exception as e:
+            # Log but continue if our custom instrumentation fails
+            logger.warning(f"Failed to setup Letta DB instrumentation: {e}")
 
     if app:
         # Add middleware first
@@ -200,9 +241,31 @@ def trace_method(func):
         with tracer.start_as_current_span(_get_span_name(func, args)) as span:
             _add_parameters_to_span(span, func, args, kwargs)
 
-            result = await func(*args, **kwargs)
-            span.set_status(Status(StatusCode.OK))
-            return result
+            try:
+                result = await func(*args, **kwargs)
+                span.set_status(Status(StatusCode.OK))
+                return result
+            except asyncio.CancelledError as e:
+                # Get current task info
+                current_task = asyncio.current_task()
+                task_name = current_task.get_name() if current_task else "unknown"
+
+                # Log detailed information
+                logger.error(f"Task {task_name} cancelled in {func.__module__}.{func.__name__}")
+
+                # Add to span
+                span.set_status(Status(StatusCode.ERROR))
+                span.record_exception(
+                    e,
+                    attributes={
+                        "exception.type": "asyncio.CancelledError",
+                        "task.name": task_name,
+                        "function.name": func.__name__,
+                        "function.module": func.__module__,
+                        "cancellation.timestamp": time.time_ns(),
+                    },
+                )
+                raise
 
     @wraps(func)
     def sync_wrapper(*args, **kwargs):

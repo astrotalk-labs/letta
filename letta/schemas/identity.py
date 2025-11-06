@@ -3,6 +3,7 @@ from typing import List, Optional, Union
 
 from pydantic import Field
 
+from letta.schemas.enums import PrimitiveType
 from letta.schemas.letta_base import LettaBase
 
 
@@ -28,7 +29,7 @@ class IdentityPropertyType(str, Enum):
 
 
 class IdentityBase(LettaBase):
-    __id_prefix__ = "identity"
+    __id_prefix__ = PrimitiveType.IDENTITY.value
 
 
 class IdentityProperty(LettaBase):
@@ -45,8 +46,8 @@ class Identity(IdentityBase):
     name: str = Field(..., description="The name of the identity.")
     identity_type: IdentityType = Field(..., description="The type of the identity.")
     project_id: Optional[str] = Field(None, description="The project id of the identity, if applicable.")
-    agent_ids: List[str] = Field(..., description="The IDs of the agents associated with the identity.")
-    block_ids: List[str] = Field(..., description="The IDs of the blocks associated with the identity.")
+    agent_ids: List[str] = Field(..., description="The IDs of the agents associated with the identity.", deprecated=True)
+    block_ids: List[str] = Field(..., description="The IDs of the blocks associated with the identity.", deprecated=True)
     organization_id: Optional[str] = Field(None, description="The organization id of the user")
     properties: List[IdentityProperty] = Field(default_factory=list, description="List of properties associated with the identity")
 
@@ -56,8 +57,8 @@ class IdentityCreate(LettaBase):
     name: str = Field(..., description="The name of the identity.")
     identity_type: IdentityType = Field(..., description="The type of the identity.")
     project_id: Optional[str] = Field(None, description="The project id of the identity, if applicable.")
-    agent_ids: Optional[List[str]] = Field(None, description="The agent ids that are associated with the identity.")
-    block_ids: Optional[List[str]] = Field(None, description="The IDs of the blocks associated with the identity.")
+    agent_ids: Optional[List[str]] = Field(None, description="The agent ids that are associated with the identity.", deprecated=True)
+    block_ids: Optional[List[str]] = Field(None, description="The IDs of the blocks associated with the identity.", deprecated=True)
     properties: Optional[List[IdentityProperty]] = Field(None, description="List of properties associated with the identity.")
 
 
@@ -66,8 +67,8 @@ class IdentityUpsert(LettaBase):
     name: str = Field(..., description="The name of the identity.")
     identity_type: IdentityType = Field(..., description="The type of the identity.")
     project_id: Optional[str] = Field(None, description="The project id of the identity, if applicable.")
-    agent_ids: Optional[List[str]] = Field(None, description="The agent ids that are associated with the identity.")
-    block_ids: Optional[List[str]] = Field(None, description="The IDs of the blocks associated with the identity.")
+    agent_ids: Optional[List[str]] = Field(None, description="The agent ids that are associated with the identity.", deprecated=True)
+    block_ids: Optional[List[str]] = Field(None, description="The IDs of the blocks associated with the identity.", deprecated=True)
     properties: Optional[List[IdentityProperty]] = Field(None, description="List of properties associated with the identity.")
 
 
@@ -75,6 +76,14 @@ class IdentityUpdate(LettaBase):
     identifier_key: Optional[str] = Field(None, description="External, user-generated identifier key of the identity.")
     name: Optional[str] = Field(None, description="The name of the identity.")
     identity_type: Optional[IdentityType] = Field(None, description="The type of the identity.")
-    agent_ids: Optional[List[str]] = Field(None, description="The agent ids that are associated with the identity.")
-    block_ids: Optional[List[str]] = Field(None, description="The IDs of the blocks associated with the identity.")
+    agent_ids: Optional[List[str]] = Field(None, description="The agent ids that are associated with the identity.", deprecated=True)
+    block_ids: Optional[List[str]] = Field(None, description="The IDs of the blocks associated with the identity.", deprecated=True)
     properties: Optional[List[IdentityProperty]] = Field(None, description="List of properties associated with the identity.")
+
+
+class PaginatedIdentities(LettaBase):
+    """Paginated response for identities"""
+
+    data: List[Identity] = Field(..., description="List of identities")
+    next_cursor: Optional[str] = Field(None, description="Cursor for fetching the next page")
+    has_more: bool = Field(..., description="Whether more results exist after this page")

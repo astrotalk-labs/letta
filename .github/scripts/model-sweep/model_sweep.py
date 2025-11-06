@@ -29,7 +29,6 @@ from letta_client.types import (
 from letta.schemas.agent import AgentState
 from letta.schemas.llm_config import LLMConfig
 
-
 # ------------------------------
 # Helper Functions and Constants
 # ------------------------------
@@ -37,7 +36,8 @@ from letta.schemas.llm_config import LLMConfig
 
 def get_llm_config(filename: str, llm_config_dir: str = "tests/configs/llm_model_configs") -> LLMConfig:
     filename = os.path.join(llm_config_dir, filename)
-    config_data = json.load(open(filename, "r"))
+    with open(filename, "r") as f:
+        config_data = json.load(f)
     llm_config = LLMConfig(**config_data)
     return llm_config
 
@@ -97,7 +97,7 @@ all_configs = [
     "openai-gpt-4o-mini.json",
     # "azure-gpt-4o-mini.json", # TODO: Re-enable on new agent loop
     "claude-3-5-sonnet.json",
-    "claude-3-7-sonnet.json",
+    "claude-4-sonnet-extended.json",
     "claude-3-7-sonnet-extended.json",
     "gemini-1.5-pro.json",
     "gemini-2.5-flash-vertex.json",
@@ -108,6 +108,7 @@ all_configs = [
 requested = os.getenv("LLM_CONFIG_FILE")
 filenames = [requested] if requested else all_configs
 TESTED_LLM_CONFIGS: List[LLMConfig] = [get_llm_config(fn) for fn in filenames]
+
 
 def assert_greeting_with_assistant_message_response(
     messages: List[Any],

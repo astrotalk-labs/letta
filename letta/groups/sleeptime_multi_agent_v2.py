@@ -1,6 +1,6 @@
 import asyncio
+from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
-from typing import AsyncGenerator, List, Optional
 
 from letta.agents.base_agent import BaseAgent
 from letta.agents.letta_agent import LettaAgent
@@ -24,6 +24,7 @@ from letta.services.message_manager import MessageManager
 from letta.services.passage_manager import PassageManager
 from letta.services.step_manager import NoopStepManager, StepManager
 from letta.services.telemetry_manager import NoopTelemetryManager, TelemetryManager
+from letta.utils import safe_create_task
 
 
 class SleeptimeMultiAgentV2(BaseAgent):
@@ -39,7 +40,8 @@ class SleeptimeMultiAgentV2(BaseAgent):
         actor: User,
         step_manager: StepManager = NoopStepManager(),
         telemetry_manager: TelemetryManager = NoopTelemetryManager(),
-        group: Optional[Group] = None,
+        group: Group | None = None,
+        current_run_id: str | None = None,
     ):
         super().__init__(
             agent_id=agent_id,
@@ -54,6 +56,7 @@ class SleeptimeMultiAgentV2(BaseAgent):
         self.job_manager = job_manager
         self.step_manager = step_manager
         self.telemetry_manager = telemetry_manager
+        self.current_run_id = current_run_id
         # Group settings
         assert group.manager_type == ManagerType.sleeptime, f"Expected group manager type to be 'sleeptime', got {group.manager_type}"
         self.group = group
@@ -61,12 +64,12 @@ class SleeptimeMultiAgentV2(BaseAgent):
     @trace_method
     async def step(
         self,
-        input_messages: List[MessageCreate],
+        input_messages: list[MessageCreate],
         max_steps: int = DEFAULT_MAX_STEPS,
-        run_id: Optional[str] = None,
+        run_id: str | None = None,
         use_assistant_message: bool = True,
-        request_start_timestamp_ns: Optional[int] = None,
-        include_return_message_types: Optional[List[MessageType]] = None,
+        request_start_timestamp_ns: int | None = None,
+        include_return_message_types: list[MessageType] | None = None,
     ) -> LettaResponse:
         run_ids = []
 
@@ -89,6 +92,7 @@ class SleeptimeMultiAgentV2(BaseAgent):
             actor=self.actor,
             step_manager=self.step_manager,
             telemetry_manager=self.telemetry_manager,
+            current_run_id=self.current_run_id,
         )
         # Perform foreground agent step
         response = await foreground_agent.step(
@@ -125,7 +129,7 @@ class SleeptimeMultiAgentV2(BaseAgent):
 
                 except Exception as e:
                     # Individual task failures
-                    print(f"Agent processing failed: {str(e)}")
+                    print(f"Agent processing failed: {e!s}")
                     raise e
 
         response.usage.run_ids = run_ids
@@ -134,11 +138,11 @@ class SleeptimeMultiAgentV2(BaseAgent):
     @trace_method
     async def step_stream_no_tokens(
         self,
-        input_messages: List[MessageCreate],
+        input_messages: list[MessageCreate],
         max_steps: int = DEFAULT_MAX_STEPS,
         use_assistant_message: bool = True,
-        request_start_timestamp_ns: Optional[int] = None,
-        include_return_message_types: Optional[List[MessageType]] = None,
+        request_start_timestamp_ns: int | None = None,
+        include_return_message_types: list[MessageType] | None = None,
     ):
         response = await self.step(
             input_messages=input_messages,
@@ -157,11 +161,11 @@ class SleeptimeMultiAgentV2(BaseAgent):
     @trace_method
     async def step_stream(
         self,
-        input_messages: List[MessageCreate],
+        input_messages: list[MessageCreate],
         max_steps: int = DEFAULT_MAX_STEPS,
         use_assistant_message: bool = True,
-        request_start_timestamp_ns: Optional[int] = None,
-        include_return_message_types: Optional[List[MessageType]] = None,
+        request_start_timestamp_ns: int | None = None,
+        include_return_message_types: list[MessageType] | None = None,
     ) -> AsyncGenerator[str, None]:
         # Prepare new messages
         new_messages = []
@@ -182,6 +186,7 @@ class SleeptimeMultiAgentV2(BaseAgent):
             actor=self.actor,
             step_manager=self.step_manager,
             telemetry_manager=self.telemetry_manager,
+            current_run_id=self.current_run_id,
         )
         # Perform foreground agent step
         async for chunk in foreground_agent.step_stream(
@@ -218,7 +223,7 @@ class SleeptimeMultiAgentV2(BaseAgent):
     async def _issue_background_task(
         self,
         sleeptime_agent_id: str,
-        response_messages: List[Message],
+        response_messages: list[Message],
         last_processed_message_id: str,
         use_assistant_message: bool = True,
     ) -> str:
@@ -232,7 +237,7 @@ class SleeptimeMultiAgentV2(BaseAgent):
         )
         run = await self.job_manager.create_job_async(pydantic_job=run, actor=self.actor)
 
-        asyncio.create_task(
+        safe_create_task(
             self._participant_agent_step(
                 foreground_agent_id=self.agent_id,
                 sleeptime_agent_id=sleeptime_agent_id,
@@ -240,7 +245,8 @@ class SleeptimeMultiAgentV2(BaseAgent):
                 last_processed_message_id=last_processed_message_id,
                 run_id=run.id,
                 use_assistant_message=True,
-            )
+            ),
+            label=f"participant_agent_step_{sleeptime_agent_id}",
         )
         return run.id
 
@@ -248,7 +254,7 @@ class SleeptimeMultiAgentV2(BaseAgent):
         self,
         foreground_agent_id: str,
         sleeptime_agent_id: str,
-        response_messages: List[Message],
+        response_messages: list[Message],
         last_processed_message_id: str,
         run_id: str,
         use_assistant_message: bool = True,
@@ -262,7 +268,7 @@ class SleeptimeMultiAgentV2(BaseAgent):
             prior_messages = []
             if self.group.sleeptime_agent_frequency:
                 try:
-                    prior_messages = await self.message_manager.list_messages_for_agent_async(
+                    prior_messages = await self.message_manager.list_messages(
                         agent_id=foreground_agent_id,
                         actor=self.actor,
                         after=last_processed_message_id,
@@ -296,6 +302,7 @@ class SleeptimeMultiAgentV2(BaseAgent):
                 actor=self.actor,
                 step_manager=self.step_manager,
                 telemetry_manager=self.telemetry_manager,
+                current_run_id=self.current_run_id,
                 message_buffer_limit=20,  # TODO: Make this configurable
                 message_buffer_min=8,  # TODO: Make this configurable
                 enable_summarization=False,  # TODO: Make this configurable

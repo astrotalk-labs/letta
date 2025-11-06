@@ -1,8 +1,9 @@
 from typing import List, Optional
 
-from letta.agent import Agent, AgentState
+from letta.agents.base_agent import BaseAgent
 from letta.interface import AgentInterface
 from letta.orm import User
+from letta.schemas.agent import AgentState
 from letta.schemas.block import Block
 from letta.schemas.letta_message_content import TextContent
 from letta.schemas.message import Message, MessageCreate
@@ -11,7 +12,7 @@ from letta.schemas.usage import LettaUsageStatistics
 from letta.services.tool_manager import ToolManager
 
 
-class DynamicMultiAgent(Agent):
+class DynamicMultiAgent(BaseAgent):
     def __init__(
         self,
         interface: AgentInterface,
@@ -94,6 +95,7 @@ class DynamicMultiAgent(Agent):
                 for name, agent_id in [(agents[agent_id].agent_state.name, agent_id) for agent_id in agent_id_options]:
                     if name.lower() in assistant_message.content.lower():
                         speaker_id = agent_id
+                assert speaker_id is not None, f"No names found in {assistant_message.content}"
 
                 # Sum usage
                 total_usage.prompt_tokens += usage_stats.prompt_tokens

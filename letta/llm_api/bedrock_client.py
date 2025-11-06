@@ -6,7 +6,7 @@ from aioboto3.session import Session
 from letta.llm_api.anthropic_client import AnthropicClient
 from letta.log import get_logger
 from letta.otel.tracing import trace_method
-from letta.schemas.enums import ProviderCategory
+from letta.schemas.enums import AgentType, ProviderCategory
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.message import Message as PydanticMessage
 from letta.services.provider_manager import ProviderManager
@@ -16,11 +16,7 @@ logger = get_logger(__name__)
 
 
 class BedrockClient(AnthropicClient):
-
-    @trace_method
-    async def _get_anthropic_client_async(
-        self, llm_config: LLMConfig, async_client: bool = False
-    ) -> Union[anthropic.AsyncAnthropic, anthropic.Anthropic, anthropic.AsyncAnthropicBedrock, anthropic.AnthropicBedrock]:
+    async def get_byok_overrides_async(self, llm_config: LLMConfig) -> tuple[str, str, str]:
         override_access_key_id, override_secret_access_key, override_default_region = None, None, None
         if llm_config.provider_category == ProviderCategory.byok:
             (
@@ -31,6 +27,13 @@ class BedrockClient(AnthropicClient):
                 llm_config.provider_name,
                 actor=self.actor,
             )
+        return override_access_key_id, override_secret_access_key, override_default_region
+
+    @trace_method
+    async def _get_anthropic_client_async(
+        self, llm_config: LLMConfig, async_client: bool = False
+    ) -> Union[anthropic.AsyncAnthropic, anthropic.Anthropic, anthropic.AsyncAnthropicBedrock, anthropic.AnthropicBedrock]:
+        override_access_key_id, override_secret_access_key, override_default_region = await self.get_byok_overrides_async(llm_config)
 
         session = Session()
         async with session.client(
@@ -62,12 +65,14 @@ class BedrockClient(AnthropicClient):
     @trace_method
     def build_request_data(
         self,
+        agent_type: AgentType,
         messages: List[PydanticMessage],
         llm_config: LLMConfig,
         tools: Optional[List[dict]] = None,
         force_tool_call: Optional[str] = None,
+        requires_subsequent_tool_call: bool = False,
     ) -> dict:
-        data = super().build_request_data(messages, llm_config, tools, force_tool_call)
+        data = super().build_request_data(agent_type, messages, llm_config, tools, force_tool_call, requires_subsequent_tool_call)
         # remove disallowed fields
         if "tool_choice" in data:
             del data["tool_choice"]["disable_parallel_tool_use"]

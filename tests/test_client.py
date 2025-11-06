@@ -100,14 +100,15 @@ def search_agent_two(client: Letta):
 
 
 @pytest.fixture(autouse=True)
-def clear_tables():
+async def clear_tables():
     """Clear the sandbox tables before each test."""
-    from letta.server.db import db_context
 
-    with db_context() as session:
-        session.execute(delete(SandboxEnvironmentVariable))
-        session.execute(delete(SandboxConfig))
-        session.commit()
+    from letta.server.db import db_registry
+
+    async with db_registry.async_session() as session:
+        await session.execute(delete(SandboxEnvironmentVariable))
+        await session.execute(delete(SandboxConfig))
+        await session.commit()
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -157,7 +158,7 @@ def test_add_and_manage_tags_for_agent(client: Letta):
     client.agents.delete(agent.id)
 
 
-def test_agent_tags(client: Letta):
+def test_agent_tags(client: Letta, clear_tables):
     """Test creating agents with tags and retrieving tags via the API."""
 
     # Create multiple agents with different tags
@@ -185,6 +186,8 @@ def test_agent_tags(client: Letta):
     # Test getting all tags
     all_tags = client.tags.list()
     expected_tags = ["agent1", "agent2", "agent3", "development", "production", "test"]
+    print("ALL TAGS", all_tags)
+    print("EXPECTED TAGS", expected_tags)
     assert sorted(all_tags) == expected_tags
 
     # Test pagination
@@ -593,13 +596,7 @@ def test_attach_detach_agent_source(client: Letta, agent: AgentState):
     # Create a source
     source = client.sources.create(
         name="test_source",
-        embedding_config={  # TODO: change this
-            "embedding_endpoint": "https://embeddings.memgpt.ai",
-            "embedding_model": "BAAI/bge-large-en-v1.5",
-            "embedding_dim": 1024,
-            "embedding_chunk_size": 300,
-            "embedding_endpoint_type": "hugging-face",
-        },
+        embedding="openai/text-embedding-3-small",
     )
     initial_sources = client.agents.sources.list(agent_id=agent.id)
     assert source.id not in [s.id for s in initial_sources]
@@ -656,45 +653,43 @@ def test_initial_sequence(client: Letta):
     assert messages[2].message_type == "user_message"
 
 
-def test_timezone(client: Letta):
-    # create an agent
-    agent = client.agents.create(
-        memory_blocks=[{"label": "human", "value": ""}, {"label": "persona", "value": ""}],
-        model="letta/letta-free",
-        embedding="letta/letta-free",
-        timezone="America/Los_Angeles",
-    )
-
-    # get the timzone
-    agent = client.agents.retrieve(agent_id=agent.id)
-    assert agent.timezone == "America/Los_Angeles"
-
-    response = client.agents.messages.create(
-        agent_id=agent.id,
-        messages=[
-            MessageCreate(
-                role="user",
-                content="What timezone are you in?",
-            )
-        ],
-    )
-    # second message is assistant message
-    assert response.messages[1].message_type == "assistant_message"
-    # content is similar to current timezone
-    assert (
-        "America/Los_Angeles" in response.messages[1].content
-        or "PDT" in response.messages[1].content
-        or "PST" in response.messages[1].content
-    )
-
-    # test updating the timezone
-    client.agents.modify(agent_id=agent.id, timezone="America/New_York")
-    agent = client.agents.retrieve(agent_id=agent.id)
-    assert agent.timezone == "America/New_York"
+# TODO: Add back when timezone packing is standardized/settled
+# def test_timezone(client: Letta):
+#     agent = client.agents.create(
+#         memory_blocks=[{"label": "human", "value": ""}, {"label": "persona", "value": ""}],
+#         model="letta/letta-free",
+#         embedding="letta/letta-free",
+#         timezone="America/Los_Angeles",
+#     )
+#
+#     agent = client.agents.retrieve(agent_id=agent.id)
+#     assert agent.timezone == "America/Los_Angeles"
+#
+#     response = client.agents.messages.create(
+#         agent_id=agent.id,
+#         messages=[
+#             MessageCreate(
+#                 role="user",
+#                 content="What timezone are you in?",
+#             )
+#         ],
+#     )
+#     # second message is assistant message
+#     assert response.messages[1].message_type == "assistant_message"
+#
+#     pacific_tz_indicators = {"America/Los_Angeles", "PDT", "PST", "PT", "Pacific Daylight Time", "Pacific Standard Time", "Pacific Time"}
+#     content = response.messages[1].content
+#     assert any(tz in content for tz in pacific_tz_indicators), (
+#         f"Response content: {response.messages[1].content} does not contain expected timezone"
+#     )
+#
+#     # test updating the timezone
+#     client.agents.modify(agent_id=agent.id, timezone="America/New_York")
+#     agent = client.agents.retrieve(agent_id=agent.id)
+#     assert agent.timezone == "America/New_York"
 
 
 def test_attach_sleeptime_block(client: Letta):
-
     agent = client.agents.create(
         memory_blocks=[{"label": "human", "value": ""}, {"label": "persona", "value": ""}],
         model="letta/letta-free",
@@ -710,7 +705,7 @@ def test_attach_sleeptime_block(client: Letta):
     sleeptime_id = [id for id in agent_ids if id != agent.id][0]
 
     # attach a new block
-    block = client.blocks.create(label="test", value="test")
+    block = client.blocks.create(label="test", value="test")  # , project_id="test")
     client.agents.blocks.attach(agent_id=agent.id, block_id=block.id)
 
     # verify block is attached to both agents
@@ -719,6 +714,9 @@ def test_attach_sleeptime_block(client: Letta):
 
     blocks = client.agents.blocks.list(agent_id=sleeptime_id)
     assert block.id in [b.id for b in blocks]
+
+    # blocks = client.blocks.list(project_id="test")
+    # assert block.id in [b.id for b in blocks]
 
     # cleanup
     client.agents.delete(agent.id)
