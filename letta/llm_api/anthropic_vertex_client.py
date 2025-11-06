@@ -9,7 +9,7 @@ class AnthropicVertexClient:
     def __init__(self, project_id: Optional[str] = None, region: Optional[str] = None):
         self.project_id = project_id or model_settings.google_cloud_project
         # ✅ Force global region for Claude models
-        self.region = "global"
+        self.region = "us-east5"
 
         if not self.project_id:
             raise ValueError("GOOGLE_CLOUD_PROJECT must be set for Vertex AI")
