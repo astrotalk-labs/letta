@@ -742,6 +742,7 @@ def _prepare_anthropic_request(
 
     # Move 'system' to the top level
     assert data["messages"][0]["role"] == "system", f"Expected 'system' role in messages[0]:\n{data['messages'][0]}"
+    data["system"] = data["messages"][0]["content"]
     system_content = data["messages"][0]["content"]
 
     # Add cache control to system message

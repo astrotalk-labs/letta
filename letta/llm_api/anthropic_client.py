@@ -102,6 +102,7 @@ class AnthropicClient(LLMClientBase):
             response = await client.beta.messages.create(**request_data, betas=betas)
         else:        response = await client.beta.messages.create(**request_data)
         logger.info(response.usage)
+        logger.info("This is the usage response from calude %s", response.usage)
         return response.model_dump()
 
     @trace_method
@@ -328,6 +329,8 @@ class AnthropicClient(LLMClientBase):
             raise RuntimeError(f"First message is not a system message, instead has role {messages[0].role}")
 
         system_content = messages[0].content if isinstance(messages[0].content, str) else messages[0].content[0].text
+        static_part_1, dynamic_part_1, static_part_2, dynamic_part_2 = self._split_system_message_for_caching(system_content)
+        data["system"] = self._add_cache_control_to_system_message(static_part_1, dynamic_part_1, static_part_2, dynamic_part_2)
         data["system"] = self._add_cache_control_to_system_message(system_content)
         data["messages"] = PydanticMessage.to_anthropic_dicts_from_list(
             messages=messages[1:],
@@ -374,7 +377,6 @@ class AnthropicClient(LLMClientBase):
             )
 
         return data
-
 
     def _split_system_message_for_caching(self, system_content: str) -> tuple:
 
@@ -448,7 +450,6 @@ class AnthropicClient(LLMClientBase):
             })
 
         return system_parts
-
 
     async def count_tokens(self, messages: List[dict] = None, model: str = None, tools: List[OpenAITool] = None) -> int:
         logging.getLogger("httpx").setLevel(logging.WARNING)
