@@ -1471,7 +1471,7 @@ class SyncServer(object):
 
     # Add these methods to your SyncServer class, somewhere before send_message_to_agent method
 
-    def load_agent(self, agent_id: str, actor: User, interface: Union[AgentInterface, None] = None) -> Agent:
+    def load_agent(self, agent_id: str, actor: User, interface: Union[AgentInterface, None] = None) -> "Agent":
         """Updated method to load agents from persisted storage"""
         from letta.agent import Agent
 
@@ -1485,7 +1485,6 @@ class SyncServer(object):
 
         interface = interface or self.default_interface_factory()
         return Agent(agent_state=agent_state, interface=interface, user=actor, mcp_clients=self.mcp_clients)
-
 
     def send_messages(
             self,
