@@ -10,8 +10,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import httpx
 from anthropic import AsyncAnthropic
-from composio.client import Composio
-from composio.client.collections import ActionModel, AppModel
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
