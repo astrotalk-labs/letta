@@ -2,7 +2,7 @@ import json
 import re
 import time
 import warnings
-from typing import Generator, List, Optional, Union
+from typing import Any, Generator, List, Optional, Union
 
 import anthropic
 from anthropic import PermissionDeniedError
@@ -798,26 +798,35 @@ def _prepare_anthropic_request(
 
 
 def anthropic_chat_completions_request(
-    data: ChatCompletionRequest,
-    inner_thoughts_xml_tag: Optional[str] = "thinking",
-    put_inner_thoughts_in_kwargs: bool = False,
-    extended_thinking: bool = False,
-    max_reasoning_tokens: Optional[int] = None,
-    provider_name: Optional[str] = None,
-    provider_category: Optional[ProviderCategory] = None,
-    betas: List[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
-    user_id: Optional[str] = None,
-) -> ChatCompletionResponse:
-    """https://docs.anthropic.com/claude/docs/tool-use"""
-    anthropic_client = None
-    if provider_category == ProviderCategory.byok:
-        actor = UserManager().get_user_or_default(user_id=user_id)
-        api_key = ProviderManager().get_override_key(provider_name, actor=actor)
-        anthropic_client = anthropic.Anthropic(api_key=api_key)
-    elif model_settings.anthropic_api_key:
-        anthropic_client = anthropic.Anthropic()
-    else:
-        raise ValueError("No available Anthropic API key")
+        data: ChatCompletionRequest,
+        inner_thoughts_xml_tag: Optional[str] = "thinking",
+        put_inner_thoughts_in_kwargs: bool = False,
+        extended_thinking: bool = False,
+        max_reasoning_tokens: Optional[int] = None,
+        provider_name: Optional[str] = None,
+        provider_category: Optional[ProviderCategory] = None,
+        betas: List[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
+        user_id: Optional[str] = None,
+        anthropic_client: Optional[Any] = None,  # ✅ ADD THIS PARAMETER
+)  -> ChatCompletionResponse:
+    """https://docs.anthropic.com/claude/docs/tool-use
+
+    Args:
+        data: Chat completion request
+        anthropic_client: Optional pre-configured Anthropic or AnthropicVertex client
+        ... other params
+    """
+    # ✅ Use provided client or create new one
+    if anthropic_client is None:
+        if provider_category == ProviderCategory.byok:
+            actor = UserManager().get_user_or_default(user_id=user_id)
+            api_key = ProviderManager().get_override_key(provider_name, actor=actor)
+            anthropic_client = anthropic.Anthropic(api_key=api_key)
+        elif model_settings.anthropic_api_key:
+            anthropic_client = anthropic.Anthropic()
+        else:
+            raise ValueError("No available Anthropic API key")
+
     data = _prepare_anthropic_request(
         data=data,
         inner_thoughts_xml_tag=inner_thoughts_xml_tag,
@@ -826,10 +835,17 @@ def anthropic_chat_completions_request(
         max_reasoning_tokens=max_reasoning_tokens,
     )
     log_event(name="llm_request_sent", attributes=data)
-    response = anthropic_client.beta.messages.create(
-        **data,
-        betas=betas,
-    )
+    is_vertex = isinstance(anthropic_client, AnthropicVertex)
+
+    if is_vertex:
+        # Vertex AI doesn't support beta features like prompt caching
+        response = anthropic_client.messages.create(**data)
+    else:
+        # Direct Anthropic API supports beta features
+        response = anthropic_client.beta.messages.create(
+            **data,
+            betas=betas,
+        )
     log_event(name="llm_response_received", attributes={"response": response.json()})
     return convert_anthropic_response_to_chatcompletion(response=response, inner_thoughts_xml_tag=inner_thoughts_xml_tag)
 
@@ -860,15 +876,16 @@ def anthropic_bedrock_chat_completions_request(
 
 
 def anthropic_chat_completions_request_stream(
-    data: ChatCompletionRequest,
-    inner_thoughts_xml_tag: Optional[str] = "thinking",
-    put_inner_thoughts_in_kwargs: bool = False,
-    extended_thinking: bool = False,
-    max_reasoning_tokens: Optional[int] = None,
-    provider_name: Optional[str] = None,
-    provider_category: Optional[ProviderCategory] = None,
-    betas: List[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
-    user_id: Optional[str] = None,
+        data: ChatCompletionRequest,
+        inner_thoughts_xml_tag: Optional[str] = "thinking",
+        put_inner_thoughts_in_kwargs: bool = False,
+        extended_thinking: bool = False,
+        max_reasoning_tokens: Optional[int] = None,
+        provider_name: Optional[str] = None,
+        provider_category: Optional[ProviderCategory] = None,
+        betas: List[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
+        user_id: Optional[str] = None,
+        anthropic_client: Optional[Any] = None,  # ✅ ADD THIS PARAMETER
 ) -> Generator[ChatCompletionChunkResponse, None, None]:
     """Stream chat completions from Anthropic API.
 
@@ -882,17 +899,29 @@ def anthropic_chat_completions_request_stream(
         extended_thinking=extended_thinking,
         max_reasoning_tokens=max_reasoning_tokens,
     )
-    if provider_category == ProviderCategory.byok:
-        actor = UserManager().get_user_or_default(user_id=user_id)
-        api_key = ProviderManager().get_override_key(provider_name, actor=actor)
-        anthropic_client = anthropic.Anthropic(api_key=api_key)
-    elif model_settings.anthropic_api_key:
-        anthropic_client = anthropic.Anthropic()
+    # ✅ Use provided client or create new one
+    if anthropic_client is None:
+        if provider_category == ProviderCategory.byok:
+            actor = UserManager().get_user_or_default(user_id=user_id)
+            api_key = ProviderManager().get_override_key(provider_name, actor=actor)
+            anthropic_client = anthropic.Anthropic(api_key=api_key)
+        elif model_settings.anthropic_api_key:
+            anthropic_client = anthropic.Anthropic()
+        else:
+            raise ValueError("No available Anthropic API key")
 
-    with anthropic_client.beta.messages.stream(
-        **data,
-        betas=betas,
-    ) as stream:
+
+    # Check if using Vertex AI (doesn't support beta features)
+    is_vertex = isinstance(anthropic_client, AnthropicVertex)
+
+    if is_vertex:
+        # Vertex AI doesn't support beta features
+        stream_manager = anthropic_client.messages.stream(**data)
+    else:
+        # Direct Anthropic API supports beta features
+        stream_manager = anthropic_client.beta.messages.stream(**data, betas=betas)
+
+    with stream_manager as stream:
         # Stream: https://github.com/anthropics/anthropic-sdk-python/blob/d212ec9f6d5e956f13bc0ddc3d86b5888a954383/src/anthropic/lib/streaming/_beta_messages.py#L22
         message_id = None
         model = None
@@ -926,19 +955,20 @@ def anthropic_chat_completions_request_stream(
 
 
 def anthropic_chat_completions_process_stream(
-    chat_completion_request: ChatCompletionRequest,
-    stream_interface: Optional[Union[AgentChunkStreamingInterface, AgentRefreshStreamingInterface]] = None,
-    inner_thoughts_xml_tag: Optional[str] = "thinking",
-    put_inner_thoughts_in_kwargs: bool = False,
-    extended_thinking: bool = False,
-    max_reasoning_tokens: Optional[int] = None,
-    provider_name: Optional[str] = None,
-    provider_category: Optional[ProviderCategory] = None,
-    create_message_id: bool = True,
-    create_message_datetime: bool = True,
-    betas: List[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
-    name: Optional[str] = None,
-    user_id: Optional[str] = None,
+        chat_completion_request: ChatCompletionRequest,
+        stream_interface: Optional[Union[AgentChunkStreamingInterface, AgentRefreshStreamingInterface]] = None,
+        inner_thoughts_xml_tag: Optional[str] = "thinking",
+        put_inner_thoughts_in_kwargs: bool = False,
+        extended_thinking: bool = False,
+        max_reasoning_tokens: Optional[int] = None,
+        provider_name: Optional[str] = None,
+        provider_category: Optional[ProviderCategory] = None,
+        create_message_id: bool = True,
+        create_message_datetime: bool = True,
+        betas: List[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
+        name: Optional[str] = None,
+        user_id: Optional[str] = None,
+        anthropic_client: Optional[Any] = None,  # ✅ ADD THIS PARAMETER
 ) -> ChatCompletionResponse:
     """Process a streaming completion response from Anthropic, similar to OpenAI's streaming.
 
@@ -1013,17 +1043,18 @@ def anthropic_chat_completions_process_stream(
     message_idx = 0
     try:
         for chunk_idx, chat_completion_chunk in enumerate(
-            anthropic_chat_completions_request_stream(
-                data=chat_completion_request,
-                inner_thoughts_xml_tag=inner_thoughts_xml_tag,
-                put_inner_thoughts_in_kwargs=put_inner_thoughts_in_kwargs,
-                extended_thinking=extended_thinking,
-                max_reasoning_tokens=max_reasoning_tokens,
-                provider_name=provider_name,
-                provider_category=provider_category,
-                betas=betas,
-                user_id=user_id,
-            )
+                anthropic_chat_completions_request_stream(
+                    data=chat_completion_request,
+                    inner_thoughts_xml_tag=inner_thoughts_xml_tag,
+                    put_inner_thoughts_in_kwargs=put_inner_thoughts_in_kwargs,
+                    extended_thinking=extended_thinking,
+                    max_reasoning_tokens=max_reasoning_tokens,
+                    provider_name=provider_name,
+                    provider_category=provider_category,
+                    betas=betas,
+                    user_id=user_id,
+                    anthropic_client=anthropic_client,  # ✅ Pass through the client
+                )
         ):
             assert isinstance(chat_completion_chunk, ChatCompletionChunkResponse), type(chat_completion_chunk)
 

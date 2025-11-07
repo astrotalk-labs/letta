@@ -1337,6 +1337,28 @@ class GoogleVertexProvider(Provider):
                     provider_category=self.provider_category,
                 )
             )
+            # Claude models on Vertex AI
+        claude_models = {
+            "claude-sonnet-4-5@20250929": 200000,
+            "claude-3-5-sonnet-v2@20241022": 200000,
+            "claude-3-opus@20240229": 200000,
+            "claude-3-sonnet@20240229": 200000,
+            "claude-3-haiku@20240307": 200000,
+        }
+
+        for model, context_length in claude_models.items():
+            configs.append(
+                LLMConfig(
+                    model=model,
+                    model_endpoint_type="anthropic_vertex",
+                    model_endpoint="https://aiplatform.googleapis.com",
+                    context_window=context_length,
+                    handle=self.get_handle(model),
+                    max_tokens=8192,
+                    provider_name=self.name,
+                    provider_category=self.provider_category,
+                )
+            )
         return configs
 
     def list_embedding_models(self) -> List[EmbeddingConfig]:
