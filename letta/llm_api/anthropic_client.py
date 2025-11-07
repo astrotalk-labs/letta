@@ -61,6 +61,7 @@ class AnthropicClient(LLMClientBase):
         client = await self._get_anthropic_client_async(llm_config, async_client=True)
         response = await client.beta.messages.create(**request_data)
         logger.info(response.usage)
+        logger.info("This is the usage response from calude %s", response.usage)
         return response.model_dump()
 
     @trace_method
@@ -278,7 +279,6 @@ class AnthropicClient(LLMClientBase):
             )
         return data
 
-
     def _split_system_message_for_caching(self, system_content: str) -> tuple:
 
 
@@ -351,7 +351,6 @@ class AnthropicClient(LLMClientBase):
             })
 
         return system_parts
-
 
     async def count_tokens(self, messages: List[dict] = None, model: str = None, tools: List[OpenAITool] = None) -> int:
         logging.getLogger("httpx").setLevel(logging.WARNING)
