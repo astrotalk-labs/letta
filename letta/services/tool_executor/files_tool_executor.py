@@ -1,10 +1,12 @@
 import asyncio
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
+from letta.constants import MAX_FILES_OPEN
+from letta.functions.types import FileOpenRequest
 from letta.log import get_logger
+from letta.otel.tracing import trace_method
 from letta.schemas.agent import AgentState
-from letta.schemas.file import FileMetadata
 from letta.schemas.sandbox_config import SandboxConfig
 from letta.schemas.tool import Tool
 from letta.schemas.tool_execution_result import ToolExecutionResult
@@ -14,6 +16,7 @@ from letta.services.block_manager import BlockManager
 from letta.services.file_manager import FileManager
 from letta.services.file_processor.chunker.line_chunker import LineChunker
 from letta.services.files_agents_manager import FileAgentManager
+from letta.services.job_manager import JobManager
 from letta.services.message_manager import MessageManager
 from letta.services.passage_manager import PassageManager
 from letta.services.source_manager import SourceManager
@@ -30,7 +33,7 @@ class LettaFileToolExecutor(ToolExecutor):
     MAX_REGEX_COMPLEXITY = 1000  # Prevent catastrophic backtracking
     MAX_MATCHES_PER_FILE = 20  # Limit matches per file
     MAX_TOTAL_MATCHES = 50  # Global match limit
-    GREP_TIMEOUT_SECONDS = 30  # Max time for grep operation
+    GREP_TIMEOUT_SECONDS = 30  # Max time for grep_files operation
     MAX_CONTEXT_LINES = 1  # Lines of context around matches
 
     def __init__(
@@ -38,6 +41,7 @@ class LettaFileToolExecutor(ToolExecutor):
         message_manager: MessageManager,
         agent_manager: AgentManager,
         block_manager: BlockManager,
+        job_manager: JobManager,
         passage_manager: PassageManager,
         actor: User,
     ):
@@ -45,6 +49,7 @@ class LettaFileToolExecutor(ToolExecutor):
             message_manager=message_manager,
             agent_manager=agent_manager,
             block_manager=block_manager,
+            job_manager=job_manager,
             passage_manager=passage_manager,
             actor=actor,
         )
@@ -69,9 +74,8 @@ class LettaFileToolExecutor(ToolExecutor):
             raise ValueError("Agent state is required for file tools")
 
         function_map = {
-            "open_file": self.open_file,
-            "close_file": self.close_file,
-            "grep": self.grep,
+            "open_files": self.open_files,
+            "grep_files": self.grep_files,
             "search_files": self.search_files,
         }
 
@@ -94,46 +98,135 @@ class LettaFileToolExecutor(ToolExecutor):
                 stderr=[get_friendly_error_msg(function_name=function_name, exception_name=type(e).__name__, exception_message=str(e))],
             )
 
-    async def open_file(self, agent_state: AgentState, file_name: str, view_range: Optional[Tuple[int, int]] = None) -> str:
-        """Stub for open_file tool."""
-        start, end = None, None
-        if view_range:
-            start, end = view_range
-            if start >= end:
-                raise ValueError(f"Provided view range {view_range} is invalid, starting range must be less than ending range.")
+    @trace_method
+    async def open_files(self, agent_state: AgentState, file_requests: List[FileOpenRequest], close_all_others: bool = False) -> str:
+        """Open one or more files and load their contents into memory blocks."""
+        # Parse raw dictionaries into FileOpenRequest objects if needed
+        parsed_requests = []
+        for req in file_requests:
+            if isinstance(req, dict):
+                # LLM returned a dictionary, parse it into FileOpenRequest
+                parsed_requests.append(FileOpenRequest(**req))
+            elif isinstance(req, FileOpenRequest):
+                # Already a FileOpenRequest object
+                parsed_requests.append(req)
+            else:
+                raise ValueError(f"Invalid file request type: {type(req)}. Expected dict or FileOpenRequest.")
 
-        # TODO: This is inefficient. We can skip the initial DB lookup by preserving on the block metadata what the file_id is
-        file_agent = await self.files_agents_manager.get_file_agent_by_file_name(
-            agent_id=agent_state.id, file_name=file_name, actor=self.actor
-        )
+        file_requests = parsed_requests
 
-        if not file_agent:
-            file_blocks = agent_state.memory.file_blocks
-            file_names = [fb.label for fb in file_blocks]
-            raise ValueError(
-                f"{file_name} not attached - did you get the filename correct? Currently you have the following files attached: {file_names}"
+        # Validate file count first
+        if len(file_requests) > MAX_FILES_OPEN:
+            raise ValueError(f"Cannot open {len(file_requests)} files: exceeds maximum limit of {MAX_FILES_OPEN} files")
+
+        if not file_requests:
+            raise ValueError("No file requests provided")
+
+        # Extract file names for various operations
+        file_names = [req.file_name for req in file_requests]
+
+        # Get all currently attached files for error reporting
+        file_blocks = agent_state.memory.file_blocks
+        attached_file_names = [fb.label for fb in file_blocks]
+
+        # Close all other files if requested
+        closed_by_close_all_others = []
+        if close_all_others:
+            closed_by_close_all_others = await self.files_agents_manager.close_all_other_files(
+                agent_id=agent_state.id, keep_file_names=file_names, actor=self.actor
             )
 
-        file_id = file_agent.file_id
-        file = await self.file_manager.get_file_by_id(file_id=file_id, actor=self.actor, include_content=True)
+        # Process each file
+        opened_files = []
+        all_closed_files = []
 
-        # TODO: Inefficient, maybe we can pre-compute this
-        # TODO: This is also not the best way to split things - would be cool to have "content aware" splitting
-        # TODO: Split code differently from large text blurbs
-        content_lines = LineChunker().chunk_text(text=file.content, file_metadata=file, start=start, end=end)
-        visible_content = "\n".join(content_lines)
+        for file_request in file_requests:
+            file_name = file_request.file_name
+            offset = file_request.offset
+            length = file_request.length
 
-        await self.files_agents_manager.update_file_agent_by_id(
-            agent_id=agent_state.id, file_id=file_id, actor=self.actor, is_open=True, visible_content=visible_content
-        )
-        return f"Successfully opened file {file_name}, lines {start} to {end} are now visible in memory block <{file_name}>"
+            # Convert 1-indexed offset/length to 0-indexed start/end for LineChunker
+            start, end = None, None
+            if offset is not None or length is not None:
+                if offset is not None and offset < 1:
+                    raise ValueError(f"Offset for file {file_name} must be >= 1 (1-indexed), got {offset}")
+                if length is not None and length < 1:
+                    raise ValueError(f"Length for file {file_name} must be >= 1, got {length}")
 
-    async def close_file(self, agent_state: AgentState, file_name: str) -> str:
-        """Stub for close_file tool."""
-        await self.files_agents_manager.update_file_agent_by_name(
-            agent_id=agent_state.id, file_name=file_name, actor=self.actor, is_open=False
-        )
-        return f"Successfully closed file {file_name}, use function calls to re-open file"
+                # Convert to 0-indexed for LineChunker
+                start = (offset - 1) if offset is not None else None
+                if start is not None and length is not None:
+                    end = start + length
+                else:
+                    end = None
+
+            # Validate file exists and is attached to agent
+            file_agent = await self.files_agents_manager.get_file_agent_by_file_name(
+                agent_id=agent_state.id, file_name=file_name, actor=self.actor
+            )
+
+            if not file_agent:
+                raise ValueError(
+                    f"{file_name} not attached - did you get the filename correct? Currently you have the following files attached: {attached_file_names}"
+                )
+
+            file_id = file_agent.file_id
+            file = await self.file_manager.get_file_by_id(file_id=file_id, actor=self.actor, include_content=True)
+
+            # Process file content
+            content_lines = LineChunker().chunk_text(file_metadata=file, start=start, end=end)
+            visible_content = "\n".join(content_lines)
+
+            # Handle LRU eviction and file opening
+            closed_files, was_already_open = await self.files_agents_manager.enforce_max_open_files_and_open(
+                agent_id=agent_state.id, file_id=file_id, file_name=file_name, actor=self.actor, visible_content=visible_content
+            )
+
+            opened_files.append(file_name)
+            all_closed_files.extend(closed_files)
+
+        # Update access timestamps for all opened files efficiently
+        await self.files_agents_manager.mark_access_bulk(agent_id=agent_state.id, file_names=file_names, actor=self.actor)
+
+        # Build success message
+        if len(file_requests) == 1:
+            # Single file - maintain existing format
+            file_request = file_requests[0]
+            file_name = file_request.file_name
+            offset = file_request.offset
+            length = file_request.length
+            if offset is not None and length is not None:
+                end_line = offset + length - 1
+                success_msg = (
+                    f"Successfully opened file {file_name}, lines {offset} to {end_line} are now visible in memory block <{file_name}>"
+                )
+            elif offset is not None:
+                success_msg = f"Successfully opened file {file_name}, lines {offset} to end are now visible in memory block <{file_name}>"
+            else:
+                success_msg = f"Successfully opened file {file_name}, entire file is now visible in memory block <{file_name}>"
+        else:
+            # Multiple files - show individual ranges if specified
+            file_summaries = []
+            for req in file_requests:
+                if req.offset is not None and req.length is not None:
+                    end_line = req.offset + req.length - 1
+                    file_summaries.append(f"{req.file_name} (lines {req.offset}-{end_line})")
+                elif req.offset is not None:
+                    file_summaries.append(f"{req.file_name} (lines {req.offset}-end)")
+                else:
+                    file_summaries.append(req.file_name)
+            success_msg = f"Successfully opened {len(file_requests)} files: {', '.join(file_summaries)}"
+
+        # Add information about closed files
+        if closed_by_close_all_others:
+            success_msg += f"\nNote: Closed {len(closed_by_close_all_others)} file(s) due to close_all_others=True: {', '.join(closed_by_close_all_others)}"
+
+        if all_closed_files:
+            success_msg += (
+                f"\nNote: Closed {len(all_closed_files)} least recently used file(s) due to open file limit: {', '.join(all_closed_files)}"
+            )
+
+        return success_msg
 
     def _validate_regex_pattern(self, pattern: str) -> None:
         """Validate regex pattern to prevent catastrophic backtracking."""
@@ -146,32 +239,54 @@ class LettaFileToolExecutor(ToolExecutor):
         except re.error as e:
             raise ValueError(f"Invalid regex pattern: {e}")
 
-    def _get_context_lines(self, text: str, file_metadata: FileMetadata, match_line_idx: int, total_lines: int) -> List[str]:
-        """Get context lines around a match using LineChunker."""
-        start_idx = max(0, match_line_idx - self.MAX_CONTEXT_LINES)
-        end_idx = min(total_lines, match_line_idx + self.MAX_CONTEXT_LINES + 1)
+    def _get_context_lines(
+        self,
+        formatted_lines: List[str],
+        match_line_num: int,
+        context_lines: int,
+    ) -> List[str]:
+        """Get context lines around a match from already-chunked lines.
 
-        # Use LineChunker to get formatted lines with numbers
-        chunker = LineChunker()
-        context_lines = chunker.chunk_text(text, file_metadata=file_metadata, start=start_idx, end=end_idx, add_metadata=False)
+        Args:
+            formatted_lines: Already chunked lines from LineChunker (format: "line_num: content")
+            match_line_num: The 1-based line number of the match
+            context_lines: Number of context lines before and after
+        """
+        if not formatted_lines or context_lines < 0:
+            return []
 
-        # Add match indicator
-        formatted_lines = []
-        for line in context_lines:
+        # Find the index of the matching line in the formatted_lines list
+        match_formatted_idx = None
+        for i, line in enumerate(formatted_lines):
             if line and ":" in line:
-                line_num_str = line.split(":")[0].strip()
                 try:
-                    line_num = int(line_num_str)
-                    prefix = ">" if line_num == match_line_idx + 1 else " "
-                    formatted_lines.append(f"{prefix} {line}")
+                    line_num = int(line.split(":", 1)[0].strip())
+                    if line_num == match_line_num:
+                        match_formatted_idx = i
+                        break
                 except ValueError:
-                    formatted_lines.append(f"  {line}")
-            else:
-                formatted_lines.append(f"  {line}")
+                    continue
 
-        return formatted_lines
+        if match_formatted_idx is None:
+            return []
 
-    async def grep(self, agent_state: AgentState, pattern: str, include: Optional[str] = None) -> str:
+        # Calculate context range with bounds checking
+        start_idx = max(0, match_formatted_idx - context_lines)
+        end_idx = min(len(formatted_lines), match_formatted_idx + context_lines + 1)
+
+        # Extract context lines and add match indicator
+        context_lines_with_indicator = []
+        for i in range(start_idx, end_idx):
+            line = formatted_lines[i]
+            prefix = ">" if i == match_formatted_idx else " "
+            context_lines_with_indicator.append(f"{prefix} {line}")
+
+        return context_lines_with_indicator
+
+    @trace_method
+    async def grep_files(
+        self, agent_state: AgentState, pattern: str, include: Optional[str] = None, context_lines: Optional[int] = 3
+    ) -> str:
         """
         Search for pattern in all attached files and return matches with context.
 
@@ -179,6 +294,8 @@ class LettaFileToolExecutor(ToolExecutor):
             agent_state: Current agent state
             pattern: Regular expression pattern to search for
             include: Optional pattern to filter filenames to include in the search
+            context_lines (Optional[int]): Number of lines of context to show before and after each match.
+                                       Equivalent to `-C` in grep_files. Defaults to 3.
 
         Returns:
             Formatted string with search results, file names, line numbers, and context
@@ -229,10 +346,11 @@ class LettaFileToolExecutor(ToolExecutor):
         total_content_size = 0
         files_processed = 0
         files_skipped = 0
+        files_with_matches = set()  # Track files that had matches for LRU policy
 
         # Use asyncio timeout to prevent hanging
         async def _search_files():
-            nonlocal results, total_matches, total_content_size, files_processed, files_skipped
+            nonlocal results, total_matches, total_content_size, files_processed, files_skipped, files_with_matches
 
             for file_agent in file_agents:
                 # Load file content
@@ -268,11 +386,13 @@ class LettaFileToolExecutor(ToolExecutor):
 
                 # Use LineChunker to get all lines with proper formatting
                 chunker = LineChunker()
-                formatted_lines = chunker.chunk_text(file.content, file_metadata=file)
+                formatted_lines = chunker.chunk_text(file_metadata=file)
 
                 # Remove metadata header
                 if formatted_lines and formatted_lines[0].startswith("[Viewing"):
                     formatted_lines = formatted_lines[1:]
+
+                # LineChunker now returns 1-indexed line numbers, so no conversion needed
 
                 # Search for matches in formatted lines
                 for formatted_line in formatted_lines:
@@ -294,12 +414,13 @@ class LettaFileToolExecutor(ToolExecutor):
                             continue
 
                         if pattern_regex.search(line_content):
-                            # Get context around the match (convert back to 0-based indexing)
-                            context_lines = self._get_context_lines(file.content, file, line_num - 1, len(file.content.splitlines()))
+                            # Mark this file as having matches for LRU tracking
+                            files_with_matches.add(file.file_name)
+                            context = self._get_context_lines(formatted_lines, match_line_num=line_num, context_lines=context_lines or 0)
 
                             # Format the match result
                             match_header = f"\n=== {file.file_name}:{line_num} ==="
-                            match_content = "\n".join(context_lines)
+                            match_content = "\n".join(context)
                             results.append(f"{match_header}\n{match_content}")
 
                             file_matches += 1
@@ -311,6 +432,10 @@ class LettaFileToolExecutor(ToolExecutor):
 
         # Execute with timeout
         await asyncio.wait_for(_search_files(), timeout=self.GREP_TIMEOUT_SECONDS)
+
+        # Mark access for files that had matches
+        if files_with_matches:
+            await self.files_agents_manager.mark_access_bulk(agent_id=agent_state.id, file_names=list(files_with_matches), actor=self.actor)
 
         # Format final results
         if not results or total_matches == 0:
@@ -337,6 +462,7 @@ class LettaFileToolExecutor(ToolExecutor):
 
         return "\n".join(formatted_results)
 
+    @trace_method
     async def search_files(self, agent_state: AgentState, query: str, limit: int = 10) -> str:
         """
         Search for text within attached files using semantic search and return passages with their source filenames.
@@ -360,7 +486,13 @@ class LettaFileToolExecutor(ToolExecutor):
         self.logger.info(f"Semantic search started for agent {agent_state.id} with query '{query}' (limit: {limit})")
 
         # Get semantic search results
-        passages = await self.agent_manager.list_source_passages_async(actor=self.actor, agent_id=agent_state.id, query_text=query)
+        passages = await self.agent_manager.list_source_passages_async(
+            actor=self.actor,
+            agent_id=agent_state.id,
+            query_text=query,
+            embed_query=True,
+            embedding_config=agent_state.embedding_config,
+        )
 
         if not passages:
             return f"No semantic matches found for query: '{query}'"
@@ -400,6 +532,12 @@ class LettaFileToolExecutor(ToolExecutor):
 
                 passage_content = "\n".join(formatted_lines)
                 results.append(f"{passage_header}\n{passage_content}")
+
+        # Mark access for files that had matches
+        if files_with_passages:
+            matched_file_names = [name for name in files_with_passages.keys() if name != "Unknown File"]
+            if matched_file_names:
+                await self.files_agents_manager.mark_access_bulk(agent_id=agent_state.id, file_names=matched_file_names, actor=self.actor)
 
         # Create summary header
         file_count = len(files_with_passages)

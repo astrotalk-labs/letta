@@ -21,9 +21,11 @@ from letta.errors import (
     LLMPermissionDeniedError,
     LLMRateLimitError,
     LLMServerError,
+    LLMTimeoutError,
     LLMUnprocessableEntityError,
 )
 from letta.helpers.datetime_helpers import get_utc_time_int
+from letta.helpers.decorators import deprecated
 from letta.llm_api.helpers import add_inner_thoughts_to_functions, unpack_all_inner_thoughts_from_kwargs
 from letta.llm_api.llm_client_base import LLMClientBase
 from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION
@@ -47,15 +49,18 @@ logger = get_logger(__name__)
 class AnthropicClient(LLMClientBase):
 
     @trace_method
+    @deprecated("Synchronous version of this is no longer valid. Will result in model_dump of coroutine")
     def request(self, request_data: dict, llm_config: LLMConfig) -> dict:
         client = self._get_anthropic_client(llm_config, async_client=False)
-        response = client.beta.messages.create(**request_data, betas=["tools-2024-04-04"])
+        response = client.beta.messages.create(**request_data)
+        logger.info("Beta response: %s", response)
         return response.model_dump()
 
     @trace_method
     async def request_async(self, request_data: dict, llm_config: LLMConfig) -> dict:
         client = await self._get_anthropic_client_async(llm_config, async_client=True)
-        response = await client.beta.messages.create(**request_data, betas=["tools-2024-04-04"])
+        response = await client.beta.messages.create(**request_data)
+        logger.info(response.usage)
         logger.info("This is the usage response from calude %s", response.usage)
         return response.model_dump()
 
@@ -63,7 +68,7 @@ class AnthropicClient(LLMClientBase):
     async def stream_async(self, request_data: dict, llm_config: LLMConfig) -> AsyncStream[BetaRawMessageStreamEvent]:
         client = await self._get_anthropic_client_async(llm_config, async_client=True)
         request_data["stream"] = True
-        return await client.beta.messages.create(**request_data, betas=["tools-2024-04-04"])
+        return await client.beta.messages.create(**request_data)
 
     @trace_method
     async def send_llm_batch_request_async(
@@ -244,6 +249,7 @@ class AnthropicClient(LLMClientBase):
         # Move 'system' to the top level
         if messages[0].role != "system":
             raise RuntimeError(f"First message is not a system message, instead has role {messages[0].role}")
+
         system_content = messages[0].content if isinstance(messages[0].content, str) else messages[0].content[0].text
         static_part_1, dynamic_part_1, static_part_2, dynamic_part_2 = self._split_system_message_for_caching(system_content)
         data["system"] = self._add_cache_control_to_system_message(static_part_1, dynamic_part_1, static_part_2, dynamic_part_2)
@@ -256,10 +262,10 @@ class AnthropicClient(LLMClientBase):
         ]
 
         # Ensure first message is user
+
         if data["messages"][0]["role"] != "user":
             data["messages"] = [{"role": "user", "content": DUMMY_FIRST_USER_MESSAGE}] + data["messages"]
 
-        # Handle alternating messages
         data["messages"] = merge_tool_results_into_user_messages(data["messages"])
 
         # Prefix fill
@@ -271,7 +277,6 @@ class AnthropicClient(LLMClientBase):
                 # Start the thinking process for the assistant
                 {"role": "assistant", "content": f"<{inner_thoughts_xml_tag}>"},
             )
-
         return data
 
     def _split_system_message_for_caching(self, system_content: str) -> tuple:
@@ -374,6 +379,14 @@ class AnthropicClient(LLMClientBase):
 
     @trace_method
     def handle_llm_error(self, e: Exception) -> Exception:
+        if isinstance(e, anthropic.APITimeoutError):
+            logger.warning(f"[Anthropic] Request timeout: {e}")
+            return LLMTimeoutError(
+                message=f"Request to Anthropic timed out: {str(e)}",
+                code=ErrorCode.TIMEOUT,
+                details={"cause": str(e.__cause__) if e.__cause__ else None},
+            )
+
         if isinstance(e, anthropic.APIConnectionError):
             logger.warning(f"[Anthropic] API connection error: {e.__cause__}")
             return LLMConnectionError(
@@ -391,9 +404,11 @@ class AnthropicClient(LLMClientBase):
 
         if isinstance(e, anthropic.BadRequestError):
             logger.warning(f"[Anthropic] Bad request: {str(e)}")
-            if "prompt is too long" in str(e).lower():
-                # If the context window is too large, we expect to receive:
+            error_str = str(e).lower()
+            if "prompt is too long" in error_str or "exceed context limit" in error_str:
+                # If the context window is too large, we expect to receive either:
                 # 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'prompt is too long: 200758 tokens > 200000 maximum'}}
+                # 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'input length and `max_tokens` exceed context limit: 173298 + 32000 > 200000, decrease input length or `max_tokens` and try again'}}
                 return ContextWindowExceededError(
                     message=f"Bad request to Anthropic (context window exceeded): {str(e)}",
                 )
@@ -565,6 +580,7 @@ class AnthropicClient(LLMClientBase):
             )
 
         return chat_completion_response
+
 
 
 def convert_tools_to_anthropic_format(tools: List[OpenAITool]) -> List[dict]:

@@ -1,9 +1,10 @@
+import asyncio
 import json
 import traceback
 from datetime import datetime, timezone
 from typing import Annotated, Any, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Header, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import JSONResponse
 from marshmallow import ValidationError
 from orjson import orjson
@@ -12,7 +13,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from starlette.responses import Response, StreamingResponse
 
 from letta.agents.letta_agent import LettaAgent
-from letta.constants import DEFAULT_MAX_STEPS, DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG
+from letta.constants import DEFAULT_MAX_STEPS, DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG, LETTA_MODEL_ENDPOINT
 from letta.groups.sleeptime_multi_agent_v2 import SleeptimeMultiAgentV2
 from letta.helpers.datetime_helpers import get_utc_timestamp_ns
 from letta.log import get_logger
@@ -24,7 +25,7 @@ from letta.schemas.block import Block, BlockUpdate
 from letta.schemas.group import Group
 from letta.schemas.job import JobStatus, JobUpdate, LettaRequestConfig
 from letta.schemas.letta_message import LettaMessageUnion, LettaMessageUpdateUnion, MessageType
-from letta.schemas.letta_request import LettaRequest, LettaStreamingRequest
+from letta.schemas.letta_request import LettaAsyncRequest, LettaRequest, LettaStreamingRequest
 from letta.schemas.letta_response import LettaResponse
 from letta.schemas.memory import ContextWindowOverview, CreateArchivalMemory, Memory
 from letta.schemas.message import MessageCreate
@@ -79,6 +80,10 @@ async def list_agents(
         False,
         description="Whether to sort agents oldest to newest (True) or newest to oldest (False, default)",
     ),
+    sort_by: Optional[str] = Query(
+        "created_at",
+        description="Field to sort by. Options: 'created_at' (default), 'last_run_completion'",
+    ),
 ):
     """
     List all agents associated with a given user.
@@ -107,6 +112,7 @@ async def list_agents(
         identifier_keys=identifier_keys,
         include_relationships=include_relationships,
         ascending=ascending,
+        sort_by=sort_by,
     )
 
 
@@ -317,17 +323,7 @@ async def attach_source(
     agent_state = await server.agent_manager.attach_missing_files_tools_async(agent_state=agent_state, actor=actor)
 
     files = await server.file_manager.list_files(source_id, actor, include_content=True)
-    texts = []
-    file_ids = []
-    file_names = []
-    for f in files:
-        texts.append(f.content if f.content else "")
-        file_ids.append(f.id)
-        file_names.append(f.file_name)
-
-    await server.insert_files_into_context_window(
-        agent_state=agent_state, texts=texts, file_ids=file_ids, file_names=file_names, actor=actor
-    )
+    await server.insert_files_into_context_window(agent_state=agent_state, file_metadata_with_content=files, actor=actor)
 
     if agent_state.enable_sleeptime:
         source = await server.source_manager.get_source_by_id(source_id=source_id)
@@ -680,7 +676,7 @@ async def send_message(
     # TODO: This is redundant, remove soon
     agent = await server.agent_manager.get_agent_by_id_async(agent_id, actor, include_relationships=["multi_agent_group"])
     agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type in ["sleeptime", "voice_sleeptime"]
-    model_compatible = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "together", "google_ai", "google_vertex"]
+    model_compatible = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "together", "google_ai", "google_vertex", "bedrock"]
 
     if agent_eligible and model_compatible:
         if agent.enable_sleeptime and agent.agent_type != AgentType.voice_convo_agent:
@@ -701,6 +697,7 @@ async def send_message(
                 message_manager=server.message_manager,
                 agent_manager=server.agent_manager,
                 block_manager=server.block_manager,
+                job_manager=server.job_manager,
                 passage_manager=server.passage_manager,
                 actor=actor,
                 step_manager=server.step_manager,
@@ -762,9 +759,9 @@ async def send_message_streaming(
     # TODO: This is redundant, remove soon
     agent = await server.agent_manager.get_agent_by_id_async(agent_id, actor, include_relationships=["multi_agent_group"])
     agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type in ["sleeptime", "voice_sleeptime"]
-    model_compatible = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "together", "google_ai", "google_vertex"]
-    model_compatible_token_streaming = agent.llm_config.model_endpoint_type in ["anthropic", "openai"]
-    not_letta_endpoint = not ("inference.letta.com" in agent.llm_config.model_endpoint)
+    model_compatible = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "together", "google_ai", "google_vertex", "bedrock"]
+    model_compatible_token_streaming = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "bedrock"]
+    not_letta_endpoint = LETTA_MODEL_ENDPOINT != agent.llm_config.model_endpoint
 
     if agent_eligible and model_compatible:
         if agent.enable_sleeptime and agent.agent_type != AgentType.voice_convo_agent:
@@ -787,6 +784,7 @@ async def send_message_streaming(
                 message_manager=server.message_manager,
                 agent_manager=server.agent_manager,
                 block_manager=server.block_manager,
+                job_manager=server.job_manager,
                 passage_manager=server.passage_manager,
                 actor=actor,
                 step_manager=server.step_manager,
@@ -847,29 +845,73 @@ async def process_message_background(
     include_return_message_types: Optional[List[MessageType]] = None,
 ) -> None:
     """Background task to process the message and update job status."""
+    request_start_timestamp_ns = get_utc_timestamp_ns()
     try:
-        request_start_timestamp_ns = get_utc_timestamp_ns()
-        result = await server.send_message_to_agent(
-            agent_id=agent_id,
-            actor=actor,
-            input_messages=messages,
-            stream_steps=False,  # NOTE(matt)
-            stream_tokens=False,
-            use_assistant_message=use_assistant_message,
-            assistant_message_tool_name=assistant_message_tool_name,
-            assistant_message_tool_kwarg=assistant_message_tool_kwarg,
-            metadata={"job_id": job_id},  # Pass job_id through metadata
-            request_start_timestamp_ns=request_start_timestamp_ns,
-            include_return_message_types=include_return_message_types,
-        )
+        agent = await server.agent_manager.get_agent_by_id_async(agent_id, actor, include_relationships=["multi_agent_group"])
+        agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type in ["sleeptime", "voice_sleeptime"]
+        model_compatible = agent.llm_config.model_endpoint_type in [
+            "anthropic",
+            "openai",
+            "together",
+            "google_ai",
+            "google_vertex",
+            "bedrock",
+        ]
+        if agent_eligible and model_compatible:
+            if agent.enable_sleeptime and agent.agent_type != AgentType.voice_convo_agent:
+                agent_loop = SleeptimeMultiAgentV2(
+                    agent_id=agent_id,
+                    message_manager=server.message_manager,
+                    agent_manager=server.agent_manager,
+                    block_manager=server.block_manager,
+                    passage_manager=server.passage_manager,
+                    group_manager=server.group_manager,
+                    job_manager=server.job_manager,
+                    actor=actor,
+                    group=agent.multi_agent_group,
+                )
+            else:
+                agent_loop = LettaAgent(
+                    agent_id=agent_id,
+                    message_manager=server.message_manager,
+                    agent_manager=server.agent_manager,
+                    block_manager=server.block_manager,
+                    job_manager=server.job_manager,
+                    passage_manager=server.passage_manager,
+                    actor=actor,
+                    step_manager=server.step_manager,
+                    telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
+                )
 
-        # Update job status to completed
+            result = await agent_loop.step(
+                messages,
+                max_steps=max_steps,
+                run_id=job_id,
+                use_assistant_message=use_assistant_message,
+                request_start_timestamp_ns=request_start_timestamp_ns,
+                include_return_message_types=include_return_message_types,
+            )
+        else:
+            result = await server.send_message_to_agent(
+                agent_id=agent_id,
+                actor=actor,
+                input_messages=messages,
+                stream_steps=False,
+                stream_tokens=False,
+                metadata={"job_id": job_id},
+                # Support for AssistantMessage
+                use_assistant_message=use_assistant_message,
+                assistant_message_tool_name=assistant_message_tool_name,
+                assistant_message_tool_kwarg=assistant_message_tool_kwarg,
+                include_return_message_types=include_return_message_types,
+            )
+
         job_update = JobUpdate(
             status=JobStatus.completed,
             completed_at=datetime.now(timezone.utc),
-            metadata={"result": result.model_dump(mode="json")},  # Store the result in metadata
+            metadata={"result": result.model_dump(mode="json")},
         )
-        server.job_manager.update_job_by_id(job_id=job_id, job_update=job_update, actor=actor)
+        await server.job_manager.update_job_by_id_async(job_id=job_id, job_update=job_update, actor=actor)
 
     except Exception as e:
         # Update job status to failed
@@ -878,8 +920,7 @@ async def process_message_background(
             completed_at=datetime.now(timezone.utc),
             metadata={"error": str(e)},
         )
-        server.job_manager.update_job_by_id(job_id=job_id, job_update=job_update, actor=actor)
-        raise
+        await server.job_manager.update_job_by_id_async(job_id=job_id, job_update=job_update, actor=actor)
 
 
 @router.post(
@@ -889,9 +930,8 @@ async def process_message_background(
 )
 async def send_message_async(
     agent_id: str,
-    background_tasks: BackgroundTasks,
     server: SyncServer = Depends(get_letta_server),
-    request: LettaRequest = Body(...),
+    request: LettaAsyncRequest = Body(...),
     actor_id: Optional[str] = Header(None, alias="user_id"),
 ):
     """
@@ -905,6 +945,7 @@ async def send_message_async(
     run = Run(
         user_id=actor.id,
         status=JobStatus.created,
+        callback_url=request.callback_url,
         metadata={
             "job_type": "send_message_async",
             "agent_id": agent_id,
@@ -913,23 +954,25 @@ async def send_message_async(
             use_assistant_message=request.use_assistant_message,
             assistant_message_tool_name=request.assistant_message_tool_name,
             assistant_message_tool_kwarg=request.assistant_message_tool_kwarg,
+            include_return_message_types=request.include_return_message_types,
         ),
     )
-    run = server.job_manager.create_job(pydantic_job=run, actor=actor)
+    run = await server.job_manager.create_job_async(pydantic_job=run, actor=actor)
 
-    # Add the background task
-    background_tasks.add_task(
-        process_message_background,
-        job_id=run.id,
-        server=server,
-        actor=actor,
-        agent_id=agent_id,
-        messages=request.messages,
-        use_assistant_message=request.use_assistant_message,
-        assistant_message_tool_name=request.assistant_message_tool_name,
-        assistant_message_tool_kwarg=request.assistant_message_tool_kwarg,
-        max_steps=request.max_steps,
-        include_return_message_types=request.include_return_message_types,
+    # Create asyncio task for background processing
+    asyncio.create_task(
+        process_message_background(
+            job_id=run.id,
+            server=server,
+            actor=actor,
+            agent_id=agent_id,
+            messages=request.messages,
+            use_assistant_message=request.use_assistant_message,
+            assistant_message_tool_name=request.assistant_message_tool_name,
+            assistant_message_tool_kwarg=request.assistant_message_tool_kwarg,
+            max_steps=request.max_steps,
+            include_return_message_types=request.include_return_message_types,
+        )
     )
 
     return run
@@ -980,7 +1023,7 @@ async def summarize_agent_conversation(
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
     agent = await server.agent_manager.get_agent_by_id_async(agent_id, actor, include_relationships=["multi_agent_group"])
     agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type in ["sleeptime", "voice_sleeptime"]
-    model_compatible = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "together", "google_ai", "google_vertex"]
+    model_compatible = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "together", "google_ai", "google_vertex", "bedrock"]
 
     if agent_eligible and model_compatible:
         agent = LettaAgent(
@@ -988,6 +1031,7 @@ async def summarize_agent_conversation(
             message_manager=server.message_manager,
             agent_manager=server.agent_manager,
             block_manager=server.block_manager,
+            job_manager=server.job_manager,
             passage_manager=server.passage_manager,
             actor=actor,
             step_manager=server.step_manager,

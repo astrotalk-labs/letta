@@ -99,10 +99,11 @@ class LineChunker:
         return [line for line in lines if line.strip()]
 
     def chunk_text(
-        self, text: str, file_metadata: FileMetadata, start: Optional[int] = None, end: Optional[int] = None, add_metadata: bool = True
+        self, file_metadata: FileMetadata, start: Optional[int] = None, end: Optional[int] = None, add_metadata: bool = True
     ) -> List[str]:
         """Content-aware text chunking based on file type"""
         strategy = self._determine_chunking_strategy(file_metadata)
+        text = file_metadata.content
 
         # Apply the appropriate chunking strategy
         if strategy == ChunkingStrategy.DOCUMENTATION:
@@ -123,8 +124,8 @@ class LineChunker:
         else:
             line_offset = 0
 
-        # Add line numbers for all strategies
-        content_lines = [f"{i + line_offset}: {line}" for i, line in enumerate(content_lines)]
+        # Add line numbers for all strategies (1-indexed for user display)
+        content_lines = [f"{i + line_offset + 1}: {line}" for i, line in enumerate(content_lines)]
 
         # Add metadata about total chunks
         if add_metadata:
@@ -132,7 +133,10 @@ class LineChunker:
                 "sentences" if strategy == ChunkingStrategy.DOCUMENTATION else "chunks" if strategy == ChunkingStrategy.PROSE else "lines"
             )
             if start is not None and end is not None:
-                content_lines.insert(0, f"[Viewing {chunk_type} {start} to {end-1} (out of {total_chunks} {chunk_type})]")
+                # Display 1-indexed ranges for users
+                start_display = start + 1
+                end_display = end
+                content_lines.insert(0, f"[Viewing {chunk_type} {start_display} to {end_display} (out of {total_chunks} {chunk_type})]")
             else:
                 content_lines.insert(0, f"[Viewing file start (out of {total_chunks} {chunk_type})]")
 
