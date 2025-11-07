@@ -1469,6 +1469,51 @@ class SyncServer(object):
 
         return list(current_mcp_servers.values())
 
+    # Add these methods to your SyncServer class, somewhere before send_message_to_agent method
+
+    def load_agent(self, agent_id: str, actor: User, interface: Union[AgentInterface, None] = None) -> Agent:
+        """Updated method to load agents from persisted storage"""
+        from letta.agent import Agent
+
+        agent_state = self.agent_manager.get_agent_by_id(agent_id=agent_id, actor=actor)
+        # TODO: Think about how to integrate voice sleeptime into sleeptime
+        # TODO: Voice sleeptime agents turn into normal agents when being messaged
+        if agent_state.multi_agent_group and agent_state.multi_agent_group.manager_type != ManagerType.voice_sleeptime:
+            return load_multi_agent(
+                group=agent_state.multi_agent_group, agent_state=agent_state, actor=actor, interface=interface, mcp_clients=self.mcp_clients
+            )
+
+        interface = interface or self.default_interface_factory()
+        return Agent(agent_state=agent_state, interface=interface, user=actor, mcp_clients=self.mcp_clients)
+
+
+    def send_messages(
+            self,
+            actor: User,
+            agent_id: str,
+            input_messages: List[MessageCreate],
+            interface: Union[AgentInterface, None] = None,
+            metadata: Optional[dict] = None,
+    ) -> LettaUsageStatistics:
+        """Send a list of messages to the agent."""
+        from letta.agent import Agent
+
+        # Store metadata in interface if provided
+        if metadata and hasattr(interface, "metadata"):
+            interface.metadata = metadata
+
+        # Load the agent
+        letta_agent = self.load_agent(agent_id=agent_id, interface=interface, actor=actor)
+
+        # Call the agent's step method
+        usage = letta_agent.step(
+            input_messages=input_messages,
+            chaining=self.chaining,
+            max_chaining_steps=self.max_chaining_steps,
+        )
+
+        return usage
+
     @trace_method
     async def send_message_to_agent(
             self,
