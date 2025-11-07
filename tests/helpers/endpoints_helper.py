@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 
 from letta.config import LettaConfig
 from letta.constants import DEFAULT_HUMAN, DEFAULT_PERSONA
-from letta.embeddings import embedding_model
 from letta.errors import InvalidInnerMonologueError, InvalidToolCallError, MissingInnerMonologueError, MissingToolCallError
+from letta.llm_api.llm_client import LLMClient
 from letta.local_llm.constants import INNER_THOUGHTS_KWARG
 from letta.schemas.agent import AgentState, CreateAgent
 from letta.schemas.embedding_config import EmbeddingConfig
@@ -39,7 +39,7 @@ LLM_CONFIG_PATH = "tests/configs/llm_model_configs/letta-hosted.json"
 # ======================================================================================================================
 
 
-def setup_agent(
+async def setup_agent(
     server: SyncServer,
     filename: str,
     memory_human_str: str = get_human_text(DEFAULT_HUMAN),
@@ -50,9 +50,11 @@ def setup_agent(
     include_base_tools: bool = True,
     include_base_tool_rules: bool = True,
 ) -> AgentState:
-    config_data = json.load(open(filename, "r"))
+    with open(filename, "r") as f:
+        config_data = json.load(f)
     llm_config = LLMConfig(**config_data)
-    embedding_config = EmbeddingConfig(**json.load(open(EMBEDDING_CONFIG_PATH)))
+    with open(EMBEDDING_CONFIG_PATH, "r") as f:
+        embedding_config = EmbeddingConfig(**json.load(f))
 
     # setup config
     config = LettaConfig()
@@ -79,8 +81,8 @@ def setup_agent(
         include_base_tools=include_base_tools,
         include_base_tool_rules=include_base_tool_rules,
     )
-    actor = server.user_manager.get_user_or_default()
-    agent_state = server.create_agent(request=request, actor=actor)
+    actor = await server.user_manager.get_actor_or_default_async()
+    agent_state = await server.create_agent_async(request=request, actor=actor)
 
     return agent_state
 
@@ -91,14 +93,22 @@ def setup_agent(
 # ======================================================================================================================
 
 
-def run_embedding_endpoint(filename):
+async def run_embedding_endpoint(filename, actor=None):
     # load JSON file
-    config_data = json.load(open(filename, "r"))
+    with open(filename, "r") as f:
+        config_data = json.load(f)
     print(config_data)
     embedding_config = EmbeddingConfig(**config_data)
-    model = embedding_model(embedding_config)
+
+    # Use the new LLMClient for embeddings
+    client = LLMClient.create(
+        provider_type=embedding_config.embedding_endpoint_type,
+        actor=actor,
+    )
+
     query_text = "hello"
-    query_vec = model.get_text_embedding(query_text)
+    query_vecs = await client.request_embeddings([query_text], embedding_config)
+    query_vec = query_vecs[0]
     print("vector dim", len(query_vec))
     assert query_vec is not None
 
@@ -136,7 +146,7 @@ def assert_invoked_send_message_with_keyword(messages: Sequence[LettaMessage], k
     # Message field not in send_message
     if "message" not in arguments:
         raise InvalidToolCallError(
-            messages=[target_message], explanation=f"send_message function call does not have required field `message`"
+            messages=[target_message], explanation="send_message function call does not have required field `message`"
         )
 
     # Check that the keyword is in the message arguments
@@ -144,7 +154,7 @@ def assert_invoked_send_message_with_keyword(messages: Sequence[LettaMessage], k
         keyword = keyword.lower()
         arguments["message"] = arguments["message"].lower()
 
-    if not keyword in arguments["message"]:
+    if keyword not in arguments["message"]:
         raise InvalidToolCallError(messages=[target_message], explanation=f"Message argument did not contain keyword={keyword}")
 
 

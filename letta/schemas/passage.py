@@ -16,7 +16,7 @@ class PassageBase(OrmMetadataBase):
 
     # associated user/agent
     organization_id: Optional[str] = Field(None, description="The unique identifier of the user associated with the passage.")
-    agent_id: Optional[str] = Field(None, description="The unique identifier of the agent associated with the passage.")
+    archive_id: Optional[str] = Field(None, description="The unique identifier of the archive containing this passage.")
 
     # origin data source
     source_id: Optional[str] = Field(None, description="The data source of the passage.")
@@ -25,6 +25,7 @@ class PassageBase(OrmMetadataBase):
     file_id: Optional[str] = Field(None, description="The unique identifier of the file associated with the passage.")
     file_name: Optional[str] = Field(None, description="The name of the file (only for source passages).")
     metadata: Optional[Dict] = Field({}, validation_alias="metadata_", description="The metadata of the passage.")
+    tags: Optional[List[str]] = Field(None, description="Tags associated with this passage.")
 
 
 class Passage(PassageBase):
@@ -36,8 +37,8 @@ class Passage(PassageBase):
         embedding (List[float]): The embedding of the passage.
         embedding_config (EmbeddingConfig): The embedding configuration used by the passage.
         created_at (datetime): The creation date of the passage.
-        user_id (str): The unique identifier of the user associated with the passage.
-        agent_id (str): The unique identifier of the agent associated with the passage.
+        organization_id (str): The unique identifier of the organization associated with the passage.
+        archive_id (str): The unique identifier of the archive containing this passage.
         source_id (str): The data source of the passage.
         file_id (str): The unique identifier of the file associated with the passage.
     """

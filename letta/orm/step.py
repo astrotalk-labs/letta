@@ -1,22 +1,28 @@
 import uuid
 from typing import TYPE_CHECKING, Dict, List, Optional
 
-from sqlalchemy import JSON, ForeignKey, String
+from sqlalchemy import JSON, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from letta.orm.mixins import ProjectMixin
 from letta.orm.sqlalchemy_base import SqlalchemyBase
+from letta.schemas.enums import StepStatus
 from letta.schemas.step import Step as PydanticStep
 
 if TYPE_CHECKING:
-    from letta.orm.job import Job
+    from letta.orm.message import Message
+    from letta.orm.organization import Organization
     from letta.orm.provider import Provider
+    from letta.orm.run import Run
+    from letta.orm.step_metrics import StepMetrics
 
 
-class Step(SqlalchemyBase):
+class Step(SqlalchemyBase, ProjectMixin):
     """Tracks all metadata for agent step."""
 
     __tablename__ = "steps"
     __pydantic_model__ = PydanticStep
+    __table_args__ = (Index("ix_steps_run_id", "run_id"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: f"step-{uuid.uuid4()}")
     origin: Mapped[Optional[str]] = mapped_column(nullable=True, doc="The surface that this agent step was initiated from.")
@@ -30,8 +36,8 @@ class Step(SqlalchemyBase):
         nullable=True,
         doc="The unique identifier of the provider that was configured for this step",
     )
-    job_id: Mapped[Optional[str]] = mapped_column(
-        ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True, doc="The unique identified of the job run that triggered this step"
+    run_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, doc="The unique identifier of the run that this step belongs to"
     )
     agent_id: Mapped[Optional[str]] = mapped_column(None, nullable=True, doc="The name of the model used for this step.")
     provider_name: Mapped[Optional[str]] = mapped_column(None, nullable=True, doc="The name of the provider used for this step.")
@@ -45,6 +51,7 @@ class Step(SqlalchemyBase):
     prompt_tokens: Mapped[int] = mapped_column(default=0, doc="Number of tokens in the prompt")
     total_tokens: Mapped[int] = mapped_column(default=0, doc="Total number of tokens processed by the agent")
     completion_tokens_details: Mapped[Optional[Dict]] = mapped_column(JSON, nullable=True, doc="metadata for the agent.")
+    stop_reason: Mapped[Optional[str]] = mapped_column(None, nullable=True, doc="The stop reason associated with this step.")
     tags: Mapped[Optional[List]] = mapped_column(JSON, doc="Metadata tags.")
     tid: Mapped[Optional[str]] = mapped_column(None, nullable=True, doc="Transaction ID that processed the step.")
     trace_id: Mapped[Optional[str]] = mapped_column(None, nullable=True, doc="The trace id of the agent step.")
@@ -52,10 +59,20 @@ class Step(SqlalchemyBase):
         None, nullable=True, doc="The feedback for this step. Must be either 'positive' or 'negative'."
     )
 
+    # error handling
+    error_type: Mapped[Optional[str]] = mapped_column(None, nullable=True, doc="The type/class of the error that occurred")
+    error_data: Mapped[Optional[Dict]] = mapped_column(
+        JSON, nullable=True, doc="Error details including message, traceback, and additional context"
+    )
+    status: Mapped[Optional[StepStatus]] = mapped_column(None, nullable=True, doc="Step status: pending, success, or failed")
+
     # Relationships (foreign keys)
     organization: Mapped[Optional["Organization"]] = relationship("Organization")
     provider: Mapped[Optional["Provider"]] = relationship("Provider")
-    job: Mapped[Optional["Job"]] = relationship("Job", back_populates="steps")
+    run: Mapped[Optional["Run"]] = relationship("Run", back_populates="steps")
 
     # Relationships (backrefs)
     messages: Mapped[List["Message"]] = relationship("Message", back_populates="step", cascade="save-update", lazy="noload")
+    metrics: Mapped[Optional["StepMetrics"]] = relationship(
+        "StepMetrics", back_populates="step", cascade="all, delete-orphan", lazy="noload", uselist=False
+    )

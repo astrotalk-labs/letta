@@ -1,5 +1,4 @@
 import os
-import warnings
 from typing import List, Union
 
 import requests
@@ -76,7 +75,7 @@ def num_tokens_from_functions(functions: List[dict], model: str = "gpt-4"):
     except KeyError:
         from letta.utils import printd
 
-        printd(f"Warning: model not found. Using cl100k_base encoding.")
+        printd("Warning: model not found. Using cl100k_base encoding.")
         encoding = tiktoken.get_encoding("cl100k_base")
 
     num_tokens = 0
@@ -84,11 +83,11 @@ def num_tokens_from_functions(functions: List[dict], model: str = "gpt-4"):
         function_tokens = len(encoding.encode(function["name"]))
         if function["description"]:
             if not isinstance(function["description"], str):
-                warnings.warn(f"Function {function['name']} has non-string description: {function['description']}")
+                logger.warning(f"Function {function['name']} has non-string description: {function['description']}")
             else:
                 function_tokens += len(encoding.encode(function["description"]))
         else:
-            warnings.warn(f"Function {function['name']} has no description, function: {function}")
+            logger.warning(f"Function {function['name']} has no description, function: {function}")
 
         if "parameters" in function:
             parameters = function["parameters"]
@@ -238,7 +237,6 @@ def num_tokens_from_messages(messages: List[dict], model: str = "gpt-4") -> int:
         num_tokens += tokens_per_message
         for key, value in message.items():
             try:
-
                 if isinstance(value, list) and key == "tool_calls":
                     num_tokens += num_tokens_from_tool_calls(tool_calls=value, model=model)
                     # special case for tool calling (list)

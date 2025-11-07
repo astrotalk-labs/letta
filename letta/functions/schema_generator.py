@@ -1,8 +1,6 @@
 import inspect
-import warnings
 from typing import Any, Dict, List, Optional, Tuple, Type, Union, get_args, get_origin
 
-from composio.client.collections import ActionParametersModel
 from docstring_parser import parse
 from pydantic import BaseModel
 from typing_extensions import Literal
@@ -102,7 +100,7 @@ def type_to_json_schema_type(py_type) -> dict:
         args = get_args(py_type)
         if len(args) == 0:
             # is this correct
-            warnings.warn("Defaulting to string type for untyped List")
+            logger.warning("Defaulting to string type for untyped List")
             return {
                 "type": "array",
                 "items": {"type": "string"},
@@ -412,12 +410,13 @@ def generate_schema(function, name: Optional[str] = None, description: Optional[
     # Validate that the function has a Google Python style docstring
     try:
         validate_google_style_docstring(function)
-    except ValueError:
+    except ValueError as e:
         logger.warning(
             f"Function `{function.__name__}` in module `{function.__module__}` "
             f"{'(tool_id=' + tool_id + ') ' if tool_id else ''}"
             f"is not in Google style docstring format. "
             f"Docstring received:\n{repr(function.__doc__[:200]) if function.__doc__ else 'None'}"
+            f"\nError: {str(e)}"
         )
 
     # Get the signature of the function
@@ -587,11 +586,120 @@ def generate_schema_from_args_schema_v2(
     return function_call_json
 
 
+def normalize_mcp_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize an MCP JSON schema to fix common issues:
+    1. Add explicit 'additionalProperties': false to all object types
+    2. Add explicit 'type' field to properties using $ref
+    3. Process $defs recursively
+
+    Args:
+        schema: The JSON schema to normalize (will be modified in-place)
+
+    Returns:
+        The normalized schema (same object, modified in-place)
+    """
+    import copy
+
+    # Work on a deep copy to avoid modifying the original
+    schema = copy.deepcopy(schema)
+
+    def normalize_object_schema(obj_schema: Dict[str, Any], defs: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Recursively normalize an object schema."""
+
+        # If this is an object type, add additionalProperties if missing
+        if obj_schema.get("type") == "object":
+            if "additionalProperties" not in obj_schema:
+                obj_schema["additionalProperties"] = False
+
+        # Handle properties
+        if "properties" in obj_schema:
+            for prop_name, prop_schema in obj_schema["properties"].items():
+                # Handle $ref references
+                if "$ref" in prop_schema:
+                    # Add explicit type based on the reference
+                    if "type" not in prop_schema:
+                        # Try to resolve the type from $defs if available
+                        if defs and prop_schema["$ref"].startswith("#/$defs/"):
+                            def_name = prop_schema["$ref"].split("/")[-1]
+                            if def_name in defs:
+                                ref_schema = defs[def_name]
+                                if "type" in ref_schema:
+                                    prop_schema["type"] = ref_schema["type"]
+
+                        # If still no type, assume object (common case for model references)
+                        if "type" not in prop_schema:
+                            prop_schema["type"] = "object"
+
+                    # Don't add additionalProperties to properties with $ref
+                    # The $ref schema itself will have additionalProperties
+                    # Adding it here makes the validator think it allows empty objects
+                    continue
+
+                # Recursively normalize nested objects
+                if isinstance(prop_schema, dict):
+                    if prop_schema.get("type") == "object":
+                        normalize_object_schema(prop_schema, defs)
+
+                    # Handle arrays with object items
+                    if prop_schema.get("type") == "array" and "items" in prop_schema:
+                        items = prop_schema["items"]
+                        if isinstance(items, dict):
+                            # Handle $ref in items
+                            if "$ref" in items and "type" not in items:
+                                if defs and items["$ref"].startswith("#/$defs/"):
+                                    def_name = items["$ref"].split("/")[-1]
+                                    if def_name in defs and "type" in defs[def_name]:
+                                        items["type"] = defs[def_name]["type"]
+                                if "type" not in items:
+                                    items["type"] = "object"
+
+                            # Recursively normalize items
+                            if items.get("type") == "object":
+                                normalize_object_schema(items, defs)
+
+                    # Handle anyOf (complex union types)
+                    if "anyOf" in prop_schema:
+                        for option in prop_schema["anyOf"]:
+                            # Add explicit type to $ref options for flattening support
+                            if "$ref" in option and "type" not in option:
+                                if defs and option["$ref"].startswith("#/$defs/"):
+                                    def_name = option["$ref"].split("/")[-1]
+                                    if def_name in defs and "type" in defs[def_name]:
+                                        option["type"] = defs[def_name]["type"]
+                                # Default to object if type can't be resolved
+                                if "type" not in option:
+                                    option["type"] = "object"
+                            # Recursively normalize object types
+                            if isinstance(option, dict) and option.get("type") == "object":
+                                normalize_object_schema(option, defs)
+
+        # Handle array items at the top level
+        if "items" in obj_schema and isinstance(obj_schema["items"], dict):
+            if obj_schema["items"].get("type") == "object":
+                normalize_object_schema(obj_schema["items"], defs)
+
+        return obj_schema
+
+    # Process $defs first if they exist
+    defs = schema.get("$defs", {})
+    if defs:
+        for def_name, def_schema in defs.items():
+            if isinstance(def_schema, dict):
+                normalize_object_schema(def_schema, defs)
+
+    # Process the main schema
+    normalize_object_schema(schema, defs)
+
+    return schema
+
+
 def generate_tool_schema_for_mcp(
     mcp_tool: MCPTool,
     append_heartbeat: bool = True,
     strict: bool = False,
 ) -> Dict[str, Any]:
+    from letta.functions.schema_validator import validate_complete_json_schema
 
     # MCP tool.inputSchema is a JSON schema
     # https://github.com/modelcontextprotocol/python-sdk/blob/775f87981300660ee957b63c2a14b448ab9c3675/src/mcp/types.py#L678
@@ -603,9 +711,161 @@ def generate_tool_schema_for_mcp(
     assert "properties" in parameters_schema, parameters_schema
     # assert "required" in parameters_schema, parameters_schema
 
+    # Normalize the schema to fix common issues with MCP schemas
+    # This adds additionalProperties: false and explicit types for $ref properties
+    parameters_schema = normalize_mcp_schema(parameters_schema)
+
     # Zero-arg tools often omit "required" because nothing is required.
     # Normalise so downstream code can treat it consistently.
     parameters_schema.setdefault("required", [])
+
+    # Get $defs for $ref resolution
+    defs = parameters_schema.get("$defs", {})
+
+    def deduplicate_anyof(anyof_list):
+        """
+        Deduplicate entries in an anyOf array based on their content.
+
+        Rules:
+        1. Remove exact duplicates (same type, same properties)
+        2. For duplicate types with different metadata (e.g., format):
+           - Keep the most specific version (with format/constraints)
+           - If one has format and others don't, keep only the one with format
+        """
+        if not anyof_list:
+            return anyof_list
+
+        seen = []
+        result = []
+
+        for item in anyof_list:
+            if not isinstance(item, dict):
+                if item not in seen:
+                    seen.append(item)
+                    result.append(item)
+                continue
+
+            # Create a hashable representation for comparison
+            # Sort keys to ensure consistent comparison
+            item_type = item.get("type")
+            item_format = item.get("format")
+
+            # Check if we've seen this exact item
+            is_duplicate = False
+            for existing_idx, existing in enumerate(result):
+                if not isinstance(existing, dict):
+                    continue
+
+                existing_type = existing.get("type")
+                existing_format = existing.get("format")
+
+                # Exact match - skip this item
+                if item == existing:
+                    is_duplicate = True
+                    break
+
+                # Same type with different format handling
+                if item_type and item_type == existing_type:
+                    # Both have same type
+                    if item_format and not existing_format:
+                        # New item has format, existing doesn't - replace existing with new
+                        result[existing_idx] = item
+                        is_duplicate = True
+                        break
+                    elif not item_format and existing_format:
+                        # Existing has format, new doesn't - keep existing, skip new
+                        is_duplicate = True
+                        break
+                    elif item_format == existing_format:
+                        # Same type and format (or both None) - compare full objects
+                        # Prefer the one with more properties/constraints
+                        if len(item) >= len(existing):
+                            result[existing_idx] = item
+                        is_duplicate = True
+                        break
+
+            if not is_duplicate:
+                result.append(item)
+
+        return result
+
+    def inline_ref(schema_node, defs, depth=0, max_depth=10):
+        """
+        Recursively inline all $ref references in a schema node.
+        Returns a new schema with all $refs replaced by their definitions.
+        """
+        if depth > max_depth:
+            return schema_node  # Prevent infinite recursion
+
+        if not isinstance(schema_node, dict):
+            return schema_node
+
+        # Make a copy to avoid modifying the original
+        result = schema_node.copy()
+
+        # If this node has a $ref, resolve it and merge
+        if "$ref" in result:
+            ref_path = result["$ref"]
+            if ref_path.startswith("#/$defs/"):
+                def_name = ref_path.split("/")[-1]
+                if def_name in defs:
+                    # Get the referenced schema
+                    ref_schema = defs[def_name].copy()
+                    # Remove the $ref
+                    del result["$ref"]
+                    # Merge the referenced schema into result
+                    # The referenced schema properties take precedence
+                    for key, value in ref_schema.items():
+                        if key not in result:
+                            result[key] = value
+                    # Recursively inline any $refs in the merged schema
+                    result = inline_ref(result, defs, depth + 1, max_depth)
+
+        # Recursively process nested structures
+        if "anyOf" in result:
+            # Inline refs in each anyOf option
+            result["anyOf"] = [inline_ref(opt, defs, depth + 1, max_depth) for opt in result["anyOf"]]
+            # Deduplicate anyOf entries
+            result["anyOf"] = deduplicate_anyof(result["anyOf"])
+        if "properties" in result and isinstance(result["properties"], dict):
+            result["properties"] = {
+                prop_name: inline_ref(prop_schema, defs, depth + 1, max_depth) for prop_name, prop_schema in result["properties"].items()
+            }
+        if "items" in result:
+            result["items"] = inline_ref(result["items"], defs, depth + 1, max_depth)
+
+        return result
+
+    # Process properties to inline all $refs while keeping anyOf structure
+    if "properties" in parameters_schema:
+        for field_name in list(parameters_schema["properties"].keys()):
+            field_props = parameters_schema["properties"][field_name]
+
+            # Inline all $refs in this property (recursively)
+            field_props = inline_ref(field_props, defs)
+            parameters_schema["properties"][field_name] = field_props
+
+            # For strict mode: heal optional fields by making them required with null type
+            if strict and field_name not in parameters_schema["required"]:
+                # Field is optional - add it to required array
+                parameters_schema["required"].append(field_name)
+
+                # Ensure the field can accept null to maintain optionality
+                if "type" in field_props:
+                    if isinstance(field_props["type"], list):
+                        # Already an array of types - add null if not present
+                        if "null" not in field_props["type"]:
+                            field_props["type"].append("null")
+                        # Deduplicate
+                        field_props["type"] = list(set(field_props["type"]))
+                    elif field_props["type"] != "null":
+                        # Single type - convert to array with null
+                        field_props["type"] = list(set([field_props["type"], "null"]))
+                elif "anyOf" in field_props:
+                    # If there's still an anyOf, ensure null is one of the options
+                    has_null = any(opt.get("type") == "null" for opt in field_props["anyOf"])
+                    if not has_null:
+                        field_props["anyOf"].append({"type": "null"})
 
     # Add the optional heartbeat parameter
     if append_heartbeat:
@@ -613,7 +873,16 @@ def generate_tool_schema_for_mcp(
             "type": "boolean",
             "description": REQUEST_HEARTBEAT_DESCRIPTION,
         }
-        parameters_schema["required"].append(REQUEST_HEARTBEAT_PARAM)
+        if REQUEST_HEARTBEAT_PARAM not in parameters_schema["required"]:
+            parameters_schema["required"].append(REQUEST_HEARTBEAT_PARAM)
+
+    # Re-validate the schema after normalization and update the health status
+    # This allows previously INVALID schemas to pass if normalization fixed them
+    if mcp_tool.health:
+        health_status, health_reasons = validate_complete_json_schema(parameters_schema)
+        mcp_tool.health.status = health_status.value
+        mcp_tool.health.reasons = health_reasons
+        logger.debug(f"MCP tool {name} schema health after normalization: {health_status.value}, reasons: {health_reasons}")
 
     # Return the final schema
     if strict:
@@ -633,74 +902,4 @@ def generate_tool_schema_for_mcp(
             "name": name,
             "description": description,
             "parameters": parameters_schema,
-        }
-
-
-def generate_tool_schema_for_composio(
-    parameters_model: ActionParametersModel,
-    name: str,
-    description: str,
-    append_heartbeat: bool = True,
-    strict: bool = False,
-) -> Dict[str, Any]:
-    properties_json = {}
-    required_fields = parameters_model.required or []
-
-    # Extract properties from the ActionParametersModel
-    for field_name, field_props in parameters_model.properties.items():
-        # Initialize the property structure
-        property_schema = {
-            "type": field_props["type"],
-            "description": field_props.get("description", ""),
-        }
-
-        # Handle optional default values
-        if "default" in field_props:
-            property_schema["default"] = field_props["default"]
-
-        # Handle enumerations
-        if "enum" in field_props:
-            property_schema["enum"] = field_props["enum"]
-
-        # Handle array item types
-        if field_props["type"] == "array":
-            if "items" in field_props:
-                property_schema["items"] = field_props["items"]
-            elif "anyOf" in field_props:
-                property_schema["items"] = [t for t in field_props["anyOf"] if "items" in t][0]["items"]
-
-        # Add the property to the schema
-        properties_json[field_name] = property_schema
-
-    # Add the optional heartbeat parameter
-    if append_heartbeat:
-        properties_json[REQUEST_HEARTBEAT_PARAM] = {
-            "type": "boolean",
-            "description": REQUEST_HEARTBEAT_DESCRIPTION,
-        }
-        required_fields.append(REQUEST_HEARTBEAT_PARAM)
-
-    # Return the final schema
-    if strict:
-        # https://platform.openai.com/docs/guides/function-calling#strict-mode
-        return {
-            "name": name,
-            "description": description,
-            "strict": True,  # NOTE
-            "parameters": {
-                "type": "object",
-                "properties": properties_json,
-                "additionalProperties": False,  # NOTE
-                "required": required_fields,
-            },
-        }
-    else:
-        return {
-            "name": name,
-            "description": description,
-            "parameters": {
-                "type": "object",
-                "properties": properties_json,
-                "required": required_fields,
-            },
         }

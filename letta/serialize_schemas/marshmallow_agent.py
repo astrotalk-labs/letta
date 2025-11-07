@@ -1,11 +1,11 @@
-from typing import Dict
+from typing import Dict, Optional
 
 from marshmallow import fields, post_dump, pre_load
+from sqlalchemy import func
 from sqlalchemy.orm import sessionmaker
 
 import letta
-from letta.orm import Agent
-from letta.orm import Message as MessageModel
+from letta.orm import Agent, Message as MessageModel
 from letta.schemas.agent import AgentState as PydanticAgentState
 from letta.schemas.user import User
 from letta.serialize_schemas.marshmallow_agent_environment_variable import SerializedAgentEnvironmentVariableSchema
@@ -15,6 +15,7 @@ from letta.serialize_schemas.marshmallow_custom_fields import EmbeddingConfigFie
 from letta.serialize_schemas.marshmallow_message import SerializedMessageSchema
 from letta.serialize_schemas.marshmallow_tag import SerializedAgentTagSchema
 from letta.serialize_schemas.marshmallow_tool import SerializedToolSchema
+from letta.settings import DatabaseChoice, settings
 
 
 class MarshmallowAgentSchema(BaseSchema):
@@ -39,11 +40,13 @@ class MarshmallowAgentSchema(BaseSchema):
     core_memory = fields.List(fields.Nested(SerializedBlockSchema))
     tools = fields.List(fields.Nested(SerializedToolSchema))
     tool_exec_environment_variables = fields.List(fields.Nested(SerializedAgentEnvironmentVariableSchema))
+    secrets = fields.List(fields.Nested(SerializedAgentEnvironmentVariableSchema))
     tags = fields.List(fields.Nested(SerializedAgentTagSchema))
 
-    def __init__(self, *args, session: sessionmaker, actor: User, **kwargs):
+    def __init__(self, *args, session: sessionmaker, actor: User, max_steps: Optional[int] = None, **kwargs):
         super().__init__(*args, actor=actor, **kwargs)
         self.session = session
+        self.max_steps = max_steps
 
         # Propagate session and actor to nested schemas automatically
         for field in self.fields.values():
@@ -64,16 +67,103 @@ class MarshmallowAgentSchema(BaseSchema):
 
         with db_registry.session() as session:
             agent_id = data.get("id")
-            msgs = (
-                session.query(MessageModel)
-                .filter(
-                    MessageModel.agent_id == agent_id,
-                    MessageModel.organization_id == self.actor.organization_id,
+
+            if self.max_steps is not None:
+                # first, always get the system message
+                system_msg = (
+                    session.query(MessageModel)
+                    .filter(
+                        MessageModel.agent_id == agent_id,
+                        MessageModel.organization_id == self.actor.organization_id,
+                        MessageModel.role == "system",
+                    )
+                    .order_by(MessageModel.sequence_id.asc())
+                    .first()
                 )
-                .order_by(MessageModel.sequence_id.asc())
-                .all()
-            )
-            # overwrite the “messages” key with a fully serialized list
+
+                if settings.database_engine is DatabaseChoice.POSTGRES:
+                    # efficient PostgreSQL approach using subquery
+                    user_msg_subquery = (
+                        session.query(MessageModel.sequence_id)
+                        .filter(
+                            MessageModel.agent_id == agent_id,
+                            MessageModel.organization_id == self.actor.organization_id,
+                            MessageModel.role == "user",
+                        )
+                        .order_by(MessageModel.sequence_id.desc())
+                        .limit(self.max_steps)
+                        .subquery()
+                    )
+
+                    # get the minimum sequence_id from the subquery
+                    cutoff_sequence_id = session.query(func.min(user_msg_subquery.c.sequence_id)).scalar()
+
+                    if cutoff_sequence_id:
+                        # get messages from cutoff, excluding system message to avoid duplicates
+                        step_msgs = (
+                            session.query(MessageModel)
+                            .filter(
+                                MessageModel.agent_id == agent_id,
+                                MessageModel.organization_id == self.actor.organization_id,
+                                MessageModel.sequence_id >= cutoff_sequence_id,
+                                MessageModel.role != "system",
+                            )
+                            .order_by(MessageModel.sequence_id.asc())
+                            .all()
+                        )
+                        # combine system message with step messages
+                        msgs = [system_msg] + step_msgs if system_msg else step_msgs
+                    else:
+                        # no user messages, just return system message
+                        msgs = [system_msg] if system_msg else []
+                else:
+                    # sqlite approach: get all user messages first, then get messages from cutoff
+                    user_messages = (
+                        session.query(MessageModel.sequence_id)
+                        .filter(
+                            MessageModel.agent_id == agent_id,
+                            MessageModel.organization_id == self.actor.organization_id,
+                            MessageModel.role == "user",
+                        )
+                        .order_by(MessageModel.sequence_id.desc())
+                        .limit(self.max_steps)
+                        .all()
+                    )
+
+                    if user_messages:
+                        # get the minimum sequence_id
+                        cutoff_sequence_id = min(msg.sequence_id for msg in user_messages)
+
+                        # get messages from cutoff, excluding system message to avoid duplicates
+                        step_msgs = (
+                            session.query(MessageModel)
+                            .filter(
+                                MessageModel.agent_id == agent_id,
+                                MessageModel.organization_id == self.actor.organization_id,
+                                MessageModel.sequence_id >= cutoff_sequence_id,
+                                MessageModel.role != "system",
+                            )
+                            .order_by(MessageModel.sequence_id.asc())
+                            .all()
+                        )
+                        # combine system message with step messages
+                        msgs = [system_msg] + step_msgs if system_msg else step_msgs
+                    else:
+                        # no user messages, just return system message
+                        msgs = [system_msg] if system_msg else []
+            else:
+                # if no limit, get all messages in ascending order
+                msgs = (
+                    session.query(MessageModel)
+                    .filter(
+                        MessageModel.agent_id == agent_id,
+                        MessageModel.organization_id == self.actor.organization_id,
+                    )
+                    .order_by(MessageModel.sequence_id.asc())
+                    .all()
+                )
+
+            # overwrite the "messages" key with a fully serialized list
             data[self.FIELD_MESSAGES] = [SerializedMessageSchema(session=self.session, actor=self.actor).dump(m) for m in msgs]
 
         return data
@@ -86,7 +176,9 @@ class MarshmallowAgentSchema(BaseSchema):
         - Marks messages as in-context, preserving the order of the original `message_ids`
         - Removes individual message `id` fields
         """
-        data = super().sanitize_ids(data, **kwargs)
+        del data["id"]
+        del data["_created_by_id"]
+        del data["_last_updated_by_id"]
         data[self.FIELD_VERSION] = letta.__version__
 
         original_message_ids = data.pop(self.FIELD_MESSAGE_IDS, [])
@@ -107,11 +199,23 @@ class MarshmallowAgentSchema(BaseSchema):
 
         return data
 
+    @pre_load
+    def regenerate_ids(self, data: Dict, **kwargs) -> Dict:
+        if self.Meta.model:
+            data["id"] = self.generate_id()
+            data["_created_by_id"] = self.actor.id
+            data["_last_updated_by_id"] = self.actor.id
+
+        return data
+
     @post_dump
     def hide_tool_exec_environment_variables(self, data: Dict, **kwargs):
         """Hide the value of tool_exec_environment_variables"""
 
         for env_var in data.get("tool_exec_environment_variables", []):
+            # need to be re-set at load time
+            env_var["value"] = ""
+        for env_var in data.get("secrets", []):
             # need to be re-set at load time
             env_var["value"] = ""
         return data
@@ -135,4 +239,7 @@ class MarshmallowAgentSchema(BaseSchema):
             "identities",
             "is_deleted",
             "groups",
+            "batch_items",
+            "organization",
+            "runs",  # Exclude the runs relationship (agents_runs association table)
         )

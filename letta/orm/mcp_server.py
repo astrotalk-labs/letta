@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import JSON, String, UniqueConstraint
+from sqlalchemy import JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from letta.functions.mcp_client.types import StdioServerConfig
@@ -39,6 +39,15 @@ class MCPServer(SqlalchemyBase, OrganizationMixin):
     # access token / api key for MCP servers that require authentication
     token: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="The access token or api key for the MCP server")
 
+    # encrypted access token or api key for the MCP server
+    token_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True, doc="Encrypted access token or api key for the MCP server")
+
+    # custom headers for authentication (key-value pairs)
+    custom_headers: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, doc="Custom authentication headers as key-value pairs")
+
+    # encrypted custom headers for authentication (key-value pairs)
+    custom_headers_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True, doc="Encrypted custom authentication headers")
+
     # stdio server
     stdio_config: Mapped[Optional[StdioServerConfig]] = mapped_column(
         MCPStdioServerConfigColumn, nullable=True, doc="The configuration for the stdio server"
@@ -47,5 +56,12 @@ class MCPServer(SqlalchemyBase, OrganizationMixin):
     metadata_: Mapped[Optional[dict]] = mapped_column(
         JSON, default=lambda: {}, doc="A dictionary of additional metadata for the MCP server."
     )
-    # relationships
-    # organization: Mapped["Organization"] = relationship("Organization", back_populates="mcp_server", lazy="selectin")
+
+
+class MCPTools(SqlalchemyBase, OrganizationMixin):
+    """Represents a mapping of MCP server ID to tool ID"""
+
+    __tablename__ = "mcp_tools"
+
+    mcp_server_id: Mapped[str] = mapped_column(String, doc="The ID of the MCP server")
+    tool_id: Mapped[str] = mapped_column(String, doc="The ID of the tool")

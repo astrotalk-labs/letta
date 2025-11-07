@@ -1,7 +1,9 @@
 import json
-import uuid
-import warnings
 from typing import Optional
+
+from letta.log import get_logger
+
+logger = get_logger(__name__)
 
 from .constants import (
     INITIAL_BOOT_MESSAGE,
@@ -13,7 +15,7 @@ from .helpers.datetime_helpers import get_local_time
 from .helpers.json_helpers import json_dumps
 
 
-def get_initial_boot_messages(version, timezone):
+def get_initial_boot_messages(version, timezone, tool_call_id):
     if version == "startup":
         initial_boot_message = INITIAL_BOOT_MESSAGE
         messages = [
@@ -21,7 +23,6 @@ def get_initial_boot_messages(version, timezone):
         ]
 
     elif version == "startup_with_send_message":
-        tool_call_id = str(uuid.uuid4())
         messages = [
             # first message includes both inner monologue and function call to send_message
             {
@@ -44,16 +45,21 @@ def get_initial_boot_messages(version, timezone):
             },
             # obligatory function return message
             {
-                # "role": "function",
                 "role": "tool",
                 "name": "send_message",  # NOTE: technically not up to spec, this is old functions style
                 "content": package_function_response(True, None, timezone),
                 "tool_call_id": tool_call_id,
+                "tool_returns": [
+                    {
+                        "tool_call_id": tool_call_id,
+                        "status": "success",
+                        "func_response": package_function_response(True, None, timezone),
+                    }
+                ],
             },
         ]
 
     elif version == "startup_with_send_message_gpt35":
-        tool_call_id = str(uuid.uuid4())
         messages = [
             # first message includes both inner monologue and function call to send_message
             {
@@ -66,7 +72,7 @@ def get_initial_boot_messages(version, timezone):
                         "type": "function",
                         "function": {
                             "name": "send_message",
-                            "arguments": '{\n  "message": "' + f"Hi, is anyone there?" + '"\n}',
+                            "arguments": '{\n  "message": "' + "Hi, is anyone there?" + '"\n}',
                         },
                     }
                 ],
@@ -141,7 +147,7 @@ def package_user_message(
     return json_dumps(packaged_message)
 
 
-def package_function_response(was_success, response_string, timezone):
+def package_function_response(was_success: bool, response_string: str, timezone: str | None) -> str:
     formatted_time = get_local_time(timezone=timezone)
     packaged_message = {
         "status": "OK" if was_success else "Failed",
@@ -157,7 +163,7 @@ def package_system_message(system_message, timezone, message_type="system_alert"
     try:
         message_json = json.loads(system_message)
         if "type" in message_json and message_json["type"] == message_type:
-            warnings.warn(f"Attempted to pack a system message that is already packed. Not packing: '{system_message}'")
+            logger.warning(f"Attempted to pack a system message that is already packed. Not packing: '{system_message}'")
             return system_message
     except:
         pass  # do nothing, expected behavior that the message is not JSON
@@ -176,6 +182,22 @@ def package_summarize_message(summary, summary_message_count, hidden_message_cou
     context_message = (
         f"Note: prior messages ({hidden_message_count} of {total_message_count} total messages) have been hidden from view due to conversation memory constraints.\n"
         + f"The following is a summary of the previous {summary_message_count} messages:\n {summary}"
+    )
+
+    formatted_time = get_local_time(timezone=timezone)
+    packaged_message = {
+        "type": "system_alert",
+        "message": context_message,
+        "time": formatted_time,
+    }
+
+    return json_dumps(packaged_message)
+
+
+def package_summarize_message_no_counts(summary, timezone):
+    context_message = (
+        "Note: prior messages have been hidden from view due to conversation memory constraints.\n"
+        + f"The following is a summary of the previous messages:\n {summary}"
     )
 
     formatted_time = get_local_time(timezone=timezone)
@@ -232,11 +254,15 @@ def unpack_message(packed_message: str) -> str:
         if "type" in message_json and message_json["type"] in ["login", "heartbeat"]:
             # This is a valid user message that the ADE expects, so don't print warning
             return packed_message
-        warnings.warn(f"Was unable to find 'message' field in packed message object: '{packed_message}'")
+        logger.warning(f"Was unable to find 'message' field in packed message object: '{packed_message}'")
         return packed_message
     else:
-        message_type = message_json["type"]
+        try:
+            message_type = message_json["type"]
+        except:
+            return packed_message
+
         if message_type != "user_message":
-            warnings.warn(f"Expected type to be 'user_message', but was '{message_type}', so not unpacking: '{packed_message}'")
+            logger.warning(f"Expected type to be 'user_message', but was '{message_type}', so not unpacking: '{packed_message}'")
             return packed_message
         return message_json.get("message")

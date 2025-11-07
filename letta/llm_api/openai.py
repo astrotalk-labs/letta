@@ -1,4 +1,3 @@
-import warnings
 from typing import Generator, List, Optional, Union
 
 import httpx
@@ -21,11 +20,15 @@ from letta.local_llm.utils import num_tokens_from_functions, num_tokens_from_mes
 from letta.log import get_logger
 from letta.otel.tracing import log_event
 from letta.schemas.llm_config import LLMConfig
-from letta.schemas.message import Message as _Message
-from letta.schemas.message import MessageRole as _MessageRole
-from letta.schemas.openai.chat_completion_request import ChatCompletionRequest
-from letta.schemas.openai.chat_completion_request import FunctionCall as ToolFunctionChoiceFunctionCall
-from letta.schemas.openai.chat_completion_request import FunctionSchema, Tool, ToolFunctionChoice, cast_message_to_subtype
+from letta.schemas.message import Message as PydanticMessage, MessageRole as _MessageRole
+from letta.schemas.openai.chat_completion_request import (
+    ChatCompletionRequest,
+    FunctionCall as ToolFunctionChoiceFunctionCall,
+    FunctionSchema,
+    Tool,
+    ToolFunctionChoice,
+    cast_message_to_subtype,
+)
 from letta.schemas.openai.chat_completion_response import (
     ChatCompletionChunkResponse,
     ChatCompletionResponse,
@@ -36,12 +39,14 @@ from letta.schemas.openai.chat_completion_response import (
     UsageStatistics,
 )
 from letta.schemas.openai.embedding_response import EmbeddingResponse
+from letta.settings import model_settings
 from letta.streaming_interface import AgentChunkStreamingInterface, AgentRefreshStreamingInterface
 from letta.utils import get_tool_call_id, smart_urljoin
 
 logger = get_logger(__name__)
 
 
+# TODO: MOVE THIS TO OPENAI_CLIENT
 def openai_check_valid_api_key(base_url: str, api_key: Union[str, None]) -> None:
     if api_key:
         try:
@@ -59,11 +64,16 @@ def openai_check_valid_api_key(base_url: str, api_key: Union[str, None]) -> None
 
 def openai_get_model_list(url: str, api_key: Optional[str] = None, fix_url: bool = False, extra_params: Optional[dict] = None) -> dict:
     """https://platform.openai.com/docs/api-reference/models/list"""
-    from letta.utils import printd
 
     # In some cases we may want to double-check the URL and do basic correction, eg:
     # In Letta config the address for vLLM is w/o a /v1 suffix for simplicity
     # However if we're treating the server as an OpenAI proxy we want the /v1 suffix on our model hit
+
+    logger.warning(
+        "The synchronous version of openai_get_model_list function is deprecated. Use the async one instead.",
+        stacklevel=2,
+    )
+
     if fix_url:
         if not url.endswith("/v1"):
             url = smart_urljoin(url, "v1")
@@ -73,15 +83,21 @@ def openai_get_model_list(url: str, api_key: Optional[str] = None, fix_url: bool
     headers = {"Content-Type": "application/json"}
     if api_key is not None:
         headers["Authorization"] = f"Bearer {api_key}"
+    # Add optional OpenRouter headers if hitting OpenRouter
+    if "openrouter.ai" in url:
+        if model_settings.openrouter_referer:
+            headers["HTTP-Referer"] = model_settings.openrouter_referer
+        if model_settings.openrouter_title:
+            headers["X-Title"] = model_settings.openrouter_title
 
-    printd(f"Sending request to {url}")
+    logger.debug(f"Sending request to {url}")
     response = None
     try:
         # TODO add query param "tool" to be true
         response = requests.get(url, headers=headers, params=extra_params)
         response.raise_for_status()  # Raises HTTPError for 4XX/5XX status
         response = response.json()  # convert to dict from string
-        printd(f"response = {response}")
+        logger.debug(f"response = {response}")
         return response
     except requests.exceptions.HTTPError as http_err:
         # Handle HTTP errors (e.g., response 4XX, 5XX)
@@ -90,7 +106,7 @@ def openai_get_model_list(url: str, api_key: Optional[str] = None, fix_url: bool
                 response = response.json()
         except:
             pass
-        printd(f"Got HTTPError, exception={http_err}, response={response}")
+        logger.debug(f"Got HTTPError, exception={http_err}, response={response}")
         raise http_err
     except requests.exceptions.RequestException as req_err:
         # Handle other requests-related errors (e.g., connection error)
@@ -99,7 +115,7 @@ def openai_get_model_list(url: str, api_key: Optional[str] = None, fix_url: bool
                 response = response.json()
         except:
             pass
-        printd(f"Got RequestException, exception={req_err}, response={response}")
+        logger.debug(f"Got RequestException, exception={req_err}, response={response}")
         raise req_err
     except Exception as e:
         # Handle other potential errors
@@ -108,7 +124,7 @@ def openai_get_model_list(url: str, api_key: Optional[str] = None, fix_url: bool
                 response = response.json()
         except:
             pass
-        printd(f"Got unknown Exception, exception={e}, response={response}")
+        logger.debug(f"Got unknown Exception, exception={e}, response={response}")
         raise e
 
 
@@ -120,7 +136,6 @@ async def openai_get_model_list_async(
     client: Optional["httpx.AsyncClient"] = None,
 ) -> dict:
     """https://platform.openai.com/docs/api-reference/models/list"""
-    from letta.utils import printd
 
     # In some cases we may want to double-check the URL and do basic correction
     if fix_url and not url.endswith("/v1"):
@@ -131,8 +146,13 @@ async def openai_get_model_list_async(
     headers = {"Content-Type": "application/json"}
     if api_key is not None:
         headers["Authorization"] = f"Bearer {api_key}"
+    if "openrouter.ai" in url:
+        if model_settings.openrouter_referer:
+            headers["HTTP-Referer"] = model_settings.openrouter_referer
+        if model_settings.openrouter_title:
+            headers["X-Title"] = model_settings.openrouter_title
 
-    printd(f"Sending request to {url}")
+    logger.debug(f"Sending request to {url}")
 
     # Use provided client or create a new one
     close_client = False
@@ -144,24 +164,23 @@ async def openai_get_model_list_async(
         response = await client.get(url, headers=headers, params=extra_params)
         response.raise_for_status()
         result = response.json()
-        printd(f"response = {result}")
+        logger.debug(f"response = {result}")
         return result
     except httpx.HTTPStatusError as http_err:
         # Handle HTTP errors (e.g., response 4XX, 5XX)
-        error_response = None
         try:
             error_response = http_err.response.json()
         except:
             error_response = {"status_code": http_err.response.status_code, "text": http_err.response.text}
-        printd(f"Got HTTPError, exception={http_err}, response={error_response}")
+        logger.debug(f"Got HTTPError, exception={http_err}, response={error_response}")
         raise http_err
     except httpx.RequestError as req_err:
         # Handle other httpx-related errors (e.g., connection error)
-        printd(f"Got RequestException, exception={req_err}")
+        logger.debug(f"Got RequestException, exception={req_err}")
         raise req_err
     except Exception as e:
         # Handle other potential errors
-        printd(f"Got unknown Exception, exception={e}")
+        logger.debug(f"Got unknown Exception, exception={e}")
         raise e
     finally:
         if close_client:
@@ -170,7 +189,7 @@ async def openai_get_model_list_async(
 
 def build_openai_chat_completions_request(
     llm_config: LLMConfig,
-    messages: List[_Message],
+    messages: List[PydanticMessage],
     user_id: Optional[str],
     functions: Optional[list],
     function_call: Optional[str],
@@ -194,19 +213,18 @@ def build_openai_chat_completions_request(
     use_developer_message = accepts_developer_role(llm_config.model)
 
     openai_message_list = [
-        cast_message_to_subtype(
-            m.to_openai_dict(
-                put_inner_thoughts_in_kwargs=llm_config.put_inner_thoughts_in_kwargs,
-                use_developer_message=use_developer_message,
-            )
+        cast_message_to_subtype(m)
+        for m in PydanticMessage.to_openai_dicts_from_list(
+            messages,
+            put_inner_thoughts_in_kwargs=llm_config.put_inner_thoughts_in_kwargs,
+            use_developer_message=use_developer_message,
         )
-        for m in messages
     ]
 
     if llm_config.model:
         model = llm_config.model
     else:
-        warnings.warn(f"Model type not set in llm_config: {llm_config.model_dump_json(indent=4)}")
+        logger.warning(f"Model type not set in llm_config: {llm_config.model_dump_json(indent=4)}")
         model = None
 
     if use_tool_naming:
@@ -267,7 +285,7 @@ def build_openai_chat_completions_request(
                     structured_output_version = convert_to_structured_output(tool.function.model_dump())
                     tool.function = FunctionSchema(**structured_output_version)
                 except ValueError as e:
-                    warnings.warn(f"Failed to convert tool function to structured output, tool={tool}, error={e}")
+                    logger.warning(f"Failed to convert tool function to structured output, tool={tool}, error={e}")
     return data
 
 
@@ -319,7 +337,7 @@ def openai_chat_completions_process_stream(
 
     # Create a dummy Message object to get an ID and date
     # TODO(sarah): add message ID generation function
-    dummy_message = _Message(
+    dummy_message = PydanticMessage(
         role=_MessageRole.assistant,
         content=[],
         agent_id="",
@@ -359,7 +377,7 @@ def openai_chat_completions_process_stream(
         ):
             assert isinstance(chat_completion_chunk, ChatCompletionChunkResponse), type(chat_completion_chunk)
             if chat_completion_chunk.choices is None or len(chat_completion_chunk.choices) == 0:
-                warnings.warn(f"No choices in chunk: {chat_completion_chunk}")
+                logger.warning(f"No choices in chunk: {chat_completion_chunk}")
                 continue
 
             # NOTE: this assumes that the tool call ID will only appear in one of the chunks during the stream
@@ -454,7 +472,7 @@ def openai_chat_completions_process_stream(
                             try:
                                 accum_message.tool_calls[tool_call_delta.index].id = tool_call_delta.id
                             except IndexError:
-                                warnings.warn(
+                                logger.warning(
                                     f"Tool call index out of range ({tool_call_delta.index})\ncurrent tool calls: {accum_message.tool_calls}\ncurrent delta: {tool_call_delta}"
                                 )
                                 # force index 0
@@ -468,19 +486,19 @@ def openai_chat_completions_process_stream(
                                         tool_call_delta.index
                                     ].function.name += tool_call_delta.function.name  # TODO check for parallel tool calls
                                 except IndexError:
-                                    warnings.warn(
+                                    logger.warning(
                                         f"Tool call index out of range ({tool_call_delta.index})\ncurrent tool calls: {accum_message.tool_calls}\ncurrent delta: {tool_call_delta}"
                                     )
                             if tool_call_delta.function.arguments is not None:
                                 try:
                                     accum_message.tool_calls[tool_call_delta.index].function.arguments += tool_call_delta.function.arguments
                                 except IndexError:
-                                    warnings.warn(
+                                    logger.warning(
                                         f"Tool call index out of range ({tool_call_delta.index})\ncurrent tool calls: {accum_message.tool_calls}\ncurrent delta: {tool_call_delta}"
                                     )
 
                 if message_delta.function_call is not None:
-                    raise NotImplementedError(f"Old function_call style not support with stream=True")
+                    raise NotImplementedError("Old function_call style not support with stream=True")
 
             # overwrite response fields based on latest chunk
             if not create_message_id:
@@ -503,7 +521,7 @@ def openai_chat_completions_process_stream(
         logger.error(f"Parsing ChatCompletion stream failed with error:\n{str(e)}")
         raise e
     finally:
-        logger.info(f"Finally ending streaming interface.")
+        logger.info("Finally ending streaming interface.")
         if stream_interface:
             stream_interface.stream_end()
 
@@ -525,7 +543,6 @@ def openai_chat_completions_process_stream(
 
     assert len(chat_completion_response.choices) > 0, f"No response from provider {chat_completion_response}"
 
-    # printd(chat_completion_response)
     log_event(name="llm_response_received", attributes=chat_completion_response.model_dump())
     return chat_completion_response
 
@@ -536,7 +553,6 @@ def openai_chat_completions_request_stream(
     chat_completion_request: ChatCompletionRequest,
     fix_url: bool = False,
 ) -> Generator[ChatCompletionChunkResponse, None, None]:
-
     # In some cases we may want to double-check the URL and do basic correction, eg:
     # In Letta config the address for vLLM is w/o a /v1 suffix for simplicity
     # However if we're treating the server as an OpenAI proxy we want the /v1 suffix on our model hit
@@ -546,14 +562,23 @@ def openai_chat_completions_request_stream(
 
     data = prepare_openai_payload(chat_completion_request)
     data["stream"] = True
-    client = OpenAI(api_key=api_key, base_url=url, max_retries=0)
+    kwargs = {"api_key": api_key, "base_url": url, "max_retries": 0}
+    if "openrouter.ai" in url:
+        headers = {}
+        if model_settings.openrouter_referer:
+            headers["HTTP-Referer"] = model_settings.openrouter_referer
+        if model_settings.openrouter_title:
+            headers["X-Title"] = model_settings.openrouter_title
+        if headers:
+            kwargs["default_headers"] = headers
+    client = OpenAI(**kwargs)
     try:
         stream = client.chat.completions.create(**data)
         for chunk in stream:
             # TODO: Use the native OpenAI objects here?
             yield ChatCompletionChunkResponse(**chunk.model_dump(exclude_none=True))
     except Exception as e:
-        print(f"Error request stream from /v1/chat/completions, url={url}, data={data}:\n{e}")
+        logger.error(f"Error request stream from /v1/chat/completions, url={url}, data={data}: {e}")
         raise e
 
 
@@ -570,7 +595,16 @@ def openai_chat_completions_request(
     https://platform.openai.com/docs/guides/text-generation?lang=curl
     """
     data = prepare_openai_payload(chat_completion_request)
-    client = OpenAI(api_key=api_key, base_url=url, max_retries=0)
+    kwargs = {"api_key": api_key, "base_url": url, "max_retries": 0}
+    if "openrouter.ai" in url:
+        headers = {}
+        if model_settings.openrouter_referer:
+            headers["HTTP-Referer"] = model_settings.openrouter_referer
+        if model_settings.openrouter_title:
+            headers["X-Title"] = model_settings.openrouter_title
+        if headers:
+            kwargs["default_headers"] = headers
+    client = OpenAI(**kwargs)
     log_event(name="llm_request_sent", attributes=data)
     chat_completion = client.chat.completions.create(**data)
     log_event(name="llm_response_received", attributes=chat_completion.model_dump())
@@ -608,7 +642,7 @@ def prepare_openai_payload(chat_completion_request: ChatCompletionRequest):
     #         try:
     #             tool["function"] = convert_to_structured_output(tool["function"])
     #         except ValueError as e:
-    #             warnings.warn(f"Failed to convert tool function to structured output, tool={tool}, error={e}")
+    #             logger.warning(f"Failed to convert tool function to structured output, tool={tool}, error={e}")
 
     if not supports_parallel_tool_calling(chat_completion_request.model):
         data.pop("parallel_tool_calls", None)

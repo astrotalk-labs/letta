@@ -12,16 +12,21 @@ from letta.functions.function_sets.base import core_memory_append, core_memory_r
 from letta.orm.sandbox_config import SandboxConfig, SandboxEnvironmentVariable
 from letta.schemas.agent import AgentState, CreateAgent
 from letta.schemas.block import CreateBlock
+from letta.schemas.embedding_config import EmbeddingConfig
+from letta.schemas.enums import ToolType
 from letta.schemas.environment_variables import AgentEnvironmentVariable, SandboxEnvironmentVariableCreate
+from letta.schemas.llm_config import LLMConfig
 from letta.schemas.organization import Organization
 from letta.schemas.pip_requirement import PipRequirement
 from letta.schemas.sandbox_config import E2BSandboxConfig, LocalSandboxConfig, SandboxConfigCreate, SandboxConfigUpdate
+from letta.schemas.tool import Tool as PydanticTool
 from letta.schemas.user import User
 from letta.server.server import SyncServer
 from letta.services.organization_manager import OrganizationManager
 from letta.services.sandbox_config_manager import SandboxConfigManager
 from letta.services.tool_executor.tool_execution_sandbox import ToolExecutionSandbox
 from letta.services.tool_manager import ToolManager
+from letta.services.tool_sandbox.local_sandbox import AsyncToolSandboxLocal
 from letta.services.user_manager import UserManager
 from tests.helpers.utils import create_tool_from_func
 
@@ -48,14 +53,14 @@ def server():
 
 
 @pytest.fixture(autouse=True)
-def clear_tables():
+async def clear_tables():
     """Fixture to clear the organization table before each test."""
-    from letta.server.db import db_context
+    from letta.server.db import db_registry
 
-    with db_context() as session:
-        session.execute(delete(SandboxEnvironmentVariable))
-        session.execute(delete(SandboxConfig))
-        session.commit()  # Commit the deletion
+    async with db_registry.async_session() as session:
+        await session.execute(delete(SandboxEnvironmentVariable))
+        await session.execute(delete(SandboxConfig))
+        await session.commit()  # Commit the deletion
 
 
 @pytest.fixture
@@ -232,7 +237,7 @@ def agent_state(server):
 
 
 @pytest.fixture
-def custom_test_sandbox_config(test_user):
+async def custom_test_sandbox_config(test_user):
     """
     Fixture to create a consistent local sandbox configuration for tests.
 
@@ -256,7 +261,7 @@ def custom_test_sandbox_config(test_user):
     config_create = SandboxConfigCreate(config=local_sandbox_config.model_dump())
 
     # Create or update the sandbox configuration
-    manager.create_or_update_sandbox_config(sandbox_config_create=config_create, actor=test_user)
+    await manager.create_or_update_sandbox_config_async(sandbox_config_create=config_create, actor=test_user)
 
     return manager, local_sandbox_config
 
@@ -314,13 +319,14 @@ def test_local_sandbox_with_list_rv(disable_e2b_api_key, list_tool, test_user):
 
 
 @pytest.mark.local_sandbox
-def test_local_sandbox_env(disable_e2b_api_key, get_env_tool, test_user):
+@pytest.mark.asyncio
+async def test_local_sandbox_env(disable_e2b_api_key, get_env_tool, test_user):
     manager = SandboxConfigManager()
 
     # Make a custom local sandbox config
     sandbox_dir = str(Path(__file__).parent / "test_tool_sandbox")
     config_create = SandboxConfigCreate(config=LocalSandboxConfig(sandbox_dir=sandbox_dir).model_dump())
-    config = manager.create_or_update_sandbox_config(config_create, test_user)
+    config = await manager.create_or_update_sandbox_config_async(config_create, test_user)
 
     # Make a environment variable with a long random string
     key = "secret_word"
@@ -340,14 +346,15 @@ def test_local_sandbox_env(disable_e2b_api_key, get_env_tool, test_user):
 
 
 @pytest.mark.local_sandbox
-def test_local_sandbox_per_agent_env(disable_e2b_api_key, get_env_tool, agent_state, test_user):
+@pytest.mark.asyncio
+async def test_local_sandbox_per_agent_env(disable_e2b_api_key, get_env_tool, agent_state, test_user):
     manager = SandboxConfigManager()
     key = "secret_word"
 
     # Make a custom local sandbox config
     sandbox_dir = str(Path(__file__).parent / "test_tool_sandbox")
     config_create = SandboxConfigCreate(config=LocalSandboxConfig(sandbox_dir=sandbox_dir).model_dump())
-    config = manager.create_or_update_sandbox_config(config_create, test_user)
+    config = await manager.create_or_update_sandbox_config_async(config_create, test_user)
 
     # Make a environment variable with a long random string
     # Note: This has an overlapping key with agent state's environment variables
@@ -359,9 +366,7 @@ def test_local_sandbox_per_agent_env(disable_e2b_api_key, get_env_tool, agent_st
 
     # Make a environment variable with a long random string and put into agent state
     correct_long_random_string = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(20))
-    agent_state.tool_exec_environment_variables = [
-        AgentEnvironmentVariable(key=key, value=correct_long_random_string, agent_id=agent_state.id)
-    ]
+    agent_state.secrets = [AgentEnvironmentVariable(key=key, value=correct_long_random_string, agent_id=agent_state.id)]
 
     # Create tool and args
     args = {}
@@ -395,6 +400,136 @@ def test_local_sandbox_with_venv_and_warnings_does_not_error(disable_e2b_api_key
     assert result.func_return == "Hello World"
 
 
+@pytest.mark.local_sandbox
+@pytest.mark.asyncio
+async def test_tool_with_client_injection(disable_e2b_api_key, server: SyncServer, test_user):
+    """Test that tools can access injected letta_client and agent_id to modify agent blocks."""
+
+    # Create a tool that uses the injected client and agent_id to actually clear a memory block
+    memory_clear_source = '''
+def memory_clear(label: str, agent_id: str, client: "Letta"):
+    """Test tool that clears a memory block using the injected client.
+
+    Args:
+        label: The label of the memory block to clear
+        agent_id: The agent's ID (injected by Letta system)
+        client: The Letta client instance (injected by Letta system)
+    """
+    # Verify that agent_id was injected
+    if not agent_id or not isinstance(agent_id, str):
+        return f"ERROR: agent_id not properly injected: {agent_id}"
+
+    # Verify that client was injected
+    if not client or not hasattr(client, 'agents'):
+        return f"ERROR: client not properly injected: {client}"
+
+    # Use the injected client to actually clear the memory block
+    try:
+        # Get the agent using the injected client
+        agent = client.agents.get(agent_id=agent_id)
+
+        # Find the block with the specified label
+        blocks = agent.memory.blocks
+        target_block = None
+        for block in blocks:
+            if block.label == label:
+                target_block = block
+                break
+
+        if not target_block:
+            return f"ERROR: Block with label '{label}' not found"
+
+        # Clear the block by setting its value to empty string
+        original_value = target_block.value
+        client.agents.update_block(
+            agent_id=agent_id,
+            block_id=target_block.id,
+            value=""
+        )
+
+        return f"SUCCESS: Cleared block '{label}' (was {len(original_value)} chars, now empty)"
+    except Exception as e:
+        return f"ERROR: Failed to clear block: {str(e)}"
+'''
+
+    # Create the tool
+    memory_clear_tool = PydanticTool(
+        name="memory_clear",
+        description="Clear a memory block by setting its value to empty string",
+        source_code=memory_clear_source,
+        source_type="python",
+        tool_type=ToolType.CUSTOM,
+    )
+
+    # Manually provide schema since client is an injected parameter
+    memory_clear_tool.json_schema = {
+        "name": "memory_clear",
+        "description": "Clear a memory block by setting its value to empty string",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "label": {"type": "string", "description": "The label of the memory block to clear"}
+                # agent_id and client are injected, not passed by the user
+            },
+            "required": ["label"],
+        },
+    }
+
+    # Create the tool in the system
+    created_tool = await server.tool_manager.create_tool_async(memory_clear_tool, actor=test_user)
+
+    # Create an agent with a memory block
+    agent = await server.agent_manager.create_agent_async(
+        agent_create=CreateAgent(
+            name="test_agent_with_blocks",
+            memory_blocks=[{"label": "test_block", "value": "Initial test content that should be cleared"}],
+            llm_config=LLMConfig.default_config("gpt-4o-mini"),
+            embedding_config=EmbeddingConfig.default_config(provider="openai"),
+            tools=["memory_clear"],
+            include_base_tools=False,
+        ),
+        actor=test_user,
+    )
+
+    # Verify the tool is attached
+    assert created_tool.id in [t.id for t in agent.tools]
+
+    # Simulate tool execution with the reserved keywords
+    # This would normally happen during agent execution, but we'll test the tool directly
+    # Create the sandbox for the tool
+    sandbox = AsyncToolSandboxLocal(tool_name="memory_clear", args={"label": "test_block"}, user=test_user, tool_object=created_tool)
+
+    # Initialize the sandbox to detect reserved keywords
+    await sandbox._init_async()
+
+    # Verify that the tool correctly detects the need for injection
+    assert sandbox.inject_letta_client == True  # Should detect 'client' parameter
+    assert sandbox.inject_agent_id == True  # Should detect 'agent_id' parameter
+
+    # Generate the execution script to verify injection code is present
+    script = await sandbox.generate_execution_script(agent_state=agent)
+
+    # Verify the script contains Letta client initialization
+    assert "from letta import Letta" in script or "import letta" in script.lower()
+    assert "agent_id =" in script
+
+    # Actually execute the tool using the sandbox
+    result = await sandbox.run(agent_state=agent)
+
+    # Verify execution was successful
+    assert result.status == "success", f"Tool execution failed: {result.stderr}"
+    assert "SUCCESS:" in result.func_return, f"Tool didn't execute successfully: {result.func_return}"
+    assert "Cleared block 'test_block'" in result.func_return, f"Block not cleared: {result.func_return}"
+    assert "was 44 chars" in result.func_return, f"Original length not reported correctly: {result.func_return}"
+
+    # check the block status after the tool execution
+    agent_state = await server.agent_manager.get_agent_by_id_async(agent.id, actor=test_user)
+    assert agent_state.memory.get_block("test_block").value == ""
+
+    # Clean up
+    await server.agent_manager.delete_agent_async(agent_id=agent.id, actor=test_user)
+
+
 @pytest.mark.e2b_sandbox
 def test_local_sandbox_with_venv_errors(disable_e2b_api_key, custom_test_sandbox_config, always_err_tool, test_user):
     sandbox = ToolExecutionSandbox(always_err_tool.name, {}, user=test_user)
@@ -408,12 +543,13 @@ def test_local_sandbox_with_venv_errors(disable_e2b_api_key, custom_test_sandbox
 
 
 @pytest.mark.e2b_sandbox
-def test_local_sandbox_with_venv_pip_installs_basic(disable_e2b_api_key, cowsay_tool, test_user):
+@pytest.mark.asyncio
+async def test_local_sandbox_with_venv_pip_installs_basic(disable_e2b_api_key, cowsay_tool, test_user):
     manager = SandboxConfigManager()
     config_create = SandboxConfigCreate(
         config=LocalSandboxConfig(use_venv=True, pip_requirements=[PipRequirement(name="cowsay")]).model_dump()
     )
-    config = manager.create_or_update_sandbox_config(config_create, test_user)
+    config = await manager.create_or_update_sandbox_config_async(config_create, test_user)
 
     # Add an environment variable
     key = "secret_word"
@@ -428,10 +564,11 @@ def test_local_sandbox_with_venv_pip_installs_basic(disable_e2b_api_key, cowsay_
 
 
 @pytest.mark.e2b_sandbox
-def test_local_sandbox_with_venv_pip_installs_with_update(disable_e2b_api_key, cowsay_tool, test_user):
+@pytest.mark.asyncio
+async def test_local_sandbox_with_venv_pip_installs_with_update(disable_e2b_api_key, cowsay_tool, test_user):
     manager = SandboxConfigManager()
     config_create = SandboxConfigCreate(config=LocalSandboxConfig(use_venv=True).model_dump())
-    config = manager.create_or_update_sandbox_config(config_create, test_user)
+    config = await manager.create_or_update_sandbox_config_async(config_create, test_user)
 
     # Add an environment variable
     key = "secret_word"
@@ -452,7 +589,7 @@ def test_local_sandbox_with_venv_pip_installs_with_update(disable_e2b_api_key, c
     config_create = SandboxConfigCreate(
         config=LocalSandboxConfig(use_venv=True, pip_requirements=[PipRequirement(name="cowsay")]).model_dump()
     )
-    manager.create_or_update_sandbox_config(config_create, test_user)
+    await manager.create_or_update_sandbox_config_async(config_create, test_user)
 
     # Run it again WITHOUT force recreating the venv
     sandbox = ToolExecutionSandbox(cowsay_tool.name, {}, user=test_user, force_recreate_venv=False)
@@ -569,9 +706,7 @@ def test_e2b_sandbox_per_agent_env(check_e2b_key_is_set, get_env_tool, agent_sta
 
     # Make a environment variable with a long random string and put into agent state
     correct_long_random_string = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(20))
-    agent_state.tool_exec_environment_variables = [
-        AgentEnvironmentVariable(key=key, value=correct_long_random_string, agent_id=agent_state.id)
-    ]
+    agent_state.secrets = [AgentEnvironmentVariable(key=key, value=correct_long_random_string, agent_id=agent_state.id)]
 
     # Create tool and args
     args = {}

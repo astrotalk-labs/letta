@@ -10,13 +10,43 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # Database configuration - these will be used by dev-compose.yaml
+      LETTA_PG_DB: letta
+      LETTA_PG_USER: letta
+      LETTA_PG_PASSWORD: letta
+      LETTA_PG_HOST: pgvector_db  # Internal Docker service name
+      LETTA_PG_PORT: 5432
+      # Server configuration for tests
+      LETTA_SERVER_PASS: test_server_token
+      LETTA_SERVER_URL: http://localhost:8283
+      # API keys
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      # Additional API keys that dev-compose.yaml expects (optional)
+      GROQ_API_KEY: ""
+      ANTHROPIC_API_KEY: ""
+      OLLAMA_BASE_URL: ""
+      AZURE_API_KEY: ""
+      AZURE_BASE_URL: ""
+      AZURE_API_VERSION: ""
+      GEMINI_API_KEY: ""
+      VLLM_API_BASE: ""
+      OPENLLM_AUTH_TYPE: ""
+      OPENLLM_API_KEY: ""
     steps:
     - name: Checkout
       uses: actions/checkout@v4
-    - name: Python
+
+    - name: Set up python 3.11
+      id: setup-python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.12'
+        python-version: 3.11
+
+    - name: Install uv
+      run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
     - name: Set permissions for log directory
       run: |
@@ -25,40 +55,20 @@ jobs:
         chmod -R 755 /home/runner/.letta/logs
 
     - name: Build and run docker dev server
-      env:
-        LETTA_PG_DB:   letta
-        LETTA_PG_USER: letta
-        LETTA_PG_PASSWORD: letta
-        LETTA_PG_PORT: 8888
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
       run: |
+        # dev-compose.yaml will use the environment variables we set above
         docker compose -f dev-compose.yaml up --build -d
-    #- name: "Setup Python, Poetry and Dependencies"
-    #  uses: packetcoders/action-setup-cache-python-poetry@v1.2.0
-    #  with:
-    #    python-version: "3.12"
-    #    poetry-version: "1.8.2"
-    #    install-args: "--all-extras"
 
     - name: Wait for service
       run: bash scripts/wait_for_service.sh http://localhost:8283 -- echo "Service is ready"
 
     - name: Run tests with pytest
       env:
-        LETTA_PG_DB:   letta
-        LETTA_PG_USER: letta
-        LETTA_PG_PASSWORD: letta
-        LETTA_PG_PORT: 8888
-        LETTA_SERVER_PASS: test_server_token
-        LETTA_SERVER_URL: http://localhost:8283
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         PYTHONPATH: ${{ github.workspace }}:${{ env.PYTHONPATH }}
+        LETTA_PG_URI: postgresql+pg8000://${{ env.LETTA_PG_USER }}:${{ env.LETTA_PG_PASSWORD }}@localhost:${{ env.LETTA_PG_PORT }}/${{ env.LETTA_PG_DB }}
       run: |
-        pipx install poetry==2.1.3
-        poetry install -E dev -E postgres
-        poetry run pytest -s tests/test_client.py
-#        poetry run pytest -s tests/test_client_legacy.py
+        uv sync --extra dev --extra postgres --extra sqlite
+        uv run pytest -s tests/test_client.py
 
     - name: Print docker logs if tests fail
       if: failure()

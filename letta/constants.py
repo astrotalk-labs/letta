@@ -5,15 +5,13 @@ from logging import CRITICAL, DEBUG, ERROR, INFO, NOTSET, WARN, WARNING
 LETTA_DIR = os.path.join(os.path.expanduser("~"), ".letta")
 LETTA_TOOL_EXECUTION_DIR = os.path.join(LETTA_DIR, "tool_execution_dir")
 
-LETTA_MODEL_ENDPOINT = "https://inference.letta.com"
+LETTA_MODEL_ENDPOINT = "https://inference.letta.com/v1/"
 DEFAULT_TIMEZONE = "UTC"
 
 ADMIN_PREFIX = "/v1/admin"
 API_PREFIX = "/v1"
+OLLAMA_API_PREFIX = "/v1"
 OPENAI_API_PREFIX = "/openai"
-
-COMPOSIO_ENTITY_ENV_VAR_KEY = "COMPOSIO_ENTITY"
-COMPOSIO_TOOL_TAG_NAME = "composio"
 
 MCP_CONFIG_NAME = "mcp_config.json"
 MCP_TOOL_TAG_NAME_PREFIX = "mcp"  # full format, mcp:server_name
@@ -35,7 +33,6 @@ LETTA_TOOL_MODULE_NAMES = [
 DEFAULT_ORG_ID = "org-00000000-0000-4000-8000-000000000000"
 DEFAULT_ORG_NAME = "default_org"
 
-
 # String in the error message for when the context window is too large
 # Example full message:
 # This model's maximum context length is 8192 tokens. However, your messages resulted in 8198 tokens (7450 in the messages, 748 in the functions). Please reduce the length of the messages or functions.
@@ -50,8 +47,9 @@ TOOL_CALL_ID_MAX_LEN = 29
 # Max steps for agent loop
 DEFAULT_MAX_STEPS = 50
 
-# minimum context window size
+# context window size
 MIN_CONTEXT_WINDOW = 4096
+DEFAULT_CONTEXT_WINDOW = 32000
 
 # number of concurrent embedding requests to sent
 EMBEDDING_BATCH_SIZE = 200
@@ -63,6 +61,7 @@ DEFAULT_MIN_MESSAGE_BUFFER_LENGTH = 15
 # embeddings
 MAX_EMBEDDING_DIM = 4096  # maximum supported embeding size - do NOT change or else DBs will need to be reset
 DEFAULT_EMBEDDING_CHUNK_SIZE = 300
+DEFAULT_EMBEDDING_DIM = 1024
 
 # tokenizers
 EMBEDDING_TO_TOKENIZER_MAP = {
@@ -83,9 +82,9 @@ SEND_MESSAGE_TOOL_NAME = "send_message"
 # Base tools that cannot be edited, as they access agent state directly
 # Note that we don't include "conversation_search_date" for now
 BASE_TOOLS = [SEND_MESSAGE_TOOL_NAME, "conversation_search", "archival_memory_insert", "archival_memory_search"]
-DEPRECATED_BASE_TOOLS = ["archival_memory_insert", "archival_memory_search"]
+DEPRECATED_LETTA_TOOLS = ["archival_memory_insert", "archival_memory_search"]
 # Base memory tools CAN be edited, and are added by default by the server
-BASE_MEMORY_TOOLS = ["core_memory_append", "core_memory_replace"]
+BASE_MEMORY_TOOLS = ["core_memory_append", "core_memory_replace", "memory"]
 # New v2 collection of the base memory tools (effecitvely same as sleeptime set), to pair with memgpt_v2 prompt
 BASE_MEMORY_TOOLS_V2 = [
     "memory_replace",
@@ -93,6 +92,11 @@ BASE_MEMORY_TOOLS_V2 = [
     # NOTE: leaving these ones out to simply the set? Can have these reserved for sleep-time
     # "memory_rethink",
     # "memory_finish_edits",
+]
+
+# v3 collection, currently just a omni memory tool for anthropic
+BASE_MEMORY_TOOLS_V3 = [
+    "memory",
 ]
 # Base tools if the memgpt agent has enable_sleeptime on
 BASE_SLEEPTIME_CHAT_TOOLS = [SEND_MESSAGE_TOOL_NAME, "conversation_search", "archival_memory_search"]
@@ -114,23 +118,25 @@ BASE_VOICE_SLEEPTIME_TOOLS = [
     "rethink_user_memory",
     "finish_rethinking_memory",
 ]
+
 # Multi agent tools
-MULTI_AGENT_TOOLS = ["send_message_to_agent_and_wait_for_reply", "send_message_to_agents_matching_tags"]
+MULTI_AGENT_TOOLS = ["send_message_to_agent_and_wait_for_reply", "send_message_to_agents_matching_tags", "send_message_to_agent_async"]
+LOCAL_ONLY_MULTI_AGENT_TOOLS = ["send_message_to_agent_async"]
 
 # Used to catch if line numbers are pushed in
 # MEMORY_TOOLS_LINE_NUMBER_PREFIX_REGEX = re.compile(r"^Line \d+: ", re.MULTILINE)
-# More "robust" version that handles different kinds of whitespace
+# Updated to match new arrow format: "1→ content"
 # shared constant for both memory_insert and memory_replace
 MEMORY_TOOLS_LINE_NUMBER_PREFIX_REGEX = re.compile(
-    r"^[ \t]*Line[ \t]+\d+[ \t]*:",  # allow any leading whitespace and flexible spacing
+    r"^[ \t]*\d+→[ \t]*",  # match number followed by arrow, with optional whitespace
     re.MULTILINE,
 )
 
 # Built in tools
-BUILTIN_TOOLS = ["run_code", "web_search"]
+BUILTIN_TOOLS = ["run_code", "web_search", "fetch_webpage"]
 
 # Built in tools
-FILES_TOOLS = ["open_files", "grep_files", "search_files"]
+FILES_TOOLS = ["open_files", "grep_files", "semantic_search_files"]
 
 FILE_MEMORY_EXISTS_MESSAGE = "The following files are currently accessible in memory:"
 FILE_MEMORY_EMPTY_MESSAGE = (
@@ -149,6 +155,16 @@ LETTA_TOOL_SET = set(
     + FILES_TOOLS
 )
 
+LETTA_PARALLEL_SAFE_TOOLS = {
+    "conversation_search",
+    "archival_memory_search",
+    "run_code",
+    "web_search",
+    "fetch_webpage",
+    "grep_files",
+    "semantic_search_files",
+}
+
 
 def FUNCTION_RETURN_VALUE_TRUNCATED(return_str, return_char: int, return_char_limit: int):
     return (
@@ -162,10 +178,13 @@ def FUNCTION_RETURN_VALUE_TRUNCATED(return_str, return_char: int, return_char_li
 DEFAULT_MESSAGE_TOOL = SEND_MESSAGE_TOOL_NAME
 DEFAULT_MESSAGE_TOOL_KWARG = "message"
 
+# The name of the conversation search tool - messages with this tool should not be indexed
+CONVERSATION_SEARCH_TOOL_NAME = "conversation_search"
+
 PRE_EXECUTION_MESSAGE_ARG = "pre_exec_msg"
 
 REQUEST_HEARTBEAT_PARAM = "request_heartbeat"
-REQUEST_HEARTBEAT_DESCRIPTION = "Request an immediate heartbeat after function execution. Set to `True` if you want to send a follow-up message or run a follow-up function."
+REQUEST_HEARTBEAT_DESCRIPTION = "Request an immediate heartbeat after function execution. You MUST set this value to `True` if you want to send a follow-up message or run a follow-up tool call (chain multiple tools together). If set to `False` (the default), then the chain of execution will end immediately after this function call."
 
 
 # Structured output models
@@ -191,9 +210,7 @@ ERROR_MESSAGE_PREFIX = "Error"
 
 NON_USER_MSG_PREFIX = "[This is an automated system message hidden from the user] "
 
-CORE_MEMORY_LINE_NUMBER_WARNING = (
-    "# NOTE: Line numbers shown below are to help during editing. Do NOT include line number prefixes in your memory edit tool calls."
-)
+CORE_MEMORY_LINE_NUMBER_WARNING = "# NOTE: Line numbers shown below (with arrows like '1→') are to help during editing. Do NOT include line number prefixes in your memory edit tool calls."
 
 
 # Constants to do with summarization / conversation length window
@@ -204,6 +221,14 @@ LLM_MAX_TOKENS = {
     "deepseek-chat": 64000,
     "deepseek-reasoner": 64000,
     ## OpenAI models: https://platform.openai.com/docs/models/overview
+    # gpt-5
+    "gpt-5": 272000,
+    "gpt-5-2025-08-07": 272000,
+    "gpt-5-mini": 272000,
+    "gpt-5-mini-2025-08-07": 272000,
+    "gpt-5-nano": 272000,
+    "gpt-5-nano-2025-08-07": 272000,
+    "gpt-5-codex": 272000,
     # reasoners
     "o1": 200000,
     # "o1-pro": 200000,  # responses API only
@@ -299,6 +324,23 @@ LLM_MAX_TOKENS = {
     "gemini-2.0-flash-thinking-exp-1219": 1048576,
     "gemini-2.5-flash-preview-tts": 32768,
     "gemini-2.5-pro-preview-tts": 65536,
+    # gemini 2.5 stable releases
+    "gemini-2.5-flash": 1048576,
+    "gemini-2.5-flash-lite": 1048576,
+    "gemini-2.5-pro": 1048576,
+    "gemini-2.5-pro-preview-06-05": 1048576,
+    "gemini-2.5-flash-lite-preview-06-17": 1048576,
+    "gemini-2.5-flash-image": 1048576,
+    "gemini-2.5-flash-image-preview": 1048576,
+    "gemini-2.5-flash-preview-09-2025": 1048576,
+    "gemini-2.5-flash-lite-preview-09-2025": 1048576,
+    "gemini-2.5-computer-use-preview-10-2025": 1048576,
+    # gemini latest aliases
+    "gemini-flash-latest": 1048576,
+    "gemini-flash-lite-latest": 1048576,
+    "gemini-pro-latest": 1048576,
+    # gemini specialized models
+    "gemini-robotics-er-1.5-preview": 1048576,
 }
 # The error message that Letta will receive
 # MESSAGE_SUMMARY_WARNING_STR = f"Warning: the conversation history will soon reach its maximum length and be trimmed. Make sure to save any important information from the conversation to your memory before it is removed."
@@ -319,16 +361,16 @@ READ_ONLY_BLOCK_EDIT_ERROR = f"{ERROR_MESSAGE_PREFIX} This block is read-only an
 MESSAGE_SUMMARY_REQUEST_ACK = "Understood, I will respond with a summary of the message (and only the summary, nothing else) once I receive the conversation history. I'm ready."
 
 # Maximum length of an error message
-MAX_ERROR_MESSAGE_CHAR_LIMIT = 500
+MAX_ERROR_MESSAGE_CHAR_LIMIT = 1000
 
 # Default memory limits
-CORE_MEMORY_PERSONA_CHAR_LIMIT: int = 5000
-CORE_MEMORY_HUMAN_CHAR_LIMIT: int = 5000
-CORE_MEMORY_BLOCK_CHAR_LIMIT: int = 5000
-CORE_MEMORY_SOURCE_CHAR_LIMIT: int = 5000
+CORE_MEMORY_PERSONA_CHAR_LIMIT: int = 20000
+CORE_MEMORY_HUMAN_CHAR_LIMIT: int = 20000
+CORE_MEMORY_BLOCK_CHAR_LIMIT: int = 20000
+
 # Function return limits
-FUNCTION_RETURN_CHAR_LIMIT = 6000  # ~300 words
-BASE_FUNCTION_RETURN_CHAR_LIMIT = 1000000  # very high (we rely on implementation)
+FUNCTION_RETURN_CHAR_LIMIT = 50000  # ~300 words
+BASE_FUNCTION_RETURN_CHAR_LIMIT = 50000  # same as regular function limit
 FILE_IS_TRUNCATED_WARNING = "# NOTE: This block is truncated, use functions to view the full content."
 
 MAX_PAUSE_HEARTBEATS = 360  # in min
@@ -357,6 +399,37 @@ REDIS_INCLUDE = "include"
 REDIS_EXCLUDE = "exclude"
 REDIS_SET_DEFAULT_VAL = "None"
 REDIS_DEFAULT_CACHE_PREFIX = "letta_cache"
+REDIS_RUN_ID_PREFIX = "agent:send_message:run_id"
 
 # TODO: This is temporary, eventually use token-based eviction
-MAX_FILES_OPEN = 5
+# File based controls
+DEFAULT_MAX_FILES_OPEN = 5
+DEFAULT_CORE_MEMORY_SOURCE_CHAR_LIMIT: int = 50000
+
+GET_PROVIDERS_TIMEOUT_SECONDS = 10
+
+# Pinecone related fields
+PINECONE_EMBEDDING_MODEL: str = "llama-text-embed-v2"
+PINECONE_TEXT_FIELD_NAME = "chunk_text"
+PINECONE_METRIC = "cosine"
+PINECONE_CLOUD = "aws"
+PINECONE_REGION = "us-east-1"
+PINECONE_MAX_BATCH_SIZE = 96
+
+# retry configuration
+PINECONE_MAX_RETRY_ATTEMPTS = 3
+PINECONE_RETRY_BASE_DELAY = 1.0  # seconds
+PINECONE_RETRY_MAX_DELAY = 60.0  # seconds
+PINECONE_RETRY_BACKOFF_FACTOR = 2.0
+PINECONE_THROTTLE_DELAY = 0.75  # seconds base delay between batches
+
+# builtin web search
+WEB_SEARCH_MODEL_ENV_VAR_NAME = "LETTA_BUILTIN_WEBSEARCH_OPENAI_MODEL_NAME"
+WEB_SEARCH_MODEL_ENV_VAR_DEFAULT_VALUE = "gpt-4.1-mini-2025-04-14"
+
+# Excluded model keywords from base tool rules
+EXCLUDE_MODEL_KEYWORDS_FROM_BASE_TOOL_RULES = ["claude-4-sonnet", "claude-3-5-sonnet", "gpt-5", "gemini-2.5-pro"]
+# But include models with these keywords in base tool rules (overrides exclusion)
+INCLUDE_MODEL_KEYWORDS_BASE_TOOL_RULES = ["mini"]
+# Composio integration
+COMPOSIO_ENTITY_ENV_VAR_KEY = "COMPOSIO_ENTITY_ID"

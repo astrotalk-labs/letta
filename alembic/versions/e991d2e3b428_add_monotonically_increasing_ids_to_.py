@@ -12,6 +12,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 
 from alembic import op
+from letta.settings import settings
 
 # revision identifiers, used by Alembic.
 revision: str = "e991d2e3b428"
@@ -38,6 +39,10 @@ def print_flush(message):
 
 
 def upgrade() -> None:
+    # Skip this migration for SQLite
+    if not settings.letta_pg_uri_no_default:
+        return
+
     """Adds sequence_id, backfills data, adds constraints and index."""
     print_flush(f"\n--- Starting upgrade for revision {revision} ---")
 
@@ -66,7 +71,7 @@ def upgrade() -> None:
             WITH numbered_rows AS (
                 SELECT
                     id,
-                    ROW_NUMBER() OVER (ORDER BY {', '.join(ORDERING_COLUMNS)} ASC) as rn
+                    ROW_NUMBER() OVER (ORDER BY {", ".join(ORDERING_COLUMNS)} ASC) as rn
                 FROM {TABLE_NAME}
             )
             UPDATE {TABLE_NAME}
@@ -118,6 +123,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Skip this migration for SQLite
+    if not settings.letta_pg_uri_no_default:
+        return
+
     """Reverses the changes made in the upgrade function."""
     print_flush(f"\n--- Starting downgrade from revision {revision} ---")
 

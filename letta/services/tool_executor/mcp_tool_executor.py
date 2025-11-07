@@ -25,7 +25,6 @@ class ExternalMCPToolExecutor(ToolExecutor):
         sandbox_config: Optional[SandboxConfig] = None,
         sandbox_env_vars: Optional[Dict[str, Any]] = None,
     ) -> ToolExecutionResult:
-
         pass
 
         mcp_server_tag = [tag for tag in tool.tags if tag.startswith(f"{MCP_TOOL_TAG_NAME_PREFIX}:")]
@@ -35,8 +34,20 @@ class ExternalMCPToolExecutor(ToolExecutor):
 
         mcp_manager = MCPManager()
         # TODO: may need to have better client connection management
+
+        environment_variables = {}
+        agent_id = None
+        if agent_state:
+            environment_variables = agent_state.get_agent_env_vars_as_dict()
+            agent_id = agent_state.id
+
         function_response, success = await mcp_manager.execute_mcp_server_tool(
-            mcp_server_name=mcp_server_name, tool_name=function_name, tool_args=function_args, actor=actor
+            mcp_server_name=mcp_server_name,
+            tool_name=function_name,
+            tool_args=function_args,
+            environment_variables=environment_variables,
+            actor=actor,
+            agent_id=agent_id,
         )
 
         return ToolExecutionResult(

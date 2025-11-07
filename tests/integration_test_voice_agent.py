@@ -11,24 +11,23 @@ from letta.agents.voice_sleeptime_agent import VoiceSleeptimeAgent
 from letta.config import LettaConfig
 from letta.constants import DEFAULT_MAX_MESSAGE_BUFFER_LENGTH, DEFAULT_MIN_MESSAGE_BUFFER_LENGTH
 from letta.orm.errors import NoResultFound
-from letta.schemas.agent import AgentType, CreateAgent
+from letta.schemas.agent import CreateAgent
 from letta.schemas.block import CreateBlock
 from letta.schemas.embedding_config import EmbeddingConfig
-from letta.schemas.enums import MessageRole, MessageStreamStatus
+from letta.schemas.enums import AgentType, MessageRole, MessageStreamStatus
 from letta.schemas.group import GroupUpdate, ManagerType, VoiceSleeptimeManagerUpdate
 from letta.schemas.letta_message import AssistantMessage, ReasoningMessage, ToolCallMessage
 from letta.schemas.letta_message_content import TextContent
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.message import Message, MessageCreate
-from letta.schemas.openai.chat_completion_request import ChatCompletionRequest
-from letta.schemas.openai.chat_completion_request import UserMessage as OpenAIUserMessage
+from letta.schemas.openai.chat_completion_request import ChatCompletionRequest, UserMessage as OpenAIUserMessage
 from letta.schemas.usage import LettaUsageStatistics
 from letta.server.server import SyncServer
 from letta.services.agent_manager import AgentManager
 from letta.services.block_manager import BlockManager
-from letta.services.job_manager import JobManager
 from letta.services.message_manager import MessageManager
 from letta.services.passage_manager import PassageManager
+from letta.services.run_manager import RunManager
 from letta.services.summarizer.enums import SummarizationMode
 from letta.services.summarizer.summarizer import Summarizer
 from letta.services.tool_manager import ToolManager
@@ -267,7 +266,7 @@ async def test_model_compatibility(model, message, server, server_url, actor, ro
                 print(chunk.choices[0].delta.content)
 
     # Get the messages and assert based on the message type
-    messages = await server.message_manager.list_messages_for_agent_async(agent_id=main_agent.id, actor=actor)
+    messages = await server.message_manager.list_messages(agent_id=main_agent.id, actor=actor)
     # Find user message with our request
     user_messages = [msg for msg in messages if msg.role == MessageRole.user and message in str(msg.content)]
     assert len(user_messages) >= 1, f"Should find user message containing: {message}"
@@ -379,7 +378,7 @@ async def test_summarization(disable_e2b_api_key, voice_agent, server_url):
         agent_manager=agent_manager,
         actor=actor,
         block_manager=BlockManager(),
-        job_manager=JobManager(),
+        run_manager=RunManager(),
         passage_manager=PassageManager(),
         target_block_label="human",
     )
@@ -458,7 +457,7 @@ async def test_voice_sleeptime_agent(disable_e2b_api_key, voice_agent):
         agent_manager=agent_manager,
         actor=actor,
         block_manager=BlockManager(),
-        job_manager=JobManager(),
+        run_manager=RunManager(),
         passage_manager=PassageManager(),
         target_block_label="human",
     )
@@ -492,7 +491,6 @@ async def test_voice_sleeptime_agent(disable_e2b_api_key, voice_agent):
 
 @pytest.mark.asyncio(loop_scope="module")
 async def test_init_voice_convo_agent(voice_agent, server, actor):
-
     assert voice_agent.enable_sleeptime == True
     main_agent_tools = [tool.name for tool in voice_agent.tools]
     assert len(main_agent_tools) == 4

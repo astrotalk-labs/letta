@@ -2,14 +2,12 @@ import asyncio
 import json
 import os
 import uuid
-import warnings
 from enum import Enum
-from typing import TYPE_CHECKING, AsyncGenerator, Dict, Iterable, List, Optional, Union, cast
+from typing import Any, AsyncGenerator, Dict, Iterable, List, Optional, Union, cast
 
 from fastapi import Header, HTTPException
 from openai.types.chat import ChatCompletionMessageParam
-from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall as OpenAIToolCall
-from openai.types.chat.chat_completion_message_tool_call import Function as OpenAIFunction
+from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall as OpenAIToolCall, Function as OpenAIFunction
 from openai.types.chat.completion_create_params import CompletionCreateParams
 from pydantic import BaseModel
 
@@ -27,19 +25,27 @@ from letta.log import get_logger
 from letta.otel.context import get_ctx_attributes
 from letta.otel.metric_registry import MetricRegistry
 from letta.otel.tracing import tracer
+from letta.schemas.agent import AgentState
 from letta.schemas.enums import MessageRole
-from letta.schemas.letta_message_content import OmittedReasoningContent, ReasoningContent, RedactedReasoningContent, TextContent
+from letta.schemas.letta_message import ToolReturn as LettaToolReturn
+from letta.schemas.letta_message_content import (
+    OmittedReasoningContent,
+    ReasoningContent,
+    RedactedReasoningContent,
+    SummarizedReasoningContent,
+    TextContent,
+)
 from letta.schemas.llm_config import LLMConfig
-from letta.schemas.message import Message, MessageCreate, ToolReturn
+from letta.schemas.message import ApprovalCreate, Message, MessageCreate, ToolReturn
 from letta.schemas.tool_execution_result import ToolExecutionResult
 from letta.schemas.usage import LettaUsageStatistics
 from letta.schemas.user import User
-from letta.server.rest_api.interface import StreamingServerInterface
 from letta.system import get_heartbeat, package_function_response
 
-if TYPE_CHECKING:
-    from letta.server.server import SyncServer
+SENTRY_ENABLED = bool(os.getenv("SENTRY_DSN"))
 
+if SENTRY_ENABLED:
+    import sentry_sdk
 
 SSE_PREFIX = "data: "
 SSE_SUFFIX = "\n\n"
@@ -115,25 +121,25 @@ async def sse_async_generator(
                     err_msg = f"Expected LettaUsageStatistics, got {type(usage)}"
                     logger.error(err_msg)
                     raise ValueError(err_msg)
-                yield sse_formatter(usage.model_dump(exclude={"steps_messages"}))
+                yield sse_formatter(usage.model_dump())
 
             except ContextWindowExceededError as e:
-                log_error_to_sentry(e)
+                capture_sentry_exception(e)
                 logger.error(f"ContextWindowExceededError error: {e}")
                 yield sse_formatter({"error": f"Stream failed: {e}", "code": str(e.code.value) if e.code else None})
 
             except RateLimitExceededError as e:
-                log_error_to_sentry(e)
+                capture_sentry_exception(e)
                 logger.error(f"RateLimitExceededError error: {e}")
                 yield sse_formatter({"error": f"Stream failed: {e}", "code": str(e.code.value) if e.code else None})
 
             except Exception as e:
-                log_error_to_sentry(e)
+                capture_sentry_exception(e)
                 logger.error(f"Caught unexpected Exception: {e}")
-                yield sse_formatter({"error": f"Stream failed (internal error occurred)"})
+                yield sse_formatter({"error": "Stream failed (internal error occurred)"})
 
     except Exception as e:
-        log_error_to_sentry(e)
+        capture_sentry_exception(e)
         logger.error(f"Caught unexpected Exception: {e}")
         yield sse_formatter({"error": "Stream failed (decoder encountered an error)"})
 
@@ -143,39 +149,13 @@ async def sse_async_generator(
             yield sse_formatter(SSE_FINISH_MSG)
 
 
-# TODO: why does this double up the interface?
-def get_letta_server() -> "SyncServer":
-    # Check if a global server is already instantiated
-    from letta.server.rest_api.app import server
-
-    # assert isinstance(server, SyncServer)
-    return server
-
-
-# Dependency to get user_id from headers
-def get_user_id(user_id: Optional[str] = Header(None, alias="user_id")) -> Optional[str]:
-    return user_id
-
-
-def get_current_interface() -> StreamingServerInterface:
-    return StreamingServerInterface
-
-
-def log_error_to_sentry(e):
-    import traceback
-
-    traceback.print_exc()
-    warnings.warn(f"SSE stream generator failed: {e}")
-
-    # Log the error, since the exception handler upstack (in FastAPI) won't catch it, because this may be a 200 response
-    # Print the stack trace
-    if (os.getenv("SENTRY_DSN") is not None) and (os.getenv("SENTRY_DSN") != ""):
-        import sentry_sdk
-
+def capture_sentry_exception(e: BaseException):
+    """This will capture the exception in sentry, since the exception handler upstack (in FastAPI) won't catch it, because this may be a 200 response"""
+    if SENTRY_ENABLED:
         sentry_sdk.capture_exception(e)
 
 
-def create_input_messages(input_messages: List[MessageCreate], agent_id: str, timezone: str, actor: User) -> List[Message]:
+def create_input_messages(input_messages: List[MessageCreate], agent_id: str, timezone: str, run_id: str, actor: User) -> List[Message]:
     """
     Converts a user input message into the internal structured format.
 
@@ -183,91 +163,246 @@ def create_input_messages(input_messages: List[MessageCreate], agent_id: str, ti
     we should unify this when it's clear what message attributes we need.
     """
 
-    messages = convert_message_creates_to_messages(input_messages, agent_id, timezone, wrap_user_message=False, wrap_system_message=False)
-    for message in messages:
-        message.organization_id = actor.organization_id
+    messages = convert_message_creates_to_messages(
+        input_messages, agent_id, timezone, run_id, wrap_user_message=False, wrap_system_message=False
+    )
     return messages
+
+
+def create_approval_response_message_from_input(
+    agent_state: AgentState, input_message: ApprovalCreate, run_id: Optional[str] = None
+) -> List[Message]:
+    def maybe_convert_tool_return_message(maybe_tool_return: LettaToolReturn):
+        if isinstance(maybe_tool_return, LettaToolReturn):
+            packaged_function_response = package_function_response(
+                maybe_tool_return.status == "success", maybe_tool_return.tool_return, agent_state.timezone
+            )
+            return ToolReturn(
+                tool_call_id=maybe_tool_return.tool_call_id,
+                status=maybe_tool_return.status,
+                func_response=packaged_function_response,
+                stdout=maybe_tool_return.stdout,
+                stderr=maybe_tool_return.stderr,
+            )
+        return maybe_tool_return
+
+    return [
+        Message(
+            role=MessageRole.approval,
+            agent_id=agent_state.id,
+            model=agent_state.llm_config.model,
+            approval_request_id=input_message.approval_request_id,
+            approve=input_message.approve,
+            denial_reason=input_message.reason,
+            approvals=[maybe_convert_tool_return_message(approval) for approval in input_message.approvals],
+            run_id=run_id,
+        )
+    ]
+
+
+def create_approval_request_message_from_llm_response(
+    agent_id: str,
+    model: str,
+    requested_tool_calls: List[OpenAIToolCall],
+    allowed_tool_calls: List[OpenAIToolCall] = [],
+    reasoning_content: Optional[List[Union[TextContent, ReasoningContent, RedactedReasoningContent, OmittedReasoningContent]]] = None,
+    pre_computed_assistant_message_id: Optional[str] = None,
+    step_id: str | None = None,
+    run_id: str = None,
+) -> Message:
+    messages = []
+    if allowed_tool_calls:
+        oai_tool_calls = [
+            OpenAIToolCall(
+                id=tool_call.id,
+                function=OpenAIFunction(
+                    name=tool_call.function.name,
+                    arguments=tool_call.function.arguments,
+                ),
+                type="function",
+            )
+            for tool_call in allowed_tool_calls
+        ]
+        tool_message = Message(
+            role=MessageRole.assistant,
+            content=reasoning_content if reasoning_content else [],
+            agent_id=agent_id,
+            model=model,
+            tool_calls=oai_tool_calls,
+            tool_call_id=allowed_tool_calls[0].id,
+            created_at=get_utc_time(),
+            step_id=step_id,
+            run_id=run_id,
+        )
+        if pre_computed_assistant_message_id:
+            tool_message.id = pre_computed_assistant_message_id
+        messages.append(tool_message)
+    # Construct the tool call with the assistant's message
+    oai_tool_calls = [
+        OpenAIToolCall(
+            id=tool_call.id,
+            function=OpenAIFunction(
+                name=tool_call.function.name,
+                arguments=tool_call.function.arguments,
+            ),
+            type="function",
+        )
+        for tool_call in requested_tool_calls
+    ]
+    # TODO: Use ToolCallContent instead of tool_calls
+    # TODO: This helps preserve ordering
+    approval_message = Message(
+        role=MessageRole.approval,
+        content=reasoning_content if reasoning_content and not allowed_tool_calls else [],
+        agent_id=agent_id,
+        model=model,
+        tool_calls=oai_tool_calls,
+        tool_call_id=oai_tool_calls[0].id,
+        created_at=get_utc_time(),
+        step_id=step_id,
+        run_id=run_id,
+    )
+    if pre_computed_assistant_message_id:
+        approval_message.id = decrement_message_uuid(pre_computed_assistant_message_id)
+    messages.append(approval_message)
+    return messages
+
+
+def decrement_message_uuid(message_id: str):
+    message_uuid = uuid.UUID(message_id.split("-", maxsplit=1)[1])
+    uuid_as_int = message_uuid.int
+    decremented_int = uuid_as_int - 1
+    decremented_uuid = uuid.UUID(int=decremented_int)
+    return "message-" + str(decremented_uuid)
 
 
 def create_letta_messages_from_llm_response(
     agent_id: str,
     model: str,
-    function_name: str,
-    function_arguments: Dict,
-    tool_execution_result: ToolExecutionResult,
-    tool_call_id: str,
-    function_call_success: bool,
+    function_name: Optional[str],
+    function_arguments: Optional[Dict],
+    tool_execution_result: Optional[ToolExecutionResult],
+    tool_call_id: Optional[str],
     function_response: Optional[str],
     timezone: str,
-    actor: User,
+    run_id: str | None = None,
+    step_id: str = None,
     continue_stepping: bool = False,
     heartbeat_reason: Optional[str] = None,
-    reasoning_content: Optional[List[Union[TextContent, ReasoningContent, RedactedReasoningContent, OmittedReasoningContent]]] = None,
+    reasoning_content: Optional[
+        List[Union[TextContent, ReasoningContent, RedactedReasoningContent, OmittedReasoningContent | SummarizedReasoningContent]]
+    ] = None,
     pre_computed_assistant_message_id: Optional[str] = None,
     llm_batch_item_id: Optional[str] = None,
-    step_id: str | None = None,
+    is_approval_response: bool | None = None,
+    # force set request_heartbeat, useful for v2 loop to ensure matching tool rules
+    force_set_request_heartbeat: bool = True,
+    add_heartbeat_on_continue: bool = True,
 ) -> List[Message]:
     messages = []
-    # Construct the tool call with the assistant's message
-    # Force set request_heartbeat in tool_args to calculated continue_stepping
-    function_arguments[REQUEST_HEARTBEAT_PARAM] = continue_stepping
-    tool_call = OpenAIToolCall(
-        id=tool_call_id,
-        function=OpenAIFunction(
-            name=function_name,
-            arguments=json.dumps(function_arguments),
-        ),
-        type="function",
-    )
-    # TODO: Use ToolCallContent instead of tool_calls
-    # TODO: This helps preserve ordering
-    assistant_message = Message(
-        role=MessageRole.assistant,
-        content=reasoning_content if reasoning_content else [],
-        organization_id=actor.organization_id,
-        agent_id=agent_id,
-        model=model,
-        tool_calls=[tool_call],
-        tool_call_id=tool_call_id,
-        created_at=get_utc_time(),
-        batch_item_id=llm_batch_item_id,
-    )
-    if pre_computed_assistant_message_id:
-        assistant_message.id = pre_computed_assistant_message_id
-    messages.append(assistant_message)
+    if not is_approval_response:  # Skip approval responses (omit them)
+        if function_name is not None:
+            # Construct the tool call with the assistant's message
+            # Force set request_heartbeat in tool_args to calculated continue_stepping
+            if force_set_request_heartbeat:
+                function_arguments[REQUEST_HEARTBEAT_PARAM] = continue_stepping
+            tool_call = OpenAIToolCall(
+                id=tool_call_id,
+                function=OpenAIFunction(
+                    name=function_name,
+                    arguments=json.dumps(function_arguments),
+                ),
+                type="function",
+            )
+            # TODO: Use ToolCallContent instead of tool_calls
+            # TODO: This helps preserve ordering
+
+            # Safeguard against empty text messages
+            content = []
+            if reasoning_content:
+                for content_part in reasoning_content:
+                    if isinstance(content_part, TextContent) and content_part.text == "":
+                        continue
+                    content.append(content_part)
+
+            assistant_message = Message(
+                role=MessageRole.assistant,
+                content=content,
+                agent_id=agent_id,
+                model=model,
+                tool_calls=[tool_call],
+                tool_call_id=tool_call_id,
+                created_at=get_utc_time(),
+                batch_item_id=llm_batch_item_id,
+                run_id=run_id,
+            )
+        else:
+            # Safeguard against empty text messages
+            content = []
+            if reasoning_content:
+                for content_part in reasoning_content:
+                    if isinstance(content_part, TextContent) and content_part.text == "":
+                        continue
+                    content.append(content_part)
+
+            # Should only hit this if using react agents
+            if content and len(content) > 0:
+                assistant_message = Message(
+                    role=MessageRole.assistant,
+                    # NOTE: weird that this is called "reasoning_content" here, since it's not
+                    content=content,
+                    agent_id=agent_id,
+                    model=model,
+                    tool_calls=None,
+                    tool_call_id=None,
+                    created_at=get_utc_time(),
+                    batch_item_id=llm_batch_item_id,
+                    run_id=run_id,
+                )
+            else:
+                assistant_message = None
+
+        if assistant_message:
+            if pre_computed_assistant_message_id:
+                assistant_message.id = pre_computed_assistant_message_id
+            messages.append(assistant_message)
 
     # TODO: Use ToolReturnContent instead of TextContent
     # TODO: This helps preserve ordering
-    tool_message = Message(
-        role=MessageRole.tool,
-        content=[TextContent(text=package_function_response(function_call_success, function_response, timezone))],
-        organization_id=actor.organization_id,
-        agent_id=agent_id,
-        model=model,
-        tool_calls=[],
-        tool_call_id=tool_call_id,
-        created_at=get_utc_time(),
-        name=function_name,
-        batch_item_id=llm_batch_item_id,
-        tool_returns=[
-            ToolReturn(
-                status=tool_execution_result.status,
-                stderr=tool_execution_result.stderr,
-                stdout=tool_execution_result.stdout,
-                # func_return=tool_execution_result.func_return,
-            )
-        ],
-    )
-    messages.append(tool_message)
+    if tool_execution_result is not None:
+        packaged_function_response = package_function_response(tool_execution_result.success_flag, function_response, timezone)
+        tool_message = Message(
+            role=MessageRole.tool,
+            content=[TextContent(text=packaged_function_response)],
+            agent_id=agent_id,
+            model=model,
+            tool_calls=[],
+            tool_call_id=tool_call_id,
+            created_at=get_utc_time(),
+            name=function_name,
+            batch_item_id=llm_batch_item_id,
+            tool_returns=[
+                ToolReturn(
+                    tool_call_id=tool_call_id,
+                    status=tool_execution_result.status,
+                    stderr=tool_execution_result.stderr,
+                    stdout=tool_execution_result.stdout,
+                    func_response=packaged_function_response,
+                )
+            ],
+            run_id=run_id,
+        )
+        messages.append(tool_message)
 
-    if continue_stepping:
+    if continue_stepping and add_heartbeat_on_continue:
+        # TODO skip this for react agents, instead we just force looping
         heartbeat_system_message = create_heartbeat_system_message(
             agent_id=agent_id,
             model=model,
-            function_call_success=function_call_success,
-            actor=actor,
+            function_call_success=(tool_execution_result.success_flag if tool_execution_result is not None else True),
             timezone=timezone,
             heartbeat_reason=heartbeat_reason,
+            run_id=run_id,
         )
         messages.append(heartbeat_system_message)
 
@@ -277,14 +412,125 @@ def create_letta_messages_from_llm_response(
     return messages
 
 
+def create_parallel_tool_messages_from_llm_response(
+    agent_id: str,
+    model: str,
+    tool_call_specs: List[Dict[str, Any]],  # List of tool call specs: {"name": str, "arguments": Dict, "id": Optional[str]}
+    tool_execution_results: List[ToolExecutionResult],
+    function_responses: List[Optional[str]],
+    timezone: str,
+    run_id: Optional[str] = None,
+    step_id: Optional[str] = None,
+    reasoning_content: Optional[
+        List[Union[TextContent, ReasoningContent, RedactedReasoningContent, OmittedReasoningContent | SummarizedReasoningContent]]
+    ] = None,
+    pre_computed_assistant_message_id: Optional[str] = None,
+    llm_batch_item_id: Optional[str] = None,
+    is_approval_response: bool = False,
+    tool_returns: List[ToolReturn] = [],
+) -> List[Message]:
+    """
+    Build two messages representing a parallel tool-call step:
+    - One assistant message with ALL tool_calls populated (tool_call_id left empty)
+    - One tool message with ALL tool_returns populated (tool_call_id left empty)
+
+    Notes:
+    - Consumers should read tool_calls/tool_returns arrays for per-call details.
+    - The tool message's content includes only the first call's packaged response for
+      backward-compatibility with legacy renderers. UIs should prefer tool_returns.
+    - When invoked for an approval response, the assistant message is omitted (the approval
+      tool call was previously surfaced).
+    """
+
+    # Construct OpenAI-style tool_calls for the assistant message
+    openai_tool_calls: List[OpenAIToolCall] = []
+    for spec in tool_call_specs:
+        name = spec.get("name")
+        args = spec.get("arguments", {})
+        call_id = spec.get("id") or str(uuid.uuid4())
+        # Ensure the spec carries the resolved id so returns/content can reference it
+        if not spec.get("id"):
+            spec["id"] = call_id
+        openai_tool_calls.append(
+            OpenAIToolCall(
+                id=call_id,
+                function=OpenAIFunction(name=name, arguments=json.dumps(args)),
+                type="function",
+            )
+        )
+
+    messages: List[Message] = []
+
+    if not is_approval_response:
+        # Assistant message with all tool_calls (no single tool_call_id)
+        # Safeguard against empty text messages
+        content: List[
+            Union[TextContent, ReasoningContent, RedactedReasoningContent, OmittedReasoningContent, SummarizedReasoningContent]
+        ] = []
+        if reasoning_content:
+            for content_part in reasoning_content:
+                if isinstance(content_part, TextContent) and content_part.text == "":
+                    continue
+                content.append(content_part)
+
+        assistant_message = Message(
+            role=MessageRole.assistant,
+            content=content,
+            agent_id=agent_id,
+            model=model,
+            tool_calls=openai_tool_calls,
+            tool_call_id=None,
+            created_at=get_utc_time(),
+            batch_item_id=llm_batch_item_id,
+            run_id=run_id,
+        )
+        if step_id:
+            assistant_message.step_id = step_id
+        if pre_computed_assistant_message_id:
+            assistant_message.id = pre_computed_assistant_message_id
+        messages.append(assistant_message)
+
+    content: List[TextContent] = []
+    for spec, exec_result, response in zip(tool_call_specs, tool_execution_results, function_responses):
+        packaged = package_function_response(exec_result.success_flag, response, timezone)
+        content.append(TextContent(text=packaged))
+        tool_returns.append(
+            ToolReturn(
+                tool_call_id=spec.get("id"),
+                status=exec_result.status,
+                stdout=exec_result.stdout,
+                stderr=exec_result.stderr,
+                func_response=packaged,
+            )
+        )
+
+    tool_message = Message(
+        role=MessageRole.tool,
+        content=content,
+        agent_id=agent_id,
+        model=model,
+        tool_calls=[],
+        tool_call_id=tool_returns[0].tool_call_id,  # For legacy reasons, set to first one
+        created_at=get_utc_time(),
+        batch_item_id=llm_batch_item_id,
+        tool_returns=tool_returns,
+        run_id=run_id,
+    )
+    if step_id:
+        tool_message.step_id = step_id
+
+    messages.append(tool_message)
+    return messages
+
+
 def create_heartbeat_system_message(
     agent_id: str,
     model: str,
     function_call_success: bool,
     timezone: str,
-    actor: User,
     llm_batch_item_id: Optional[str] = None,
     heartbeat_reason: Optional[str] = None,
+    run_id: Optional[str] = None,
 ) -> Message:
     if heartbeat_reason:
         text_content = heartbeat_reason
@@ -294,13 +540,13 @@ def create_heartbeat_system_message(
     heartbeat_system_message = Message(
         role=MessageRole.user,
         content=[TextContent(text=get_heartbeat(timezone, text_content))],
-        organization_id=actor.organization_id,
         agent_id=agent_id,
         model=model,
         tool_calls=[],
         tool_call_id=None,
         created_at=get_utc_time(),
         batch_item_id=llm_batch_item_id,
+        run_id=run_id,
     )
     return heartbeat_system_message
 
@@ -309,7 +555,6 @@ def create_assistant_messages_from_openai_response(
     response_text: str,
     agent_id: str,
     model: str,
-    actor: User,
     timezone: str,
 ) -> List[Message]:
     """
@@ -325,10 +570,8 @@ def create_assistant_messages_from_openai_response(
         function_arguments={DEFAULT_MESSAGE_TOOL_KWARG: response_text},  # Avoid raw string manipulation
         tool_execution_result=ToolExecutionResult(status="success"),
         tool_call_id=tool_call_id,
-        function_call_success=True,
         function_response=None,
         timezone=timezone,
-        actor=actor,
         continue_stepping=False,
     )
 
@@ -370,7 +613,6 @@ def convert_in_context_letta_messages_to_openai(in_context_messages: List[Messag
                     id=msg.id,
                     role=msg.role,
                     content=[TextContent(text=extracted_text)],
-                    organization_id=msg.organization_id,
                     agent_id=msg.agent_id,
                     model=msg.model,
                     name=msg.name,
@@ -399,7 +641,6 @@ def convert_in_context_letta_messages_to_openai(in_context_messages: List[Messag
                             id=msg.id,
                             role=msg.role,
                             content=[TextContent(text=actual_user_text)],
-                            organization_id=msg.organization_id,
                             agent_id=msg.agent_id,
                             model=msg.model,
                             name=msg.name,
@@ -411,7 +652,9 @@ def convert_in_context_letta_messages_to_openai(in_context_messages: List[Messag
                     pass  # It's not JSON, leave as-is
 
         # Finally, convert to dict using your existing method
-        openai_messages.append(msg.to_openai_dict())
+        m = msg.to_openai_dict()
+        assert m is not None
+        openai_messages.append(m)
 
     return openai_messages
 

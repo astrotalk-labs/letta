@@ -1,9 +1,10 @@
-from typing import Optional
+from datetime import datetime
+from typing import Any, Optional
 
-from pydantic import Field, model_validator
-from typing_extensions import Self
+from pydantic import ConfigDict, Field, model_validator
 
 from letta.constants import CORE_MEMORY_BLOCK_CHAR_LIMIT, DEFAULT_HUMAN_BLOCK_DESCRIPTION, DEFAULT_PERSONA_BLOCK_DESCRIPTION
+from letta.schemas.enums import PrimitiveType
 from letta.schemas.letta_base import LettaBase
 
 # block of the LLM context
@@ -12,15 +13,20 @@ from letta.schemas.letta_base import LettaBase
 class BaseBlock(LettaBase, validate_assignment=True):
     """Base block of the LLM context"""
 
-    __id_prefix__ = "block"
+    __id_prefix__ = PrimitiveType.BLOCK.value
 
     # data value
     value: str = Field(..., description="Value of the block.")
     limit: int = Field(CORE_MEMORY_BLOCK_CHAR_LIMIT, description="Character limit of the block.")
 
+    project_id: Optional[str] = Field(None, description="The associated project id.")
     # template data (optional)
     template_name: Optional[str] = Field(None, description="Name of the block if it is a template.", alias="name")
     is_template: bool = Field(False, description="Whether the block is a template (e.g. saved human/persona options).")
+    template_id: Optional[str] = Field(None, description="The id of the template.", alias="name")
+    base_template_id: Optional[str] = Field(None, description="The base template id of the block.")
+    deployment_id: Optional[str] = Field(None, description="The id of the deployment.")
+    entity_id: Optional[str] = Field(None, description="The id of the entity within the template.")
     preserve_on_migration: Optional[bool] = Field(False, description="Preserve the block on template migration.")
 
     # context window label
@@ -32,21 +38,38 @@ class BaseBlock(LettaBase, validate_assignment=True):
     # metadata
     description: Optional[str] = Field(None, description="Description of the block.")
     metadata: Optional[dict] = Field({}, description="Metadata of the block.")
+    hidden: Optional[bool] = Field(
+        None,
+        description="If set to True, the block will be hidden.",
+    )
 
     # def __len__(self):
     #     return len(self.value)
 
-    class Config:
-        extra = "ignore"  # Ignores extra fields
+    model_config = ConfigDict(extra="ignore")  # Ignores extra fields
 
-    @model_validator(mode="after")
-    def verify_char_limit(self) -> Self:
-        # self.limit can be None from
-        if self.limit is not None and self.value and len(self.value) > self.limit:
-            error_msg = f"Edit failed: Exceeds {self.limit} character limit (requested {len(self.value)}) - {str(self)}."
-            raise ValueError(error_msg)
+    @model_validator(mode="before")
+    @classmethod
+    def verify_char_limit(cls, data: Any) -> Any:
+        """Validate the character limit before model instantiation.
 
-        return self
+        Notes:
+        - Runs on raw input; do not mutate input.
+        - For update schemas (e.g., BlockUpdate), `value` and `limit` may be absent.
+          In that case, only validate when both are provided.
+        """
+        if isinstance(data, dict):
+            limit = data.get("limit")
+            value = data.get("value")
+
+            # Only enforce the char limit when both are present.
+            # Pydantic will separately enforce required fields where applicable.
+            if limit is not None and value is not None and isinstance(value, str):
+                if len(value) > limit:
+                    error_msg = f"Edit failed: Exceeds {limit} character limit (requested {len(value)})"
+                    raise ValueError(error_msg)
+
+        return data
 
     def __setattr__(self, name, value):
         """Run validation if self.value is updated"""
@@ -74,12 +97,19 @@ class Block(BaseBlock):
 
     id: str = BaseBlock.generate_id_field()
 
-    # associated user/agent
-    organization_id: Optional[str] = Field(None, description="The unique identifier of the organization associated with the block.")
-
     # default orm fields
     created_by_id: Optional[str] = Field(None, description="The id of the user that made this Block.")
     last_updated_by_id: Optional[str] = Field(None, description="The id of the user that last updated this Block.")
+
+
+class FileBlock(Block):
+    file_id: str = Field(..., description="Unique identifier of the file.")
+    source_id: str = Field(..., description="Unique identifier of the source.")
+    is_open: bool = Field(..., description="True if the agent currently has the file open.")
+    last_accessed_at: Optional[datetime] = Field(
+        None,
+        description="UTC timestamp of the agent’s most recent access to this file. Any operations from the open, close, or search tools will update this field.",
+    )
 
 
 class Human(Block):
@@ -104,9 +134,9 @@ class BlockUpdate(BaseBlock):
 
     limit: Optional[int] = Field(None, description="Character limit of the block.")
     value: Optional[str] = Field(None, description="Value of the block.")
+    project_id: Optional[str] = Field(None, description="The associated project id.")
 
-    class Config:
-        extra = "ignore"  # Ignores extra fields
+    model_config = ConfigDict(extra="ignore")  # Ignores extra fields
 
 
 class CreateBlock(BaseBlock):
@@ -116,9 +146,18 @@ class CreateBlock(BaseBlock):
     limit: int = Field(CORE_MEMORY_BLOCK_CHAR_LIMIT, description="Character limit of the block.")
     value: str = Field(..., description="Value of the block.")
 
+    project_id: Optional[str] = Field(None, description="The associated project id.")
     # block templates
     is_template: bool = False
     template_name: Optional[str] = Field(None, description="Name of the block if it is a template.", alias="name")
+
+    @model_validator(mode="before")
+    @classmethod
+    def ensure_value_is_string(cls, data):
+        """Convert None value to empty string"""
+        if data and isinstance(data, dict) and data.get("value") is None:
+            data["value"] = ""
+        return data
 
 
 class CreateHuman(CreateBlock):
@@ -151,3 +190,12 @@ class CreatePersonaBlockTemplate(CreatePersona):
 
     is_template: bool = True
     label: str = "persona"
+
+
+class InternalTemplateBlockCreate(CreateBlock):
+    """Used for Letta Cloud"""
+
+    base_template_id: str = Field(..., description="The id of the base template.")
+    template_id: str = Field(..., description="The id of the template.")
+    deployment_id: str = Field(..., description="The id of the deployment.")
+    entity_id: str = Field(..., description="The id of the entity within the template.")

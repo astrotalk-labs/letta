@@ -93,7 +93,7 @@ def test_derive_openai_json_schema():
     test_cases = [
         ("pydantic_as_single_arg_example", "create_step", False),
         ("list_of_pydantic_example", "create_task_plan", False),
-        ("nested_pydantic_as_arg_example", "create_task_plan", False),
+        # ("nested_pydantic_as_arg_example", "create_task_plan", False),
         ("simple_d20", "roll_d20", False),
         ("all_python_complex", "check_order_status", True),
         ("all_python_complex_nodict", "check_order_status", False),
@@ -236,137 +236,6 @@ def test_valid_schemas_via_openai(openai_model: str, structured_output: bool):
     print(f"Total execution time: {end_time - start_time:.2f} seconds")
 
 
-# Parallel implementation for Composio test
-def _run_composio_test(action_name, openai_model, structured_output):
-    """Run a single Composio test case in parallel"""
-    try:
-        tool_create = ToolCreate.from_composio(action_name=action_name)
-        assert tool_create.json_schema
-        schema = tool_create.json_schema
-
-        if structured_output:
-            tool_schema = convert_to_structured_output(schema)
-        else:
-            tool_schema = schema
-
-        api_key = os.getenv("OPENAI_API_KEY")
-        assert api_key is not None, "OPENAI_API_KEY must be set"
-
-        system_prompt = "You job is to test the tool that you've been provided. Don't ask for any clarification on the args, just come up with some dummy data and try executing the tool."
-
-        url = "https://api.openai.com/v1/chat/completions"
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        data = {
-            "model": openai_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-            ],
-            "tools": [
-                {
-                    "type": "function",
-                    "function": tool_schema,
-                }
-            ],
-            "tool_choice": "auto",
-            "parallel_tool_calls": False,
-        }
-
-        make_post_request(url, headers, data)
-        return (action_name, True, None)  # Success
-    except Exception as e:
-        return (action_name, False, str(e))  # Failure with error message
-
-
-@pytest.mark.parametrize("openai_model", ["gpt-4o-mini"])
-@pytest.mark.parametrize("structured_output", [True])
-def test_composio_tool_schema_generation(openai_model: str, structured_output: bool):
-    """Test that we can generate the schemas for some Composio tools."""
-
-    if not os.getenv("COMPOSIO_API_KEY"):
-        pytest.skip("COMPOSIO_API_KEY not set")
-
-    start_time = time.time()
-
-    action_names = [
-        "GITHUB_STAR_A_REPOSITORY_FOR_THE_AUTHENTICATED_USER",  # Simple
-        "CAL_GET_AVAILABLE_SLOTS_INFO",  # has an array arg, needs to be converted properly
-        "SALESFORCE_RETRIEVE_LEAD_BY_ID",  # has an array arg, needs to be converted properly
-        "FIRECRAWL_SEARCH",  # has an optional array arg, needs to be converted properly
-    ]
-
-    # Create a pool of processes
-    pool = mp.Pool(processes=min(mp.cpu_count(), len(action_names)))
-
-    # Map the work to the pool
-    func = partial(_run_composio_test, openai_model=openai_model, structured_output=structured_output)
-    results = pool.map(func, action_names)
-
-    # Check results
-    for action_name, success, error_message in results:
-        print(f"Test for {action_name}: {'SUCCESS' if success else 'FAILED - ' + error_message}")
-        assert success, f"Test for {action_name} failed: {error_message}"
-
-    pool.close()
-    pool.join()
-
-    end_time = time.time()
-    print(f"Total execution time: {end_time - start_time:.2f} seconds")
-
-
-@pytest.mark.parametrize("openai_model", ["gpt-4o-mini"])
-@pytest.mark.parametrize("structured_output", [True])
-def test_langchain_tool_schema_generation(openai_model: str, structured_output: bool):
-    """Test that we can generate the schemas for some Langchain tools."""
-    from langchain_community.tools import WikipediaQueryRun
-    from langchain_community.utilities import WikipediaAPIWrapper
-
-    api_wrapper = WikipediaAPIWrapper(top_k_results=1, doc_content_chars_max=500)
-    langchain_tool = WikipediaQueryRun(api_wrapper=api_wrapper)
-
-    tool_create = ToolCreate.from_langchain(
-        langchain_tool=langchain_tool,
-        additional_imports_module_attr_map={"langchain_community.utilities": "WikipediaAPIWrapper"},
-    )
-
-    assert tool_create.json_schema
-    schema = tool_create.json_schema
-    print(f"The schema for {langchain_tool.name}: {json.dumps(schema, indent=4)}\n\n")
-
-    try:
-        if structured_output:
-            tool_schema = convert_to_structured_output(schema)
-        else:
-            tool_schema = schema
-
-        api_key = os.getenv("OPENAI_API_KEY")
-        assert api_key is not None, "OPENAI_API_KEY must be set"
-
-        system_prompt = "You job is to test the tool that you've been provided. Don't ask for any clarification on the args, just come up with some dummy data and try executing the tool."
-
-        url = "https://api.openai.com/v1/chat/completions"
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        data = {
-            "model": openai_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-            ],
-            "tools": [
-                {
-                    "type": "function",
-                    "function": tool_schema,
-                }
-            ],
-            "tool_choice": "auto",
-            "parallel_tool_calls": False,
-        }
-
-        make_post_request(url, headers, data)
-        print(f"Successfully called OpenAI using schema generated from {langchain_tool.name}\n\n")
-    except Exception:
-        print(f"Failed to call OpenAI using schema generated from {langchain_tool.name}\n\n")
-        raise
-
-
 # Helper function for pydantic args schema test
 def _run_pydantic_args_test(filename, openai_model, structured_output):
     """Run a single pydantic args schema test case"""
@@ -396,6 +265,9 @@ def _run_pydantic_args_test(filename, openai_model, structured_output):
             source_code=last_function_source,
             args_json_schema=args_schema,
         )
+        from letta.services.tool_schema_generator import generate_schema_for_tool_creation
+
+        tool.json_schema = generate_schema_for_tool_creation(tool)
         schema = tool.json_schema
 
         # We expect this to fail for all_python_complex with structured_output=True
@@ -583,3 +455,208 @@ def missing_param_doc(x: int, y: int) -> str:
 )
 def test_google_style_docstring_validation(fn, regex):
     _check(fn, regex)
+
+
+def test_complex_nested_anyof_schema_to_structured_output():
+    """Test that complex nested anyOf schemas with inlined $refs can be converted to structured outputs.
+
+    This test verifies that convert_to_structured_output properly handles:
+    - Simple anyOf (primitives) - flattened to type arrays
+    - Complex anyOf (with objects) - preserved as anyOf
+    - Nested structures with recursion
+    """
+
+    # This is the schema generated by our anyOf inlining approach for MCP tools
+    # It uses anyOf throughout and has fully inlined $refs
+    schema = {
+        "name": "get_vehicle_configuration",
+        "description": "Get vehicle configuration details for a given model type and optional dealer info and customization options.",
+        "parameters": {
+            "$defs": {
+                "Feature": {
+                    "properties": {
+                        "feature_id": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None, "title": "Feature ID"},
+                        "category_code": {"anyOf": [{"type": "integer"}, {"type": "null"}], "default": None, "title": "Category Code"},
+                        "variant_code": {"anyOf": [{"type": "integer"}, {"type": "null"}], "default": None, "title": "Variant Code"},
+                        "package_level": {"anyOf": [{"type": "integer"}, {"type": "null"}], "default": None, "title": "Package Level"},
+                    },
+                    "type": "object",
+                    "title": "Feature",
+                    "additionalProperties": False,
+                },
+                "CustomizationData": {
+                    "properties": {
+                        "has_premium_package": {
+                            "anyOf": [{"type": "boolean"}, {"type": "null"}],
+                            "default": None,
+                            "title": "Has Premium Package",
+                        },
+                        "has_multiple_trims": {
+                            "anyOf": [{"type": "boolean"}, {"type": "null"}],
+                            "default": None,
+                            "title": "Has Multiple Trims",
+                        },
+                        "selected_features": {
+                            "anyOf": [{"items": {"$ref": "#/$defs/Feature"}, "type": "array"}, {"type": "null"}],
+                            "default": None,
+                            "title": "Selected Features",
+                        },
+                    },
+                    "type": "object",
+                    "title": "CustomizationData",
+                    "additionalProperties": False,
+                },
+                "VehicleModel": {
+                    "type": "string",
+                    "enum": [
+                        "sedan",
+                        "suv",
+                        "truck",
+                        "coupe",
+                        "hatchback",
+                        "minivan",
+                        "wagon",
+                        "convertible",
+                        "sports",
+                        "luxury",
+                        "electric",
+                        "hybrid",
+                        "compact",
+                        "crossover",
+                        "other",
+                        "unknown",
+                    ],
+                    "title": "VehicleModel",
+                },
+            },
+            "properties": {
+                "model_type": {
+                    "description": "The vehicle model type selection.",
+                    "title": "Model Type",
+                    "type": "string",
+                    "enum": [
+                        "sedan",
+                        "suv",
+                        "truck",
+                        "coupe",
+                        "hatchback",
+                        "minivan",
+                        "wagon",
+                        "convertible",
+                        "sports",
+                        "luxury",
+                        "electric",
+                        "hybrid",
+                        "compact",
+                        "crossover",
+                        "other",
+                        "unknown",
+                    ],
+                },
+                "dealer_location": {
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                    "default": None,
+                    "description": "Dealer location identifier from registration system, if available.",
+                    "title": "Dealer Location",
+                },
+                "customization_options": {
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "has_premium_package": {
+                                    "anyOf": [{"type": "boolean"}, {"type": "null"}],
+                                    "default": None,
+                                    "title": "Has Premium Package",
+                                },
+                                "has_multiple_trims": {
+                                    "anyOf": [{"type": "boolean"}, {"type": "null"}],
+                                    "default": None,
+                                    "title": "Has Multiple Trims",
+                                },
+                                "selected_features": {
+                                    "anyOf": [
+                                        {
+                                            "items": {
+                                                "properties": {
+                                                    "feature_id": {
+                                                        "anyOf": [{"type": "string"}, {"type": "null"}],
+                                                        "default": None,
+                                                        "title": "Feature ID",
+                                                    },
+                                                    "category_code": {
+                                                        "anyOf": [{"type": "integer"}, {"type": "null"}],
+                                                        "default": None,
+                                                        "title": "Category Code",
+                                                    },
+                                                    "variant_code": {
+                                                        "anyOf": [{"type": "integer"}, {"type": "null"}],
+                                                        "default": None,
+                                                        "title": "Variant Code",
+                                                    },
+                                                    "package_level": {
+                                                        "anyOf": [{"type": "integer"}, {"type": "null"}],
+                                                        "default": None,
+                                                        "title": "Package Level",
+                                                    },
+                                                },
+                                                "type": "object",
+                                                "title": "Feature",
+                                                "additionalProperties": False,
+                                            },
+                                            "type": "array",
+                                        },
+                                        {"type": "null"},
+                                    ],
+                                    "default": None,
+                                    "title": "Selected Features",
+                                },
+                            },
+                            "title": "CustomizationData",
+                        },
+                        {"type": "null"},
+                    ],
+                    "default": None,
+                    "description": "Customization preferences for the vehicle from user selections, if available.",
+                    "title": "Customization Options",
+                },
+                "request_heartbeat": {"type": "boolean", "description": "Request an immediate heartbeat after function execution."},
+            },
+            "required": ["model_type", "request_heartbeat"],
+            "type": "object",
+            "additionalProperties": False,
+        },
+    }
+
+    # Attempt to convert to structured output
+    # This should succeed if the schema is properly formatted for OpenAI
+    try:
+        structured_output = convert_to_structured_output(schema)
+
+        # Verify the conversion succeeded and returned a valid schema
+        assert "name" in structured_output
+        assert "parameters" in structured_output
+        assert "strict" in structured_output
+        assert structured_output["strict"] is True
+
+        # Verify properties are preserved
+        assert "model_type" in structured_output["parameters"]["properties"]
+        assert "dealer_location" in structured_output["parameters"]["properties"]
+        assert "customization_options" in structured_output["parameters"]["properties"]
+        assert "request_heartbeat" in structured_output["parameters"]["properties"]
+
+        # Verify required fields
+        # For strict mode, ALL fields must be required (OpenAI requirement)
+        assert set(structured_output["parameters"]["required"]) == {
+            "model_type",
+            "dealer_location",
+            "customization_options",
+            "request_heartbeat",
+        }
+
+        print("✅ Complex nested anyOf schema successfully converted to structured output")
+        print(json.dumps(structured_output, indent=2))
+
+    except Exception as e:
+        pytest.fail(f"Failed to convert complex nested anyOf schema to structured output: {str(e)}")

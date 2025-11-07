@@ -8,9 +8,11 @@ from typing import Any, Dict, Optional
 
 from pydantic.config import JsonDict
 
+from letta.log import get_logger
 from letta.otel.tracing import log_event, trace_method
 from letta.schemas.agent import AgentState
-from letta.schemas.sandbox_config import SandboxConfig, SandboxType
+from letta.schemas.enums import SandboxType
+from letta.schemas.sandbox_config import SandboxConfig
 from letta.schemas.tool import Tool
 from letta.schemas.tool_execution_result import ToolExecutionResult
 from letta.services.helpers.tool_execution_helper import (
@@ -21,7 +23,9 @@ from letta.services.helpers.tool_execution_helper import (
 from letta.services.helpers.tool_parser_helper import parse_stdout_best_effort
 from letta.services.tool_sandbox.base import AsyncToolSandboxBase
 from letta.settings import tool_settings
-from letta.utils import get_friendly_error_msg, parse_stderr_error_msg
+from letta.utils import get_friendly_error_msg, parse_stderr_error_msg, safe_create_task
+
+logger = get_logger(__name__)
 
 
 class AsyncToolSandboxLocal(AsyncToolSandboxBase):
@@ -41,34 +45,16 @@ class AsyncToolSandboxLocal(AsyncToolSandboxBase):
         super().__init__(tool_name, args, user, tool_object, sandbox_config=sandbox_config, sandbox_env_vars=sandbox_env_vars)
         self.force_recreate_venv = force_recreate_venv
 
+    @trace_method
     async def run(
         self,
         agent_state: Optional[AgentState] = None,
         additional_env_vars: Optional[Dict] = None,
     ) -> ToolExecutionResult:
         """
-        Run the tool in a sandbox environment asynchronously,
-        *always* using a subprocess for execution.
+        Run the tool in a local sandbox environment asynchronously.
+        Uses a subprocess for multi-core parallelism.
         """
-        result = await self.run_local_dir_sandbox(agent_state=agent_state, additional_env_vars=additional_env_vars)
-
-        # Simple console logging for demonstration
-        for log_line in (result.stdout or []) + (result.stderr or []):
-            print(f"Tool execution log: {log_line}")
-
-        return result
-
-    @trace_method
-    async def run_local_dir_sandbox(
-        self,
-        agent_state: Optional[AgentState],
-        additional_env_vars: Optional[Dict],
-    ) -> ToolExecutionResult:
-        """
-        Unified asynchronous method to run the tool in a local sandbox environment,
-        always via subprocess for multi-core parallelism.
-        """
-        # Get sandbox configuration
         if self.provided_sandbox_config:
             sbx_config = self.provided_sandbox_config
         else:
@@ -96,21 +82,28 @@ class AsyncToolSandboxLocal(AsyncToolSandboxBase):
 
         # Make sure sandbox directory exists
         sandbox_dir = os.path.expanduser(local_configs.sandbox_dir)
-        if not os.path.exists(sandbox_dir) or not os.path.isdir(sandbox_dir):
-            os.makedirs(sandbox_dir)
+        if not await asyncio.to_thread(lambda: os.path.exists(sandbox_dir) and os.path.isdir(sandbox_dir)):
+            await asyncio.to_thread(os.makedirs, sandbox_dir)
 
         # If using a virtual environment, ensure it's prepared in parallel
         venv_preparation_task = None
         if use_venv:
             venv_path = str(os.path.join(sandbox_dir, local_configs.venv_name))
-            venv_preparation_task = asyncio.create_task(self._prepare_venv(local_configs, venv_path, env))
+            venv_preparation_task = safe_create_task(self._prepare_venv(local_configs, venv_path, env), label="prepare_venv")
 
         # Generate and write execution script (always with markers, since we rely on stdout)
-        with tempfile.NamedTemporaryFile(mode="w", dir=sandbox_dir, suffix=".py", delete=False) as temp_file:
-            code = self.generate_execution_script(agent_state=agent_state, wrap_print_with_markers=True)
-            temp_file.write(code)
-            temp_file.flush()
-            temp_file_path = temp_file.name
+        code = await self.generate_execution_script(agent_state=agent_state, wrap_print_with_markers=True)
+
+        async def write_temp_file(dir, content):
+            def _write():
+                with tempfile.NamedTemporaryFile(mode="w", dir=dir, suffix=".py", delete=False) as temp_file:
+                    temp_file.write(content)
+                    temp_file.flush()
+                    return temp_file.name
+
+            return await asyncio.to_thread(_write)
+
+        temp_file_path = await write_temp_file(sandbox_dir, code)
 
         try:
             # If we started a venv preparation task, wait for it to complete
@@ -127,6 +120,10 @@ class AsyncToolSandboxLocal(AsyncToolSandboxBase):
             else:
                 # If not using venv, use whatever Python we are running on
                 python_executable = sys.executable
+                # For embedded/desktop environments, preserve Python paths
+                # This ensures the subprocess can find bundled modules
+                if "PYTHONPATH" in os.environ:
+                    exec_env["PYTHONPATH"] = os.environ["PYTHONPATH"]
 
             # handle unwanted terminal behavior
             exec_env.update(
@@ -156,13 +153,13 @@ class AsyncToolSandboxLocal(AsyncToolSandboxBase):
             from letta.settings import settings
 
             if not settings.debug:
-                os.remove(temp_file_path)
+                await asyncio.to_thread(os.remove, temp_file_path)
 
     async def _prepare_venv(self, local_configs, venv_path: str, env: Dict[str, str]):
         """
         Prepare virtual environment asynchronously (in a background thread).
         """
-        if self.force_recreate_venv or not os.path.isdir(venv_path):
+        if self.force_recreate_venv or not await asyncio.to_thread(os.path.isdir, venv_path):
             sandbox_dir = os.path.expanduser(local_configs.sandbox_dir)
             log_event(name="start create_venv_for_local_sandbox", attributes={"venv_path": venv_path})
             await asyncio.to_thread(
@@ -174,13 +171,13 @@ class AsyncToolSandboxLocal(AsyncToolSandboxBase):
             )
             log_event(name="finish create_venv_for_local_sandbox")
 
-        log_event(name="start install_pip_requirements_for_sandbox", attributes={"local_configs": local_configs.model_dump_json()})
-        await asyncio.to_thread(
-            install_pip_requirements_for_sandbox, local_configs, upgrade=True, user_install_if_no_venv=False, env=env, tool=self.tool
-        )
-        log_event(name="finish install_pip_requirements_for_sandbox", attributes={"local_configs": local_configs.model_dump_json()})
+        if local_configs.pip_requirements or (self.tool and self.tool.pip_requirements):
+            log_event(name="start install_pip_requirements_for_sandbox", attributes={"local_configs": local_configs.model_dump_json()})
+            await asyncio.to_thread(
+                install_pip_requirements_for_sandbox, local_configs, upgrade=True, user_install_if_no_venv=False, env=env, tool=self.tool
+            )
+            log_event(name="finish install_pip_requirements_for_sandbox", attributes={"local_configs": local_configs.model_dump_json()})
 
-    @trace_method
     async def _execute_tool_subprocess(
         self, sbx_config, python_executable: str, temp_file_path: str, env: Dict[str, str], cwd: str
     ) -> ToolExecutionResult:
@@ -207,7 +204,7 @@ class AsyncToolSandboxLocal(AsyncToolSandboxBase):
                     except asyncio.TimeoutError:
                         process.kill()
 
-                raise TimeoutError(f"Executing tool {self.tool_name} timed out after 60 seconds.")
+                raise TimeoutError(f"Executing tool {self.tool_name} timed out after {tool_settings.tool_sandbox_timeout} seconds.")
 
             stderr = stderr_bytes.decode("utf-8") if stderr_bytes else ""
             log_event(name="finish subprocess")
@@ -238,9 +235,7 @@ class AsyncToolSandboxLocal(AsyncToolSandboxBase):
             if isinstance(e, TimeoutError):
                 raise e
 
-            print(f"Subprocess execution for tool {self.tool_name} encountered an error: {e}")
-            print(e.__class__.__name__)
-            print(e.__traceback__)
+            logger.exception(f"Subprocess execution for tool {self.tool_name} encountered an error: {e}")
             func_return = get_friendly_error_msg(
                 function_name=self.tool_name,
                 exception_name=type(e).__name__,

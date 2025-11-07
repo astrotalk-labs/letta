@@ -58,12 +58,45 @@ class LLMClient:
                     put_inner_thoughts_first=put_inner_thoughts_first,
                     actor=actor,
                 )
-            case ProviderType.openai | ProviderType.together:
+            case ProviderType.together:
+                from letta.llm_api.together_client import TogetherClient
+
+                return TogetherClient(
+                    put_inner_thoughts_first=put_inner_thoughts_first,
+                    actor=actor,
+                )
+            case ProviderType.azure:
+                from letta.llm_api.azure_client import AzureClient
+
+                return AzureClient(
+                    put_inner_thoughts_first=put_inner_thoughts_first,
+                    actor=actor,
+                )
+            case ProviderType.xai:
+                from letta.llm_api.xai_client import XAIClient
+
+                return XAIClient(
+                    put_inner_thoughts_first=put_inner_thoughts_first,
+                    actor=actor,
+                )
+            case ProviderType.groq:
+                from letta.llm_api.groq_client import GroqClient
+
+                return GroqClient(
+                    put_inner_thoughts_first=put_inner_thoughts_first,
+                    actor=actor,
+                )
+            case ProviderType.deepseek:
+                from letta.llm_api.deepseek_client import DeepseekClient
+
+                return DeepseekClient(
+                    put_inner_thoughts_first=put_inner_thoughts_first,
+                    actor=actor,
+                )
+            case _:
                 from letta.llm_api.openai_client import OpenAIClient
 
                 return OpenAIClient(
                     put_inner_thoughts_first=put_inner_thoughts_first,
                     actor=actor,
                 )
-            case _:
-                return None

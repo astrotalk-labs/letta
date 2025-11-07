@@ -1,20 +1,18 @@
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from letta.constants import (
-    CORE_MEMORY_LINE_NUMBER_WARNING,
-    DEFAULT_EMBEDDING_CHUNK_SIZE,
-    FILE_MEMORY_EMPTY_MESSAGE,
-    FILE_MEMORY_EXISTS_MESSAGE,
-)
-from letta.schemas.block import CreateBlock
+from letta.constants import CORE_MEMORY_LINE_NUMBER_WARNING, DEFAULT_EMBEDDING_CHUNK_SIZE
+from letta.errors import AgentExportProcessingError
+from letta.schemas.block import Block, CreateBlock
 from letta.schemas.embedding_config import EmbeddingConfig
+from letta.schemas.enums import PrimitiveType
 from letta.schemas.environment_variables import AgentEnvironmentVariable
 from letta.schemas.file import FileStatus
 from letta.schemas.group import Group
+from letta.schemas.identity import Identity
 from letta.schemas.letta_base import OrmMetadataBase
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.memory import Memory
@@ -24,9 +22,11 @@ from letta.schemas.response_format import ResponseFormatUnion
 from letta.schemas.source import Source
 from letta.schemas.tool import Tool
 from letta.schemas.tool_rule import ToolRule
-from letta.utils import create_random_username
+from letta.utils import calculate_file_defaults_based_on_context_window, create_random_username
 
 
+# TODO: Remove this upon next OSS release, there's a duplicate AgentType in enums
+# TODO: This is done in the interest of time to avoid needing to update the sandbox template IDs on cloud/rebuild
 class AgentType(str, Enum):
     """
     Enum to represent the type of agent.
@@ -34,12 +34,25 @@ class AgentType(str, Enum):
 
     memgpt_agent = "memgpt_agent"  # the OG set of memgpt tools
     memgpt_v2_agent = "memgpt_v2_agent"  # memgpt style tools, but refreshed
+    letta_v1_agent = "letta_v1_agent"  # simplification of the memgpt loop, no heartbeats or forced tool calls
     react_agent = "react_agent"  # basic react agent, no memory tools
     workflow_agent = "workflow_agent"  # workflow with auto-clearing message buffer
     split_thread_agent = "split_thread_agent"
     sleeptime_agent = "sleeptime_agent"
     voice_convo_agent = "voice_convo_agent"
     voice_sleeptime_agent = "voice_sleeptime_agent"
+
+
+# Relationship field literal type for AgentState include field to join related objects
+AgentRelationships = Literal[
+    "agent.blocks",
+    "agent.identities",
+    "agent.managed_group",
+    "agent.secrets",
+    "agent.sources",
+    "agent.tags",
+    "agent.tools",
+]
 
 
 class AgentState(OrmMetadataBase, validate_assignment=True):
@@ -58,7 +71,7 @@ class AgentState(OrmMetadataBase, validate_assignment=True):
         embedding_config (EmbeddingConfig): The embedding configuration used by the agent.
     """
 
-    __id_prefix__ = "agent"
+    __id_prefix__ = PrimitiveType.AGENT.value
 
     # NOTE: this is what is returned to the client and also what is used to initialize `Agent`
     id: str = Field(..., description="The id of the agent. Assigned by the database.")
@@ -83,22 +96,29 @@ class AgentState(OrmMetadataBase, validate_assignment=True):
 
     # This is an object representing the in-process state of a running `Agent`
     # Field in this object can be theoretically edited by tools, and will be persisted by the ORM
-    organization_id: Optional[str] = Field(None, description="The unique identifier of the organization associated with the agent.")
-
     description: Optional[str] = Field(None, description="The description of the agent.")
     metadata: Optional[Dict] = Field(None, description="The metadata of the agent.")
 
-    memory: Memory = Field(..., description="The in-context memory of the agent.")
+    memory: Memory = Field(..., description="The in-context memory of the agent.", deprecated=True)
+    blocks: List[Block] = Field(..., description="The memory blocks used by the agent.")
     tools: List[Tool] = Field(..., description="The tools used by the agent.")
     sources: List[Source] = Field(..., description="The sources used by the agent.")
     tags: List[str] = Field(..., description="The tags associated with the agent.")
     tool_exec_environment_variables: List[AgentEnvironmentVariable] = Field(
+        default_factory=list,
+        description="Deprecated: use `secrets` field instead.",
+        deprecated=True,
+    )
+    secrets: List[AgentEnvironmentVariable] = Field(
         default_factory=list, description="The environment variables for tool execution specific to this agent."
     )
     project_id: Optional[str] = Field(None, description="The id of the project the agent belongs to.")
     template_id: Optional[str] = Field(None, description="The id of the template the agent belongs to.")
     base_template_id: Optional[str] = Field(None, description="The base template id of the agent.")
-    identity_ids: List[str] = Field([], description="The ids of the identities associated with this agent.")
+    deployment_id: Optional[str] = Field(None, description="The id of the deployment.")
+    entity_id: Optional[str] = Field(None, description="The id of the entity within the template.")
+    identity_ids: List[str] = Field([], description="The ids of the identities associated with this agent.", deprecated=True)
+    identities: List[Identity] = Field([], description="The identities associated with this agent.")
 
     # An advanced configuration that makes it so this agent does not remember any previous messages
     message_buffer_autoclear: bool = Field(
@@ -110,8 +130,8 @@ class AgentState(OrmMetadataBase, validate_assignment=True):
         description="If set to True, memory management will move to a background agent thread.",
     )
 
-    multi_agent_group: Optional[Group] = Field(None, description="The multi-agent group that this agent manages")
-
+    multi_agent_group: Optional[Group] = Field(None, description="The multi-agent group that this agent manages", deprecated=True)
+    managed_group: Optional[Group] = Field(None, description="The multi-agent group that this agent manages")
     # Run metrics
     last_run_completion: Optional[datetime] = Field(None, description="The timestamp when the agent last completed a run.")
     last_run_duration_ms: Optional[int] = Field(None, description="The duration in milliseconds of the agent's last run.")
@@ -119,12 +139,49 @@ class AgentState(OrmMetadataBase, validate_assignment=True):
     # timezone
     timezone: Optional[str] = Field(None, description="The timezone of the agent (IANA format).")
 
+    # file related controls
+    max_files_open: Optional[int] = Field(
+        None,
+        description="Maximum number of files that can be open at once for this agent. Setting this too high may exceed the context window, which will break the agent.",
+    )
+    per_file_view_window_char_limit: Optional[int] = Field(
+        None,
+        description="The per-file view window character limit for this agent. Setting this too high may exceed the context window, which will break the agent.",
+    )
+
+    # indexing controls
+    hidden: Optional[bool] = Field(
+        None,
+        description="If set to True, the agent will be hidden.",
+    )
+
     def get_agent_env_vars_as_dict(self) -> Dict[str, str]:
         # Get environment variables for this agent specifically
         per_agent_env_vars = {}
-        for agent_env_var_obj in self.tool_exec_environment_variables:
+        for agent_env_var_obj in self.secrets:
             per_agent_env_vars[agent_env_var_obj.key] = agent_env_var_obj.value
         return per_agent_env_vars
+
+    @model_validator(mode="after")
+    def set_file_defaults_based_on_context_window(self) -> "AgentState":
+        """Set reasonable defaults for file-related fields based on the model's context window size."""
+        # Only set defaults if not explicitly provided
+        if self.max_files_open is not None and self.per_file_view_window_char_limit is not None:
+            return self
+
+        # Get context window size from llm_config
+        context_window = self.llm_config.context_window if self.llm_config and self.llm_config.context_window else None
+
+        # Calculate defaults using the helper function
+        default_max_files, default_char_limit = calculate_file_defaults_based_on_context_window(context_window)
+
+        # Apply defaults only if not set
+        if self.max_files_open is None:
+            self.max_files_open = default_max_files
+        if self.per_file_view_window_char_limit is None:
+            self.per_file_view_window_char_limit = default_char_limit
+
+        return self
 
 
 class CreateAgent(BaseModel, validate_assignment=True):  #
@@ -144,7 +201,7 @@ class CreateAgent(BaseModel, validate_assignment=True):  #
     tool_rules: Optional[List[ToolRule]] = Field(None, description="The tool rules governing the agent.")
     tags: Optional[List[str]] = Field(None, description="The tags associated with the agent.")
     system: Optional[str] = Field(None, description="The system prompt used by the agent.")
-    agent_type: AgentType = Field(default_factory=lambda: AgentType.memgpt_agent, description="The type of agent.")
+    agent_type: AgentType = Field(default_factory=lambda: AgentType.memgpt_v2_agent, description="The type of agent.")
     llm_config: Optional[LLMConfig] = Field(None, description="The LLM configuration used by the agent.")
     embedding_config: Optional[EmbeddingConfig] = Field(None, description="The embedding configuration used by the agent.")
     # Note: if this is None, then we'll populate with the standard "more human than human" initial message sequence
@@ -156,8 +213,8 @@ class CreateAgent(BaseModel, validate_assignment=True):  #
     include_multi_agent_tools: bool = Field(
         False, description="If true, attaches the Letta multi-agent tools (e.g. sending a message to another agent)."
     )
-    include_base_tool_rules: bool = Field(
-        True, description="If true, attaches the Letta base tool rules (e.g. deny all tools not explicitly allowed)."
+    include_base_tool_rules: Optional[bool] = Field(
+        None, description="If true, attaches the Letta base tool rules (e.g. deny all tools not explicitly allowed)."
     )
     include_default_source: bool = Field(
         False, description="If true, automatically creates and attaches a default data source for this agent."
@@ -181,17 +238,17 @@ class CreateAgent(BaseModel, validate_assignment=True):  #
     max_reasoning_tokens: Optional[int] = Field(
         None, description="The maximum number of tokens to generate for reasoning step. If not set, the model will use its default value."
     )
-    enable_reasoner: Optional[bool] = Field(False, description="Whether to enable internal extended thinking step for a reasoner model.")
-    from_template: Optional[str] = Field(None, description="The template id used to configure the agent")
-    template: bool = Field(False, description="Whether the agent is a template")
+    enable_reasoner: Optional[bool] = Field(True, description="Whether to enable internal extended thinking step for a reasoner model.")
+    reasoning: Optional[bool] = Field(None, description="Whether to enable reasoning for this agent.")
+    from_template: Optional[str] = Field(None, description="Deprecated: please use the 'create agents from a template' endpoint instead.")
+    template: bool = Field(False, description="Deprecated: No longer used")
     project: Optional[str] = Field(
         None,
         deprecated=True,
         description="Deprecated: Project should now be passed via the X-Project header instead of in the request body. If using the sdk, this can be done via the new x_project field below.",
     )
-    tool_exec_environment_variables: Optional[Dict[str, str]] = Field(
-        None, description="The environment variables for tool execution specific to this agent."
-    )
+    tool_exec_environment_variables: Optional[Dict[str, str]] = Field(None, description="Deprecated: use `secrets` field instead.")
+    secrets: Optional[Dict[str, str]] = Field(None, description="The environment variables for tool execution specific to this agent.")
     memory_variables: Optional[Dict[str, str]] = Field(None, description="The variables that should be set for the agent.")
     project_id: Optional[str] = Field(None, description="The id of the project the agent belongs to.")
     template_id: Optional[str] = Field(None, description="The id of the template the agent belongs to.")
@@ -204,6 +261,19 @@ class CreateAgent(BaseModel, validate_assignment=True):  #
     enable_sleeptime: Optional[bool] = Field(None, description="If set to True, memory management will move to a background agent thread.")
     response_format: Optional[ResponseFormatUnion] = Field(None, description="The response format for the agent.")
     timezone: Optional[str] = Field(None, description="The timezone of the agent (IANA format).")
+    max_files_open: Optional[int] = Field(
+        None,
+        description="Maximum number of files that can be open at once for this agent. Setting this too high may exceed the context window, which will break the agent.",
+    )
+    per_file_view_window_char_limit: Optional[int] = Field(
+        None,
+        description="The per-file view window character limit for this agent. Setting this too high may exceed the context window, which will break the agent.",
+    )
+    hidden: Optional[bool] = Field(
+        None,
+        description="If set to True, the agent will be hidden.",
+    )
+    parallel_tool_calls: Optional[bool] = Field(False, description="If set to True, enables parallel tool calling. Defaults to False.")
 
     @field_validator("name")
     @classmethod
@@ -216,9 +286,16 @@ class CreateAgent(BaseModel, validate_assignment=True):  #
             # don't check if not provided
             return name
 
-        # Regex for allowed characters (alphanumeric, spaces, hyphens, underscores)
-        if not re.match("^[A-Za-z0-9 _-]+$", name):
-            raise ValueError("Name contains invalid characters.")
+        # Regex for allowed characters (Unicode letters, digits, spaces, hyphens, underscores, apostrophes)
+        # \w in Python 3 with re.UNICODE matches Unicode letters, digits, and underscores
+        # We explicitly allow: letters (any language), digits, spaces, hyphens, underscores, apostrophes
+        # We block filesystem-unsafe characters: / \ : * ? " < > |
+        if not re.match(r"^[\w '\-]+$", name, re.UNICODE):
+            raise AgentExportProcessingError(
+                f"Agent name '{name}' contains invalid characters. Only letters (any language), digits, spaces, "
+                f"hyphens, underscores, and apostrophes are allowed. Please avoid filesystem-unsafe characters "
+                f'like: / \\ : * ? " < > |'
+            )
 
         # Further checks can be added here...
         # TODO
@@ -261,6 +338,15 @@ class CreateAgent(BaseModel, validate_assignment=True):  #
         return self
 
 
+class InternalTemplateAgentCreate(CreateAgent):
+    """Used for Letta Cloud"""
+
+    base_template_id: str = Field(..., description="The id of the base template.")
+    template_id: str = Field(..., description="The id of the template.")
+    deployment_id: str = Field(..., description="The id of the deployment.")
+    entity_id: str = Field(..., description="The id of the entity within the template.")
+
+
 class UpdateAgent(BaseModel):
     name: Optional[str] = Field(None, description="The name of the agent.")
     tool_ids: Optional[List[str]] = Field(None, description="The ids of the tools used by the agent.")
@@ -274,9 +360,8 @@ class UpdateAgent(BaseModel):
     message_ids: Optional[List[str]] = Field(None, description="The ids of the messages in the agent's in-context memory.")
     description: Optional[str] = Field(None, description="The description of the agent.")
     metadata: Optional[Dict] = Field(None, description="The metadata of the agent.")
-    tool_exec_environment_variables: Optional[Dict[str, str]] = Field(
-        None, description="The environment variables for tool execution specific to this agent."
-    )
+    tool_exec_environment_variables: Optional[Dict[str, str]] = Field(None, description="Deprecated: use `secrets` field instead")
+    secrets: Optional[Dict[str, str]] = Field(None, description="The environment variables for tool execution specific to this agent.")
     project_id: Optional[str] = Field(None, description="The id of the project the agent belongs to.")
     template_id: Optional[str] = Field(None, description="The id of the template the agent belongs to.")
     base_template_id: Optional[str] = Field(None, description="The base template id of the agent.")
@@ -293,14 +378,32 @@ class UpdateAgent(BaseModel):
     embedding: Optional[str] = Field(
         None, description="The embedding configuration handle used by the agent, specified in the format provider/model-name."
     )
+    context_window_limit: Optional[int] = Field(None, description="The context window limit used by the agent.")
+    max_tokens: Optional[int] = Field(
+        None,
+        description="The maximum number of tokens to generate, including reasoning step. If not set, the model will use its default value.",
+    )
+    reasoning: Optional[bool] = Field(None, description="Whether to enable reasoning for this agent.")
     enable_sleeptime: Optional[bool] = Field(None, description="If set to True, memory management will move to a background agent thread.")
     response_format: Optional[ResponseFormatUnion] = Field(None, description="The response format for the agent.")
     last_run_completion: Optional[datetime] = Field(None, description="The timestamp when the agent last completed a run.")
     last_run_duration_ms: Optional[int] = Field(None, description="The duration in milliseconds of the agent's last run.")
     timezone: Optional[str] = Field(None, description="The timezone of the agent (IANA format).")
+    max_files_open: Optional[int] = Field(
+        None,
+        description="Maximum number of files that can be open at once for this agent. Setting this too high may exceed the context window, which will break the agent.",
+    )
+    per_file_view_window_char_limit: Optional[int] = Field(
+        None,
+        description="The per-file view window character limit for this agent. Setting this too high may exceed the context window, which will break the agent.",
+    )
+    hidden: Optional[bool] = Field(
+        None,
+        description="If set to True, the agent will be hidden.",
+    )
+    parallel_tool_calls: Optional[bool] = Field(False, description="If set to True, enables parallel tool calling. Defaults to False.")
 
-    class Config:
-        extra = "ignore"  # Ignores extra fields
+    model_config = ConfigDict(extra="ignore")  # Ignores extra fields
 
 
 class AgentStepResponse(BaseModel):
@@ -314,139 +417,5 @@ class AgentStepResponse(BaseModel):
 
 
 def get_prompt_template_for_agent_type(agent_type: Optional[AgentType] = None):
-
-    # Workflow agents and ReAct agents don't use memory blocks
-    # However, they still allow files to be injected into the context
-    if agent_type == AgentType.react_agent or agent_type == AgentType.workflow_agent:
-        return (
-            f"<files>\n{{% if file_blocks %}}{FILE_MEMORY_EXISTS_MESSAGE}\n{{% else %}}{FILE_MEMORY_EMPTY_MESSAGE}{{% endif %}}"
-            "{% for block in file_blocks %}"
-            f"<file status=\"{{{{ '{FileStatus.open.value}' if block.value else '{FileStatus.closed.value}' }}}}\">\n"
-            "<{{ block.label }}>\n"
-            "<description>\n"
-            "{{ block.description }}\n"
-            "</description>\n"
-            "<metadata>"
-            "{% if block.read_only %}\n- read_only=true{% endif %}\n"
-            "- chars_current={{ block.value|length }}\n"
-            "- chars_limit={{ block.limit }}\n"
-            "</metadata>\n"
-            "<value>\n"
-            "{{ block.value }}\n"
-            "</value>\n"
-            "</{{ block.label }}>\n"
-            "</file>\n"
-            "{% if not loop.last %}\n{% endif %}"
-            "{% endfor %}"
-            "\n</files>"
-        )
-
-    # Sleeptime agents use the MemGPT v2 memory tools (line numbers)
-    # MemGPT v2 tools use line-number, so core memory blocks should have line numbers
-    elif agent_type == AgentType.sleeptime_agent or agent_type == AgentType.memgpt_v2_agent:
-        return (
-            "<memory_blocks>\nThe following memory blocks are currently engaged in your core memory unit:\n\n"
-            "{% for block in blocks %}"
-            "<{{ block.label }}>\n"
-            "<description>\n"
-            "{{ block.description }}\n"
-            "</description>\n"
-            "<metadata>"
-            "{% if block.read_only %}\n- read_only=true{% endif %}\n"
-            "- chars_current={{ block.value|length }}\n"
-            "- chars_limit={{ block.limit }}\n"
-            "</metadata>\n"
-            "<value>\n"
-            f"{CORE_MEMORY_LINE_NUMBER_WARNING}\n"
-            "{% for line in block.value.split('\\n') %}"
-            "Line {{ loop.index }}: {{ line }}\n"
-            "{% endfor %}"
-            "</value>\n"
-            "</{{ block.label }}>\n"
-            "{% if not loop.last %}\n{% endif %}"
-            "{% endfor %}"
-            "\n</memory_blocks>"
-            "\n\n{% if tool_usage_rules %}"
-            "<tool_usage_rules>\n"
-            "{{ tool_usage_rules.description }}\n\n"
-            "{{ tool_usage_rules.value }}\n"
-            "</tool_usage_rules>"
-            "{% endif %}"
-            f"\n\n<files>\n{{% if file_blocks %}}{FILE_MEMORY_EXISTS_MESSAGE}\n{{% else %}}{FILE_MEMORY_EMPTY_MESSAGE}{{% endif %}}"
-            "{% for block in file_blocks %}"
-            f"<file status=\"{{{{ '{FileStatus.open.value}' if block.value else '{FileStatus.closed.value}' }}}}\">\n"
-            "<{{ block.label }}>\n"
-            "{% if block.description %}"
-            "<description>\n"
-            "{{ block.description }}\n"
-            "</description>\n"
-            "{% endif %}"
-            "<metadata>"
-            "{% if block.read_only %}\n- read_only=true{% endif %}\n"
-            "- chars_current={{ block.value|length }}\n"
-            "- chars_limit={{ block.limit }}\n"
-            "</metadata>\n"
-            "{% if block.value %}"
-            "<value>\n"
-            "{{ block.value }}\n"
-            "</value>\n"
-            "{% endif %}"
-            "</{{ block.label }}>\n"
-            "</file>\n"
-            "{% if not loop.last %}\n{% endif %}"
-            "{% endfor %}"
-            "\n</files>"
-        )
-
-    # Default setup (MemGPT), no line numbers
-    else:
-        return (
-            "<memory_blocks>\nThe following memory blocks are currently engaged in your core memory unit:\n\n"
-            "{% for block in blocks %}"
-            "<{{ block.label }}>\n"
-            "<description>\n"
-            "{{ block.description }}\n"
-            "</description>\n"
-            "<metadata>"
-            "{% if block.read_only %}\n- read_only=true{% endif %}\n"
-            "- chars_current={{ block.value|length }}\n"
-            "- chars_limit={{ block.limit }}\n"
-            "</metadata>\n"
-            "<value>\n"
-            "{{ block.value }}\n"
-            "</value>\n"
-            "</{{ block.label }}>\n"
-            "{% if not loop.last %}\n{% endif %}"
-            "{% endfor %}"
-            "\n</memory_blocks>"
-            "\n\n{% if tool_usage_rules %}"
-            "<tool_usage_rules>\n"
-            "{{ tool_usage_rules.description }}\n\n"
-            "{{ tool_usage_rules.value }}\n"
-            "</tool_usage_rules>"
-            "{% endif %}"
-            f"\n\n<files>\n{{% if file_blocks %}}{FILE_MEMORY_EXISTS_MESSAGE}\n{{% else %}}{FILE_MEMORY_EMPTY_MESSAGE}{{% endif %}}"
-            "{% for block in file_blocks %}"
-            f"<file status=\"{{{{ '{FileStatus.open.value}' if block.value else '{FileStatus.closed.value}' }}}}\">\n"
-            "<{{ block.label }}>\n"
-            "{% if block.description %}"
-            "<description>\n"
-            "{{ block.description }}\n"
-            "</description>\n"
-            "{% endif %}"
-            "<metadata>"
-            "{% if block.read_only %}\n- read_only=true{% endif %}\n"
-            "- chars_current={{ block.value|length }}\n"
-            "- chars_limit={{ block.limit }}\n"
-            "</metadata>\n"
-            "{% if block.value %}"
-            "<value>\n"
-            "{{ block.value }}\n"
-            "</value>\n"
-            "{% endif %}"
-            "</{{ block.label }}>\n"
-            "</file>\n"
-            "{% if not loop.last %}\n{% endif %}"
-            "{% endfor %}"
-            "\n</files>"
-        )
+    """Deprecated. Templates are not used anymore; fast renderer handles formatting."""
+    return ""
