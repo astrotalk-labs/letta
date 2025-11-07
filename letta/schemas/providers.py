@@ -27,8 +27,10 @@ class Provider(ProviderBase):
     name: str = Field(..., description="The name of the provider")
     provider_type: ProviderType = Field(..., description="The type of the provider")
     provider_category: ProviderCategory = Field(..., description="The category of the provider (base or byok)")
-    api_key: Optional[str] = Field(None, description="API key used for requests to the provider.")
+    api_key: Optional[str] = Field(None, description="API key or secret key used for requests to the provider.")
     base_url: Optional[str] = Field(None, description="Base URL for the provider.")
+    access_key: Optional[str] = Field(None, description="Access key used for requests to the provider.")
+    region: Optional[str] = Field(None, description="Region used for requests to the provider.")
     organization_id: Optional[str] = Field(None, description="The organization id of the user")
     updated_at: Optional[datetime] = Field(None, description="The last update timestamp of the provider.")
 
@@ -95,8 +97,8 @@ class Provider(ProviderBase):
                 return OpenAIProvider(**self.model_dump(exclude_none=True))
             case ProviderType.anthropic:
                 return AnthropicProvider(**self.model_dump(exclude_none=True))
-            case ProviderType.anthropic_bedrock:
-                return AnthropicBedrockProvider(**self.model_dump(exclude_none=True))
+            case ProviderType.bedrock:
+                return BedrockProvider(**self.model_dump(exclude_none=True))
             case ProviderType.ollama:
                 return OllamaProvider(**self.model_dump(exclude_none=True))
             case ProviderType.google_ai:
@@ -122,16 +124,22 @@ class Provider(ProviderBase):
 class ProviderCreate(ProviderBase):
     name: str = Field(..., description="The name of the provider.")
     provider_type: ProviderType = Field(..., description="The type of the provider.")
-    api_key: str = Field(..., description="API key used for requests to the provider.")
+    api_key: str = Field(..., description="API key or secret key used for requests to the provider.")
+    access_key: Optional[str] = Field(None, description="Access key used for requests to the provider.")
+    region: Optional[str] = Field(None, description="Region used for requests to the provider.")
 
 
 class ProviderUpdate(ProviderBase):
-    api_key: str = Field(..., description="API key used for requests to the provider.")
+    api_key: str = Field(..., description="API key or secret key used for requests to the provider.")
+    access_key: Optional[str] = Field(None, description="Access key used for requests to the provider.")
+    region: Optional[str] = Field(None, description="Region used for requests to the provider.")
 
 
 class ProviderCheck(BaseModel):
     provider_type: ProviderType = Field(..., description="The type of the provider.")
-    api_key: str = Field(..., description="API key used for requests to the provider.")
+    api_key: str = Field(..., description="API key or secret key used for requests to the provider.")
+    access_key: Optional[str] = Field(None, description="Access key used for requests to the provider.")
+    region: Optional[str] = Field(None, description="Region used for requests to the provider.")
 
 
 class LettaProvider(Provider):
@@ -144,7 +152,7 @@ class LettaProvider(Provider):
                 model="letta-free",  # NOTE: renamed
                 model_endpoint_type="openai",
                 model_endpoint=LETTA_MODEL_ENDPOINT,
-                context_window=8192,
+                context_window=30000,
                 handle=self.get_handle("letta-free"),
                 provider_name=self.name,
                 provider_category=self.provider_category,
@@ -157,7 +165,7 @@ class LettaProvider(Provider):
                 model="letta-free",  # NOTE: renamed
                 model_endpoint_type="openai",
                 model_endpoint=LETTA_MODEL_ENDPOINT,
-                context_window=8192,
+                context_window=30000,
                 handle=self.get_handle("letta-free"),
                 provider_name=self.name,
                 provider_category=self.provider_category,
@@ -1324,6 +1332,8 @@ class GoogleVertexProvider(Provider):
         from letta.llm_api.google_constants import GOOGLE_MODEL_TO_CONTEXT_LENGTH
 
         configs = []
+
+        # Gemini models (existing functionality)
         for model, context_length in GOOGLE_MODEL_TO_CONTEXT_LENGTH.items():
             configs.append(
                 LLMConfig(
@@ -1337,6 +1347,30 @@ class GoogleVertexProvider(Provider):
                     provider_category=self.provider_category,
                 )
             )
+
+        # Claude models on Vertex AI
+        claude_models = {
+            "claude-sonnet-4-5@20250929": 200000,
+            "claude-3-5-sonnet-v2@20241022": 200000,
+            "claude-3-opus@20240229": 200000,
+            "claude-3-sonnet@20240229": 200000,
+            "claude-3-haiku@20240307": 200000,
+        }
+
+        for model, context_length in claude_models.items():
+            configs.append(
+                LLMConfig(
+                    model=model,
+                    model_endpoint_type="anthropic_vertex",
+                    model_endpoint="https://aiplatform.googleapis.com",
+                    context_window=context_length,
+                    handle=self.get_handle(model),
+                    max_tokens=8192,
+                    provider_name=self.name,
+                    provider_category=self.provider_category,
+                )
+            )
+
         return configs
 
     def list_embedding_models(self) -> List[EmbeddingConfig]:
@@ -1355,7 +1389,6 @@ class GoogleVertexProvider(Provider):
                 )
             )
         return configs
-
 
 class AzureProvider(Provider):
     provider_type: Literal[ProviderType.azure] = Field(ProviderType.azure, description="The type of the provider.")
@@ -1505,15 +1538,15 @@ class CohereProvider(OpenAIProvider):
     pass
 
 
-class AnthropicBedrockProvider(Provider):
+class BedrockProvider(Provider):
     provider_type: Literal[ProviderType.bedrock] = Field(ProviderType.bedrock, description="The type of the provider.")
     provider_category: ProviderCategory = Field(ProviderCategory.base, description="The category of the provider (base or byok)")
-    aws_region: str = Field(..., description="AWS region for Bedrock")
+    region: str = Field(..., description="AWS region for Bedrock")
 
     def list_llm_models(self):
         from letta.llm_api.aws_bedrock import bedrock_get_model_list
 
-        models = bedrock_get_model_list(self.aws_region)
+        models = bedrock_get_model_list(self.region)
 
         configs = []
         for model_summary in models:
@@ -1531,6 +1564,32 @@ class AnthropicBedrockProvider(Provider):
             )
         return configs
 
+    async def list_llm_models_async(self) -> List[LLMConfig]:
+        from letta.llm_api.aws_bedrock import bedrock_get_model_list_async
+
+        models = await bedrock_get_model_list_async(
+            self.access_key,
+            self.api_key,
+            self.region,
+        )
+
+        configs = []
+        for model_summary in models:
+            model_arn = model_summary["inferenceProfileArn"]
+            configs.append(
+                LLMConfig(
+                    model=model_arn,
+                    model_endpoint_type=self.provider_type.value,
+                    model_endpoint=None,
+                    context_window=self.get_model_context_window(model_arn),
+                    handle=self.get_handle(model_arn),
+                    provider_name=self.name,
+                    provider_category=self.provider_category,
+                )
+            )
+
+        return configs
+
     def list_embedding_models(self):
         return []
 
@@ -1540,7 +1599,7 @@ class AnthropicBedrockProvider(Provider):
 
         return bedrock_get_model_context_window(model_name)
 
-    def get_handle(self, model_name: str) -> str:
+    def get_handle(self, model_name: str, is_embedding: bool = False, base_name: Optional[str] = None) -> str:
         print(model_name)
         model = model_name.split(".")[-1]
-        return f"bedrock/{model}"
+        return f"{self.name}/{model}"

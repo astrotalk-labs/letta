@@ -1,12 +1,15 @@
+import json
 import uuid
 import xml.etree.ElementTree as ET
 from typing import List, Optional, Tuple
 
+from letta.helpers import ToolRulesSolver
 from letta.schemas.agent import AgentState
 from letta.schemas.letta_message import MessageType
 from letta.schemas.letta_response import LettaResponse
 from letta.schemas.letta_stop_reason import LettaStopReason, StopReasonType
 from letta.schemas.message import Message, MessageCreate
+from letta.schemas.tool_execution_result import ToolExecutionResult
 from letta.schemas.usage import LettaUsageStatistics
 from letta.schemas.user import User
 from letta.server.rest_api.utils import create_input_messages
@@ -69,7 +72,8 @@ def _prepare_in_context_messages(
 
     # Create a new user message from the input and store it
     new_in_context_messages = message_manager.create_many_messages(
-        create_input_messages(input_messages=input_messages, agent_id=agent_state.id, actor=actor), actor=actor
+        create_input_messages(input_messages=input_messages, agent_id=agent_state.id, timezone=agent_state.timezone, actor=actor),
+        actor=actor,
     )
 
     return current_in_context_messages, new_in_context_messages
@@ -106,7 +110,8 @@ async def _prepare_in_context_messages_async(
 
     # Create a new user message from the input and store it
     new_in_context_messages = await message_manager.create_many_messages_async(
-        create_input_messages(input_messages=input_messages, agent_id=agent_state.id, actor=actor), actor=actor
+        create_input_messages(input_messages=input_messages, agent_id=agent_state.id, timezone=agent_state.timezone, actor=actor),
+        actor=actor,
     )
 
     return current_in_context_messages, new_in_context_messages
@@ -141,7 +146,9 @@ async def _prepare_in_context_messages_no_persist_async(
         current_in_context_messages = await message_manager.get_messages_by_ids_async(message_ids=agent_state.message_ids, actor=actor)
 
     # Create a new user message from the input but dont store it yet
-    new_in_context_messages = create_input_messages(input_messages=input_messages, agent_id=agent_state.id, actor=actor)
+    new_in_context_messages = create_input_messages(
+        input_messages=input_messages, agent_id=agent_state.id, timezone=agent_state.timezone, actor=actor
+    )
 
     return current_in_context_messages, new_in_context_messages
 
@@ -201,3 +208,32 @@ def deserialize_message_history(xml_str: str) -> Tuple[List[str], str]:
 
 def generate_step_id():
     return f"step-{uuid.uuid4()}"
+
+
+def _safe_load_tool_call_str(tool_call_args_str: str) -> dict:
+    """Lenient JSON → dict with fallback to eval on assertion failure."""
+    # Temp hack to gracefully handle parallel tool calling attempt, only take first one
+    if "}{" in tool_call_args_str:
+        tool_call_args_str = tool_call_args_str.split("}{", 1)[0] + "}"
+
+    try:
+        tool_args = json.loads(tool_call_args_str)
+        if not isinstance(tool_args, dict):
+            # Load it again - this is due to sometimes Anthropic returning weird json @caren
+            tool_args = json.loads(tool_args)
+    except json.JSONDecodeError:
+        tool_args = {}
+
+    return tool_args
+
+
+def _pop_heartbeat(tool_args: dict) -> bool:
+    hb = tool_args.pop("request_heartbeat", False)
+    return str(hb).lower() == "true" if isinstance(hb, str) else bool(hb)
+
+
+def _build_rule_violation_result(tool_name: str, valid: list[str], solver: ToolRulesSolver) -> ToolExecutionResult:
+    hint_lines = solver.guess_rule_violation(tool_name)
+    hint_txt = ("\n** Hint: Possible rules that were violated:\n" + "\n".join(f"\t- {h}" for h in hint_lines)) if hint_lines else ""
+    msg = f"[ToolConstraintError] Cannot call {tool_name}, " f"valid tools include: {valid}.{hint_txt}"
+    return ToolExecutionResult(status="error", func_return=msg)

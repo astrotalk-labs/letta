@@ -17,6 +17,7 @@ from letta.errors import (
     LLMPermissionDeniedError,
     LLMRateLimitError,
     LLMServerError,
+    LLMTimeoutError,
     LLMUnprocessableEntityError,
 )
 from letta.llm_api.helpers import add_inner_thoughts_to_functions, convert_to_structured_output, unpack_all_inner_thoughts_from_kwargs
@@ -53,7 +54,7 @@ def accepts_developer_role(model: str) -> bool:
 
     See: https://community.openai.com/t/developer-role-not-accepted-for-o1-o1-mini-o3-mini/1110750/7
     """
-    if is_openai_reasoning_model(model):
+    if is_openai_reasoning_model(model) and not "o1-mini" in model or "o1-preview" in model:
         return True
     else:
         return False
@@ -317,6 +318,18 @@ class OpenAIClient(LLMClientBase):
         """
         Maps OpenAI-specific errors to common LLMError types.
         """
+        if isinstance(e, openai.APITimeoutError):
+            timeout_duration = getattr(e, "timeout", "unknown")
+            logger.warning(f"[OpenAI] Request timeout after {timeout_duration} seconds: {e}")
+            return LLMTimeoutError(
+                message=f"Request to OpenAI timed out: {str(e)}",
+                code=ErrorCode.TIMEOUT,
+                details={
+                    "timeout_duration": timeout_duration,
+                    "cause": str(e.__cause__) if e.__cause__ else None,
+                },
+            )
+
         if isinstance(e, openai.APIConnectionError):
             logger.warning(f"[OpenAI] API connection error: {e}")
             return LLMConnectionError(

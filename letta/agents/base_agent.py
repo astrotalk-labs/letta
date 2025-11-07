@@ -50,7 +50,9 @@ class BaseAgent(ABC):
         self.logger = get_logger(agent_id)
 
     @abstractmethod
-    async def step(self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS) -> LettaResponse:
+    async def step(
+        self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS, run_id: Optional[str] = None
+    ) -> LettaResponse:
         """
         Main execution loop for the agent.
         """
@@ -118,6 +120,7 @@ class BaseAgent(ABC):
                 system_prompt=agent_state.system,
                 in_context_memory=agent_state.memory,
                 in_context_memory_last_edit=memory_edit_timestamp,
+                timezone=agent_state.timezone,
                 previous_message_count=num_messages - len(in_context_messages),
                 archival_memory_size=num_archival_memories,
                 tool_rules_solver=tool_rules_solver,

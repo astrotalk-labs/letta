@@ -49,6 +49,11 @@ def handle_db_timeout(func):
         return async_wrapper
 
 
+def is_postgresql_session(session: Session) -> bool:
+    """Check if the database session is PostgreSQL instead of SQLite for setting query options."""
+    return session.bind.dialect.name == "postgresql"
+
+
 class AccessType(str, Enum):
     ORGANIZATION = "organization"
     USER = "user"
@@ -178,6 +183,7 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         identifier_keys: Optional[List[str]] = None,
         identity_id: Optional[str] = None,
         query_options: Sequence[ORMOption] | None = None,  # ← new
+        has_feedback: Optional[bool] = None,
         **kwargs,
     ) -> List["SqlalchemyBase"]:
         """
@@ -237,6 +243,7 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
             join_conditions=join_conditions,
             identifier_keys=identifier_keys,
             identity_id=identity_id,
+            has_feedback=has_feedback,
             **kwargs,
         )
         if query_options:
@@ -276,6 +283,7 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         identifier_keys: Optional[List[str]] = None,
         identity_id: Optional[str] = None,
         check_is_deleted: bool = False,
+        has_feedback: Optional[bool] = None,
         **kwargs,
     ):
         """
@@ -331,6 +339,13 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
             query = query.filter(cls.created_at > start_date)
         if end_date:
             query = query.filter(cls.created_at < end_date)
+
+        # Feedback filtering
+        if has_feedback is not None and hasattr(cls, "feedback"):
+            if has_feedback:
+                query = query.filter(cls.feedback.isnot(None))
+            else:
+                query = query.filter(cls.feedback.is_(None))
 
         # Handle pagination based on before/after
         if before_obj or after_obj:
@@ -490,20 +505,17 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         Raises:
             NoResultFound: if the object is not found
         """
-        from letta.settings import settings
-
         identifiers = [] if identifier is None else [identifier]
         query, query_conditions = cls._read_multiple_preprocess(identifiers, actor, access, access_type, check_is_deleted, **kwargs)
         if query is None:
             raise NoResultFound(f"{cls.__name__} not found with identifier {identifier}")
-
-        if settings.letta_pg_uri_no_default:
+        if is_postgresql_session(db_session):
             await db_session.execute(text("SET LOCAL enable_seqscan = OFF"))
         try:
             result = await db_session.execute(query)
             item = result.scalar_one_or_none()
         finally:
-            if settings.letta_pg_uri_no_default:
+            if is_postgresql_session(db_session):
                 await db_session.execute(text("SET LOCAL enable_seqscan = ON"))
 
         if item is None:
