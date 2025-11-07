@@ -2,20 +2,24 @@ from typing import List, Optional, Tuple
 
 import httpx
 from google import genai
+from google.genai.types import HttpOptions
 
 from letta.errors import ErrorCode, LLMAuthenticationError, LLMError
 from letta.llm_api.google_constants import GOOGLE_MODEL_FOR_API_KEY_CHECK
 from letta.llm_api.google_vertex_client import GoogleVertexClient
 from letta.log import get_logger
-from letta.settings import model_settings
+from letta.settings import model_settings, settings
 
 logger = get_logger(__name__)
 
 
 class GoogleAIClient(GoogleVertexClient):
-
     def _get_client(self):
-        return genai.Client(api_key=model_settings.gemini_api_key)
+        timeout_ms = int(settings.llm_request_timeout_seconds * 1000)
+        return genai.Client(
+            api_key=model_settings.gemini_api_key,
+            http_options=HttpOptions(timeout=timeout_ms),
+        )
 
 
 def get_gemini_endpoint_and_headers(
@@ -62,44 +66,6 @@ def google_ai_check_valid_api_key(api_key: str):
         raise LLMError(message=f"{e}", code=ErrorCode.INTERNAL_SERVER_ERROR)
 
 
-def google_ai_get_model_list(base_url: str, api_key: str, key_in_header: bool = True) -> List[dict]:
-    """Synchronous version to get model list from Google AI API using httpx."""
-    import httpx
-
-    from letta.utils import printd
-
-    url, headers = get_gemini_endpoint_and_headers(base_url, None, api_key, key_in_header)
-
-    try:
-        with httpx.Client() as client:
-            response = client.get(url, headers=headers)
-            response.raise_for_status()  # Raises HTTPStatusError for 4XX/5XX status
-            response_data = response.json()  # convert to dict from string
-
-            # Grab the models out
-            model_list = response_data["models"]
-            return model_list
-
-    except httpx.HTTPStatusError as http_err:
-        # Handle HTTP errors (e.g., response 4XX, 5XX)
-        printd(f"Got HTTPError, exception={http_err}")
-        # Print the HTTP status code
-        print(f"HTTP Error: {http_err.response.status_code}")
-        # Print the response content (error message from server)
-        print(f"Message: {http_err.response.text}")
-        raise http_err
-
-    except httpx.RequestError as req_err:
-        # Handle other httpx-related errors (e.g., connection error)
-        printd(f"Got RequestException, exception={req_err}")
-        raise req_err
-
-    except Exception as e:
-        # Handle other potential errors
-        printd(f"Got unknown Exception, exception={e}")
-        raise e
-
-
 async def google_ai_get_model_list_async(
     base_url: str, api_key: str, key_in_header: bool = True, client: Optional[httpx.AsyncClient] = None
 ) -> List[dict]:
@@ -126,10 +92,7 @@ async def google_ai_get_model_list_async(
     except httpx.HTTPStatusError as http_err:
         # Handle HTTP errors (e.g., response 4XX, 5XX)
         printd(f"Got HTTPError, exception={http_err}")
-        # Print the HTTP status code
-        print(f"HTTP Error: {http_err.response.status_code}")
-        # Print the response content (error message from server)
-        print(f"Message: {http_err.response.text}")
+        logger.error(f"HTTP Error: {http_err.response.status_code}, Message: {http_err.response.text}")
         raise http_err
 
     except httpx.RequestError as req_err:
@@ -170,10 +133,7 @@ def google_ai_get_model_details(base_url: str, api_key: str, model: str, key_in_
     except httpx.HTTPStatusError as http_err:
         # Handle HTTP errors (e.g., response 4XX, 5XX)
         printd(f"Got HTTPError, exception={http_err}")
-        # Print the HTTP status code
-        print(f"HTTP Error: {http_err.response.status_code}")
-        # Print the response content (error message from server)
-        print(f"Message: {http_err.response.text}")
+        logger.error(f"HTTP Error: {http_err.response.status_code}, Message: {http_err.response.text}")
         raise http_err
 
     except httpx.RequestError as req_err:
@@ -216,10 +176,7 @@ async def google_ai_get_model_details_async(
     except httpx.HTTPStatusError as http_err:
         # Handle HTTP errors (e.g., response 4XX, 5XX)
         printd(f"Got HTTPError, exception={http_err}")
-        # Print the HTTP status code
-        print(f"HTTP Error: {http_err.response.status_code}")
-        # Print the response content (error message from server)
-        print(f"Message: {http_err.response.text}")
+        logger.error(f"HTTP Error: {http_err.response.status_code}, Message: {http_err.response.text}")
         raise http_err
 
     except httpx.RequestError as req_err:

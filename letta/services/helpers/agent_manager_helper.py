@@ -1,39 +1,58 @@
-import datetime
-from typing import List, Literal, Optional
+import uuid
+from datetime import datetime
+from typing import List, Literal, Optional, Set
+
+from letta.log import get_logger
+
+logger = get_logger(__name__)
 
 import numpy as np
-from sqlalchemy import Select, and_, asc, desc, func, literal, or_, select, union_all
+from sqlalchemy import Select, and_, asc, desc, func, literal, nulls_last, or_, select, union_all
+from sqlalchemy.orm import noload
 from sqlalchemy.sql.expression import exists
 
 from letta import system
-from letta.constants import IN_CONTEXT_MEMORY_KEYWORD, MAX_EMBEDDING_DIM, STRUCTURED_OUTPUT_MODELS
-from letta.embeddings import embedding_model
+from letta.constants import (
+    BASE_MEMORY_TOOLS,
+    BASE_MEMORY_TOOLS_V2,
+    BASE_TOOLS,
+    DEPRECATED_LETTA_TOOLS,
+    IN_CONTEXT_MEMORY_KEYWORD,
+    LOCAL_ONLY_MULTI_AGENT_TOOLS,
+    MAX_EMBEDDING_DIM,
+    MULTI_AGENT_TOOLS,
+    STRUCTURED_OUTPUT_MODELS,
+)
+from letta.errors import LettaAgentNotFoundError
 from letta.helpers import ToolRulesSolver
-from letta.helpers.datetime_helpers import get_local_time, get_local_time_fast
-from letta.orm import AgentPassage, SourcePassage, SourcesAgents
+from letta.helpers.datetime_helpers import get_local_time
+from letta.llm_api.llm_client import LLMClient
 from letta.orm.agent import Agent as AgentModel
 from letta.orm.agents_tags import AgentsTags
+from letta.orm.archives_agents import ArchivesAgents
 from letta.orm.errors import NoResultFound
 from letta.orm.identity import Identity
-from letta.orm.sqlite_functions import adapt_array
+from letta.orm.passage import ArchivalPassage, SourcePassage
+from letta.orm.sources_agents import SourcesAgents
 from letta.otel.tracing import trace_method
 from letta.prompts import gpt_system
-from letta.schemas.agent import AgentState, AgentType
+from letta.prompts.prompt_generator import PromptGenerator
+from letta.schemas.agent import AgentState
 from letta.schemas.embedding_config import EmbeddingConfig
-from letta.schemas.enums import MessageRole
+from letta.schemas.enums import AgentType, MessageRole
 from letta.schemas.letta_message_content import TextContent
 from letta.schemas.memory import Memory
-from letta.schemas.message import Message, MessageCreate
+from letta.schemas.message import Message, MessageCreate, ToolReturn
 from letta.schemas.tool_rule import ToolRule
 from letta.schemas.user import User
-from letta.settings import settings
+from letta.settings import DatabaseChoice, settings
 from letta.system import get_initial_boot_messages, get_login_event, package_function_response
 
 
 # Static methods
 @trace_method
 def _process_relationship(
-    session, agent: AgentModel, relationship_name: str, model_class, item_ids: List[str], allow_partial=False, replace=True
+    session, agent: "AgentModel", relationship_name: str, model_class, item_ids: List[str], allow_partial=False, replace=True
 ):
     """
     Generalized function to handle relationships like tools, sources, and blocks using item IDs.
@@ -76,7 +95,7 @@ def _process_relationship(
 
 @trace_method
 async def _process_relationship_async(
-    session, agent: AgentModel, relationship_name: str, model_class, item_ids: List[str], allow_partial=False, replace=True
+    session, agent: "AgentModel", relationship_name: str, model_class, item_ids: List[str], allow_partial=False, replace=True
 ):
     """
     Generalized function to handle relationships like tools, sources, and blocks using item IDs.
@@ -118,7 +137,7 @@ async def _process_relationship_async(
         current_relationship.extend(new_items)
 
 
-def _process_tags(agent: AgentModel, tags: List[str], replace=True):
+def _process_tags(agent: "AgentModel", tags: List[str], replace=True):
     """
     Handles tags for an agent.
 
@@ -141,7 +160,25 @@ def _process_tags(agent: AgentModel, tags: List[str], replace=True):
         agent.tags.extend([tag for tag in new_tags if tag.tag not in existing_tags])
 
 
-def derive_system_message(agent_type: AgentType, enable_sleeptime: Optional[bool] = None, system: Optional[str] = None):
+def derive_system_message(agent_type: AgentType, enable_sleeptime: Optional[bool] = None, system: Optional[str] = None) -> str:
+    """
+    Derive the appropriate system message based on agent type and configuration.
+
+    This function determines which system prompt template to use based on the
+    agent's type and whether sleeptime functionality is enabled. If a custom
+    system message is provided, it returns that instead.
+
+    Args:
+        agent_type: The type of agent (e.g., memgpt_agent, sleeptime_agent, react_agent)
+        enable_sleeptime: Whether sleeptime tools should be available (affects prompt choice)
+        system: Optional custom system message to use instead of defaults
+
+    Returns:
+        The system message string appropriate for the agent configuration
+
+    Raises:
+        ValueError: If an invalid or unsupported agent type is provided
+    """
     if system is None:
         # TODO: don't hardcode
 
@@ -170,33 +207,22 @@ def derive_system_message(agent_type: AgentType, enable_sleeptime: Optional[bool
             # v2 drops references to specific blocks, and instead relies on the block description injections
             system = gpt_system.get_system_text("sleeptime_v2")
 
+        # ReAct
+        elif agent_type == AgentType.react_agent:
+            system = gpt_system.get_system_text("react")
+
+        # Letta v1
+        elif agent_type == AgentType.letta_v1_agent:
+            system = gpt_system.get_system_text("letta_v1")
+
+        # Workflow
+        elif agent_type == AgentType.workflow_agent:
+            system = gpt_system.get_system_text("workflow")
+
         else:
             raise ValueError(f"Invalid agent type: {agent_type}")
 
     return system
-
-
-# TODO: This code is kind of wonky and deserves a rewrite
-def compile_memory_metadata_block(
-    memory_edit_timestamp: datetime.datetime,
-    previous_message_count: int = 0,
-    archival_memory_size: int = 0,
-) -> str:
-    # Put the timestamp in the local timezone (mimicking get_local_time())
-    timestamp_str = memory_edit_timestamp.astimezone().strftime("%Y-%m-%d %I:%M:%S %p %Z%z").strip()
-
-    # Create a metadata block of info so the agent knows about the metadata of out-of-context memories
-    memory_metadata_block = "\n".join(
-        [
-            "<memory_metadata>",
-            f"- The current time is: {get_local_time_fast()}",
-            f"- Memory blocks were last modified: {timestamp_str}",
-            f"- {previous_message_count} previous messages between you and the user are stored in recall memory (use tools to access them)",
-            f"- {archival_memory_size} total memories you created are stored in archival memory (use tools to access them)",
-            "</memory_metadata>",
-        ]
-    )
-    return memory_metadata_block
 
 
 class PreserveMapping(dict):
@@ -220,16 +246,21 @@ def safe_format(template: str, variables: dict) -> str:
     return escaped.format_map(PreserveMapping(variables))
 
 
+@trace_method
 def compile_system_message(
     system_prompt: str,
     in_context_memory: Memory,
-    in_context_memory_last_edit: datetime.datetime,  # TODO move this inside of BaseMemory?
+    in_context_memory_last_edit: datetime,  # TODO move this inside of BaseMemory?
+    timezone: str,
     user_defined_variables: Optional[dict] = None,
     append_icm_if_missing: bool = True,
-    template_format: Literal["f-string", "mustache", "jinja2"] = "f-string",
+    template_format: Literal["f-string", "mustache"] = "f-string",
     previous_message_count: int = 0,
-    archival_memory_size: int = 0,
+    archival_memory_size: int | None = 0,
     tool_rules_solver: Optional[ToolRulesSolver] = None,
+    sources: Optional[List] = None,
+    max_files_open: Optional[int] = None,
+    llm_config: Optional[object] = None,
 ) -> str:
     """Prepare the final/full system message that will be fed into the LLM API
 
@@ -238,11 +269,11 @@ def compile_system_message(
     The following are reserved variables:
       - CORE_MEMORY: the in-context memory of the LLM
     """
+
     # Add tool rule constraints if available
+    tool_constraint_block = None
     if tool_rules_solver is not None:
         tool_constraint_block = tool_rules_solver.compile_tool_rule_prompts()
-        if tool_constraint_block:  # There may not be any depending on if there are tool rules attached
-            in_context_memory.blocks.append(tool_constraint_block)
 
     if user_defined_variables is not None:
         # TODO eventually support the user defining their own variables to inject
@@ -255,23 +286,29 @@ def compile_system_message(
         raise ValueError(f"Found protected variable '{IN_CONTEXT_MEMORY_KEYWORD}' in user-defined vars: {str(user_defined_variables)}")
     else:
         # TODO should this all put into the memory.__repr__ function?
-        memory_metadata_string = compile_memory_metadata_block(
+        memory_metadata_string = PromptGenerator.compile_memory_metadata_block(
             memory_edit_timestamp=in_context_memory_last_edit,
             previous_message_count=previous_message_count,
-            archival_memory_size=archival_memory_size,
+            archival_memory_size=archival_memory_size or 0,
+            timezone=timezone,
         )
-        full_memory_string = in_context_memory.compile() + "\n\n" + memory_metadata_string
+
+        memory_with_sources = in_context_memory.compile(
+            tool_usage_rules=tool_constraint_block, sources=sources, max_files_open=max_files_open, llm_config=llm_config
+        )
+        full_memory_string = memory_with_sources + "\n\n" + memory_metadata_string
 
         # Add to the variables list to inject
         variables[IN_CONTEXT_MEMORY_KEYWORD] = full_memory_string
 
     if template_format == "f-string":
         memory_variable_string = "{" + IN_CONTEXT_MEMORY_KEYWORD + "}"
+
         # Catch the special case where the system prompt is unformatted
         if append_icm_if_missing:
             if memory_variable_string not in system_prompt:
                 # In this case, append it to the end to make sure memory is still injected
-                # warnings.warn(f"{IN_CONTEXT_MEMORY_KEYWORD} variable was missing from system prompt, appending instead")
+                # logger.warning(f"{IN_CONTEXT_MEMORY_KEYWORD} variable was missing from system prompt, appending instead")
                 system_prompt += "\n\n" + memory_variable_string
 
         # render the variables using the built-in templater
@@ -284,15 +321,16 @@ def compile_system_message(
             raise ValueError(f"Failed to format system prompt - {str(e)}. System prompt value:\n{system_prompt}")
 
     else:
-        # TODO support for mustache and jinja2
+        # TODO support for mustache
         raise NotImplementedError(template_format)
 
     return formatted_prompt
 
 
+@trace_method
 def initialize_message_sequence(
     agent_state: AgentState,
-    memory_edit_timestamp: Optional[datetime.datetime] = None,
+    memory_edit_timestamp: Optional[datetime] = None,
     include_initial_boot_message: bool = True,
     previous_message_count: int = 0,
     archival_memory_size: int = 0,
@@ -304,29 +342,121 @@ def initialize_message_sequence(
         system_prompt=agent_state.system,
         in_context_memory=agent_state.memory,
         in_context_memory_last_edit=memory_edit_timestamp,
+        timezone=agent_state.timezone,
         user_defined_variables=None,
         append_icm_if_missing=True,
         previous_message_count=previous_message_count,
         archival_memory_size=archival_memory_size,
+        sources=agent_state.sources,
+        max_files_open=agent_state.max_files_open,
     )
-    first_user_message = get_login_event()  # event letting Letta know the user just logged in
+    first_user_message = get_login_event(agent_state.timezone)  # event letting Letta know the user just logged in
 
     if include_initial_boot_message:
+        llm_config = agent_state.llm_config
+        uuid_str = str(uuid.uuid4())
+
+        # Some LMStudio models (e.g. ministral) require the tool call ID to be 9 alphanumeric characters
+        tool_call_id = uuid_str[:9] if llm_config.provider_name == "lmstudio_openai" else uuid_str
+
         if agent_state.agent_type == AgentType.sleeptime_agent:
             initial_boot_messages = []
-        elif agent_state.llm_config.model is not None and "gpt-3.5" in agent_state.llm_config.model:
-            initial_boot_messages = get_initial_boot_messages("startup_with_send_message_gpt35")
+        elif llm_config.model is not None and "gpt-3.5" in llm_config.model:
+            initial_boot_messages = get_initial_boot_messages("startup_with_send_message_gpt35", agent_state.timezone, tool_call_id)
         else:
-            initial_boot_messages = get_initial_boot_messages("startup_with_send_message")
-        messages = (
-            [
-                {"role": "system", "content": full_system_message},
-            ]
-            + initial_boot_messages
-            + [
-                {"role": "user", "content": first_user_message},
-            ]
-        )
+            initial_boot_messages = get_initial_boot_messages("startup_with_send_message", agent_state.timezone, tool_call_id)
+
+        # Some LMStudio models (e.g. meta-llama-3.1) require the user message before any tool calls
+        if llm_config.provider_name == "lmstudio_openai":
+            messages = (
+                [
+                    {"role": "system", "content": full_system_message},
+                ]
+                + [
+                    {"role": "user", "content": first_user_message},
+                ]
+                + initial_boot_messages
+            )
+        else:
+            messages = (
+                [
+                    {"role": "system", "content": full_system_message},
+                ]
+                + initial_boot_messages
+                + [
+                    {"role": "user", "content": first_user_message},
+                ]
+            )
+
+    else:
+        messages = [
+            {"role": "system", "content": full_system_message},
+            {"role": "user", "content": first_user_message},
+        ]
+
+    return messages
+
+
+@trace_method
+async def initialize_message_sequence_async(
+    agent_state: AgentState,
+    memory_edit_timestamp: Optional[datetime] = None,
+    include_initial_boot_message: bool = True,
+    previous_message_count: int = 0,
+    archival_memory_size: int = 0,
+) -> List[dict]:
+    if memory_edit_timestamp is None:
+        memory_edit_timestamp = get_local_time()
+
+    full_system_message = await PromptGenerator.compile_system_message_async(
+        system_prompt=agent_state.system,
+        in_context_memory=agent_state.memory,
+        in_context_memory_last_edit=memory_edit_timestamp,
+        timezone=agent_state.timezone,
+        user_defined_variables=None,
+        append_icm_if_missing=True,
+        previous_message_count=previous_message_count,
+        archival_memory_size=archival_memory_size,
+        sources=agent_state.sources,
+        max_files_open=agent_state.max_files_open,
+    )
+    first_user_message = get_login_event(agent_state.timezone)  # event letting Letta know the user just logged in
+
+    if include_initial_boot_message:
+        llm_config = agent_state.llm_config
+        uuid_str = str(uuid.uuid4())
+
+        # Some LMStudio models (e.g. ministral) require the tool call ID to be 9 alphanumeric characters
+        tool_call_id = uuid_str[:9] if llm_config.provider_name == "lmstudio_openai" else uuid_str
+
+        if agent_state.agent_type == AgentType.sleeptime_agent or agent_state.agent_type == AgentType.letta_v1_agent:
+            initial_boot_messages = []
+        elif llm_config.model is not None and "gpt-3.5" in llm_config.model:
+            initial_boot_messages = get_initial_boot_messages("startup_with_send_message_gpt35", agent_state.timezone, tool_call_id)
+        else:
+            initial_boot_messages = get_initial_boot_messages("startup_with_send_message", agent_state.timezone, tool_call_id)
+
+        # Some LMStudio models (e.g. meta-llama-3.1) require the user message before any tool calls
+        if llm_config.provider_name == "lmstudio_openai":
+            messages = (
+                [
+                    {"role": "system", "content": full_system_message},
+                ]
+                + [
+                    {"role": "user", "content": first_user_message},
+                ]
+                + initial_boot_messages
+            )
+        else:
+            messages = (
+                [
+                    {"role": "system", "content": full_system_message},
+                ]
+                + initial_boot_messages
+                + [
+                    {"role": "user", "content": first_user_message},
+                ]
+            )
 
     else:
         messages = [
@@ -338,22 +468,21 @@ def initialize_message_sequence(
 
 
 def package_initial_message_sequence(
-    agent_id: str, initial_message_sequence: List[MessageCreate], model: str, actor: User
+    agent_id: str, initial_message_sequence: List[MessageCreate], model: str, timezone: str, actor: User
 ) -> List[Message]:
     # create the agent object
     init_messages = []
     for message_create in initial_message_sequence:
-
         if message_create.role == MessageRole.user:
             packed_message = system.package_user_message(
                 user_message=message_create.content,
+                timezone=timezone,
             )
             init_messages.append(
                 Message(
                     role=message_create.role,
                     content=[TextContent(text=packed_message)],
                     name=message_create.name,
-                    organization_id=actor.organization_id,
                     agent_id=agent_id,
                     model=model,
                 )
@@ -361,13 +490,13 @@ def package_initial_message_sequence(
         elif message_create.role == MessageRole.system:
             packed_message = system.package_system_message(
                 system_message=message_create.content,
+                timezone=timezone,
             )
             init_messages.append(
                 Message(
                     role=message_create.role,
                     content=[TextContent(text=packed_message)],
                     name=message_create.name,
-                    organization_id=actor.organization_id,
                     agent_id=agent_id,
                     model=model,
                 )
@@ -377,8 +506,10 @@ def package_initial_message_sequence(
             import json
             import uuid
 
-            from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall as OpenAIToolCall
-            from openai.types.chat.chat_completion_message_tool_call import Function as OpenAIFunction
+            from openai.types.chat.chat_completion_message_tool_call import (
+                ChatCompletionMessageToolCall as OpenAIToolCall,
+                Function as OpenAIFunction,
+            )
 
             from letta.constants import DEFAULT_MESSAGE_TOOL
 
@@ -388,7 +519,6 @@ def package_initial_message_sequence(
                     role=MessageRole.assistant,
                     content=None,
                     name=message_create.name,
-                    organization_id=actor.organization_id,
                     agent_id=agent_id,
                     model=model,
                     tool_calls=[
@@ -402,16 +532,22 @@ def package_initial_message_sequence(
             )
 
             # add tool return
-            function_response = package_function_response(True, "None")
+            function_response = package_function_response(True, "None", timezone)
             init_messages.append(
                 Message(
                     role=MessageRole.tool,
                     content=[TextContent(text=function_response)],
                     name=message_create.name,
-                    organization_id=actor.organization_id,
                     agent_id=agent_id,
                     model=model,
                     tool_call_id=tool_call_id,
+                    tool_returns=[
+                        ToolReturn(
+                            tool_call_id=tool_call_id,
+                            status="success",
+                            func_response=function_response,
+                        )
+                    ],
                 )
             )
         else:
@@ -430,60 +566,118 @@ def check_supports_structured_output(model: str, tool_rules: List[ToolRule]) -> 
         return True
 
 
-def _cursor_filter(created_at_col, id_col, ref_created_at, ref_id, forward: bool):
+def _cursor_filter(sort_col, id_col, ref_sort_col, ref_id, forward: bool, nulls_last: bool = False):
     """
     Returns a SQLAlchemy filter expression for cursor-based pagination.
 
     If `forward` is True, returns records after the reference.
     If `forward` is False, returns records before the reference.
+
+    Handles NULL values in the sort column properly when nulls_last is True.
     """
-    if forward:
-        return or_(
-            created_at_col > ref_created_at,
-            and_(created_at_col == ref_created_at, id_col > ref_id),
-        )
+    if not nulls_last:
+        # Simple case: no special NULL handling needed
+        if forward:
+            return or_(
+                sort_col > ref_sort_col,
+                and_(sort_col == ref_sort_col, id_col > ref_id),
+            )
+        else:
+            return or_(
+                sort_col < ref_sort_col,
+                and_(sort_col == ref_sort_col, id_col < ref_id),
+            )
+
+    # Handle nulls_last case
+    # TODO: add tests to check if this works for ascending order but nulls are stil last?
+    if ref_sort_col is None:
+        # Reference cursor is at a NULL value
+        if forward:
+            # Moving forward (e.g. previous) from NULL: either other NULLs with greater IDs or non-NULLs
+            return or_(and_(sort_col.is_(None), id_col > ref_id), sort_col.isnot(None))
+        else:
+            # Moving backward (e.g. next) from NULL: NULLs with smaller IDs
+            return and_(sort_col.is_(None), id_col < ref_id)
     else:
-        return or_(
-            created_at_col < ref_created_at,
-            and_(created_at_col == ref_created_at, id_col < ref_id),
-        )
+        # Reference cursor is at a non-NULL value
+        if forward:
+            # Moving forward (e.g. previous) from non-NULL: only greater non-NULL values
+            # (NULLs are at the end, so we don't include them when moving forward from non-NULL)
+            return and_(sort_col.isnot(None), or_(sort_col > ref_sort_col, and_(sort_col == ref_sort_col, id_col > ref_id)))
+        else:
+            # Moving backward (e.g. next) from non-NULL: smaller non-NULL values or NULLs
+            return or_(sort_col.is_(None), or_(sort_col < ref_sort_col, and_(sort_col == ref_sort_col, id_col < ref_id)))
 
 
-def _apply_pagination(query, before: Optional[str], after: Optional[str], session, ascending: bool = True) -> any:
+def _apply_pagination(
+    query, before: Optional[str], after: Optional[str], session, ascending: bool = True, sort_by: str = "created_at"
+) -> any:
+    # Determine the sort column
+    if sort_by == "last_run_completion":
+        sort_column = AgentModel.last_run_completion
+        sort_nulls_last = True  # TODO: handle this as a query param eventually
+    else:
+        sort_column = AgentModel.created_at
+        sort_nulls_last = False
+
     if after:
-        result = session.execute(select(AgentModel.created_at, AgentModel.id).where(AgentModel.id == after)).first()
+        result = session.execute(select(sort_column, AgentModel.id).where(AgentModel.id == after)).first()
         if result:
-            after_created_at, after_id = result
-            query = query.where(_cursor_filter(AgentModel.created_at, AgentModel.id, after_created_at, after_id, forward=ascending))
+            after_sort_value, after_id = result
+            query = query.where(
+                _cursor_filter(sort_column, AgentModel.id, after_sort_value, after_id, forward=ascending, nulls_last=sort_nulls_last)
+            )
 
     if before:
-        result = session.execute(select(AgentModel.created_at, AgentModel.id).where(AgentModel.id == before)).first()
+        result = session.execute(select(sort_column, AgentModel.id).where(AgentModel.id == before)).first()
         if result:
-            before_created_at, before_id = result
-            query = query.where(_cursor_filter(AgentModel.created_at, AgentModel.id, before_created_at, before_id, forward=not ascending))
+            before_sort_value, before_id = result
+            query = query.where(
+                _cursor_filter(sort_column, AgentModel.id, before_sort_value, before_id, forward=not ascending, nulls_last=sort_nulls_last)
+            )
 
     # Apply ordering
     order_fn = asc if ascending else desc
-    query = query.order_by(order_fn(AgentModel.created_at), order_fn(AgentModel.id))
+    query = query.order_by(nulls_last(order_fn(sort_column)) if sort_nulls_last else order_fn(sort_column), order_fn(AgentModel.id))
     return query
 
 
-async def _apply_pagination_async(query, before: Optional[str], after: Optional[str], session, ascending: bool = True) -> any:
+async def _apply_pagination_async(
+    query, before: Optional[str], after: Optional[str], session, ascending: bool = True, sort_by: str = "created_at"
+) -> any:
+    # Determine the sort column
+    if sort_by == "last_run_completion":
+        sort_column = AgentModel.last_run_completion
+        sort_nulls_last = True  # TODO: handle this as a query param eventually
+    else:
+        sort_column = AgentModel.created_at
+        sort_nulls_last = False
+
     if after:
-        result = (await session.execute(select(AgentModel.created_at, AgentModel.id).where(AgentModel.id == after))).first()
+        result = (await session.execute(select(sort_column, AgentModel.id).where(AgentModel.id == after))).first()
         if result:
-            after_created_at, after_id = result
-            query = query.where(_cursor_filter(AgentModel.created_at, AgentModel.id, after_created_at, after_id, forward=ascending))
+            after_sort_value, after_id = result
+            # SQLite does not support as granular timestamping, so we need to round the timestamp
+            if settings.database_engine is DatabaseChoice.SQLITE and isinstance(after_sort_value, datetime):
+                after_sort_value = after_sort_value.strftime("%Y-%m-%d %H:%M:%S")
+            query = query.where(
+                _cursor_filter(sort_column, AgentModel.id, after_sort_value, after_id, forward=ascending, nulls_last=sort_nulls_last)
+            )
 
     if before:
-        result = (await session.execute(select(AgentModel.created_at, AgentModel.id).where(AgentModel.id == before))).first()
+        result = (await session.execute(select(sort_column, AgentModel.id).where(AgentModel.id == before))).first()
         if result:
-            before_created_at, before_id = result
-            query = query.where(_cursor_filter(AgentModel.created_at, AgentModel.id, before_created_at, before_id, forward=not ascending))
+            before_sort_value, before_id = result
+            # SQLite does not support as granular timestamping, so we need to round the timestamp
+            if settings.database_engine is DatabaseChoice.SQLITE and isinstance(before_sort_value, datetime):
+                before_sort_value = before_sort_value.strftime("%Y-%m-%d %H:%M:%S")
+            query = query.where(
+                _cursor_filter(sort_column, AgentModel.id, before_sort_value, before_id, forward=not ascending, nulls_last=sort_nulls_last)
+            )
 
     # Apply ordering
     order_fn = asc if ascending else desc
-    query = query.order_by(order_fn(AgentModel.created_at), order_fn(AgentModel.id))
+    query = query.order_by(nulls_last(order_fn(sort_column)) if sort_nulls_last else order_fn(sort_column), order_fn(AgentModel.id))
     return query
 
 
@@ -567,7 +761,12 @@ def _apply_filters(
         query = query.where(AgentModel.name == name)
     # Apply a case-insensitive partial match for the agent's name.
     if query_text:
-        query = query.where(AgentModel.name.ilike(f"%{query_text}%"))
+        if settings.database_engine is DatabaseChoice.POSTGRES:
+            # PostgreSQL: Use ILIKE for case-insensitive search
+            query = query.where(AgentModel.name.ilike(f"%{query_text}%"))
+        else:
+            # SQLite: Use LIKE with LOWER for case-insensitive search
+            query = query.where(func.lower(AgentModel.name).like(func.lower(f"%{query_text}%")))
     # Filter agents by project ID.
     if project_id:
         query = query.where(AgentModel.project_id == project_id)
@@ -580,7 +779,67 @@ def _apply_filters(
     return query
 
 
-def build_passage_query(
+def _apply_relationship_filters(
+    query,
+    include_relationships: Optional[List[str]] = None,
+    include: Optional[List[str]] = None,
+):
+    # legacy include_relationships
+    if include_relationships is None and not include:
+        return query
+
+    column_names = get_column_names_from_includes_params(include_relationships, include)
+
+    relationships = [
+        "core_memory",
+        "file_agents",
+        "identities",
+        "tool_exec_environment_variables",
+        "tools",
+        "sources",
+        "tags",
+        "multi_agent_group",
+    ]
+
+    for rel in relationships:
+        if rel not in column_names:
+            query = query.options(noload(getattr(AgentModel, rel)))
+
+    return query
+
+
+def get_column_names_from_includes_params(
+    include_relationships: Optional[List[str]] = None, includes: Optional[List[str]] = None
+) -> Set[str]:
+    include_mapping = {
+        "agent.blocks": ["core_memory"],
+        "agent.identities": ["identities"],
+        "agent.managed_group": ["multi_agent_group"],
+        "agent.secrets": ["tool_exec_environment_variables"],
+        "agent.sources": ["sources"],
+        "agent.tags": ["tags"],
+        "agent.tools": ["tools"],
+        # legacy
+        "memory": ["core_memory", "file_agents"],
+        "identity_ids": ["identities"],
+        "multi_agent_group": ["multi_agent_group"],
+        "tool_exec_environment_variables": ["tool_exec_environment_variables"],
+        "secrets": ["tool_exec_environment_variables"],
+        "sources": ["sources"],
+        "tags": ["tags"],
+        "tools": ["tools"],
+    }
+    column_names = set()
+    if includes:
+        for include in includes:
+            column_names.update(include_mapping.get(include, []))
+    else:
+        for include_relationship in include_relationships:
+            column_names.update(include_mapping.get(include_relationship, []))
+    return column_names
+
+
+async def build_passage_query(
     actor: User,
     agent_id: Optional[str] = None,
     file_id: Optional[str] = None,
@@ -604,8 +863,14 @@ def build_passage_query(
     if embed_query:
         assert embedding_config is not None, "embedding_config must be specified for vector search"
         assert query_text is not None, "query_text must be specified for vector search"
-        embedded_text = embedding_model(embedding_config).get_text_embedding(query_text)
-        embedded_text = np.array(embedded_text)
+
+        # Use the new LLMClient for embeddings
+        embedding_client = LLMClient.create(
+            provider_type=embedding_config.embedding_endpoint_type,
+            actor=actor,
+        )
+        embeddings = await embedding_client.request_embeddings([query_text], embedding_config)
+        embedded_text = np.array(embeddings[0])
         embedded_text = np.pad(embedded_text, (0, MAX_EMBEDDING_DIM - embedded_text.shape[0]), mode="constant").tolist()
 
     # Start with base query for source passages
@@ -628,7 +893,7 @@ def build_passage_query(
                     SourcePassage.organization_id,
                     SourcePassage.file_id,
                     SourcePassage.source_id,
-                    literal(None).label("agent_id"),
+                    literal(None).label("archive_id"),
                 )
                 .join(SourcesAgents, SourcesAgents.source_id == SourcePassage.source_id)
                 .where(SourcesAgents.agent_id == agent_id)
@@ -650,7 +915,7 @@ def build_passage_query(
                 SourcePassage.organization_id,
                 SourcePassage.file_id,
                 SourcePassage.source_id,
-                literal(None).label("agent_id"),
+                literal(None).label("archive_id"),
             ).where(SourcePassage.organization_id == actor.organization_id)
 
         if source_id:
@@ -664,23 +929,24 @@ def build_passage_query(
         agent_passages = (
             select(
                 literal(None).label("file_name"),
-                AgentPassage.id,
-                AgentPassage.text,
-                AgentPassage.embedding_config,
-                AgentPassage.metadata_,
-                AgentPassage.embedding,
-                AgentPassage.created_at,
-                AgentPassage.updated_at,
-                AgentPassage.is_deleted,
-                AgentPassage._created_by_id,
-                AgentPassage._last_updated_by_id,
-                AgentPassage.organization_id,
+                ArchivalPassage.id,
+                ArchivalPassage.text,
+                ArchivalPassage.embedding_config,
+                ArchivalPassage.metadata_,
+                ArchivalPassage.embedding,
+                ArchivalPassage.created_at,
+                ArchivalPassage.updated_at,
+                ArchivalPassage.is_deleted,
+                ArchivalPassage._created_by_id,
+                ArchivalPassage._last_updated_by_id,
+                ArchivalPassage.organization_id,
                 literal(None).label("file_id"),
                 literal(None).label("source_id"),
-                AgentPassage.agent_id,
+                ArchivalPassage.archive_id,
             )
-            .where(AgentPassage.agent_id == agent_id)
-            .where(AgentPassage.organization_id == actor.organization_id)
+            .join(ArchivesAgents, ArchivalPassage.archive_id == ArchivesAgents.archive_id)
+            .where(ArchivesAgents.agent_id == agent_id)
+            .where(ArchivalPassage.organization_id == actor.organization_id)
         )
 
     # Combine queries
@@ -708,11 +974,13 @@ def build_passage_query(
 
     # Vector search
     if embedded_text:
-        if settings.letta_pg_uri_no_default:
+        if settings.database_engine is DatabaseChoice.POSTGRES:
             # PostgreSQL with pgvector
             main_query = main_query.order_by(combined_query.c.embedding.cosine_distance(embedded_text).asc())
         else:
             # SQLite with custom vector type
+            from letta.orm.sqlite_functions import adapt_array
+
             query_embedding_binary = adapt_array(embedded_text)
             main_query = main_query.order_by(
                 func.cosine_distance(combined_query.c.embedding, query_embedding_binary).asc(),
@@ -790,7 +1058,7 @@ def build_passage_query(
     return main_query
 
 
-def build_source_passage_query(
+async def build_source_passage_query(
     actor: User,
     agent_id: Optional[str] = None,
     file_id: Optional[str] = None,
@@ -811,8 +1079,14 @@ def build_source_passage_query(
     if embed_query:
         assert embedding_config is not None, "embedding_config must be specified for vector search"
         assert query_text is not None, "query_text must be specified for vector search"
-        embedded_text = embedding_model(embedding_config).get_text_embedding(query_text)
-        embedded_text = np.array(embedded_text)
+
+        # Use the new LLMClient for embeddings
+        embedding_client = LLMClient.create(
+            provider_type=embedding_config.embedding_endpoint_type,
+            actor=actor,
+        )
+        embeddings = await embedding_client.request_embeddings([query_text], embedding_config)
+        embedded_text = np.array(embeddings[0])
         embedded_text = np.pad(embedded_text, (0, MAX_EMBEDDING_DIM - embedded_text.shape[0]), mode="constant").tolist()
 
     # Base query for source passages
@@ -835,11 +1109,13 @@ def build_source_passage_query(
 
     # Handle text search or vector search
     if embedded_text:
-        if settings.letta_pg_uri_no_default:
+        if settings.database_engine is DatabaseChoice.POSTGRES:
             # PostgreSQL with pgvector
             query = query.order_by(SourcePassage.embedding.cosine_distance(embedded_text).asc())
         else:
             # SQLite with custom vector type
+            from letta.orm.sqlite_functions import adapt_array
+
             query_embedding_binary = adapt_array(embedded_text)
             query = query.order_by(
                 func.cosine_distance(SourcePassage.embedding, query_embedding_binary).asc(),
@@ -888,7 +1164,7 @@ def build_source_passage_query(
     return query
 
 
-def build_agent_passage_query(
+async def build_agent_passage_query(
     actor: User,
     agent_id: str,  # Required for agent passages
     query_text: Optional[str] = None,
@@ -907,60 +1183,72 @@ def build_agent_passage_query(
     if embed_query:
         assert embedding_config is not None, "embedding_config must be specified for vector search"
         assert query_text is not None, "query_text must be specified for vector search"
-        embedded_text = embedding_model(embedding_config).get_text_embedding(query_text)
-        embedded_text = np.array(embedded_text)
+
+        # Use the new LLMClient for embeddings
+        embedding_client = LLMClient.create(
+            provider_type=embedding_config.embedding_endpoint_type,
+            actor=actor,
+        )
+        embeddings = await embedding_client.request_embeddings([query_text], embedding_config)
+        embedded_text = np.array(embeddings[0])
         embedded_text = np.pad(embedded_text, (0, MAX_EMBEDDING_DIM - embedded_text.shape[0]), mode="constant").tolist()
 
-    # Base query for agent passages
-    query = select(AgentPassage).where(AgentPassage.agent_id == agent_id, AgentPassage.organization_id == actor.organization_id)
+    # Base query for agent passages - join through archives_agents
+    query = (
+        select(ArchivalPassage)
+        .join(ArchivesAgents, ArchivalPassage.archive_id == ArchivesAgents.archive_id)
+        .where(ArchivesAgents.agent_id == agent_id, ArchivalPassage.organization_id == actor.organization_id)
+    )
 
     # Apply filters
     if start_date:
-        query = query.where(AgentPassage.created_at >= start_date)
+        query = query.where(ArchivalPassage.created_at >= start_date)
     if end_date:
-        query = query.where(AgentPassage.created_at <= end_date)
+        query = query.where(ArchivalPassage.created_at <= end_date)
 
     # Handle text search or vector search
     if embedded_text:
-        if settings.letta_pg_uri_no_default:
+        if settings.database_engine is DatabaseChoice.POSTGRES:
             # PostgreSQL with pgvector
-            query = query.order_by(AgentPassage.embedding.cosine_distance(embedded_text).asc())
+            query = query.order_by(ArchivalPassage.embedding.cosine_distance(embedded_text).asc())
         else:
             # SQLite with custom vector type
+            from letta.orm.sqlite_functions import adapt_array
+
             query_embedding_binary = adapt_array(embedded_text)
             query = query.order_by(
-                func.cosine_distance(AgentPassage.embedding, query_embedding_binary).asc(),
-                AgentPassage.created_at.asc() if ascending else AgentPassage.created_at.desc(),
-                AgentPassage.id.asc(),
+                func.cosine_distance(ArchivalPassage.embedding, query_embedding_binary).asc(),
+                ArchivalPassage.created_at.asc() if ascending else ArchivalPassage.created_at.desc(),
+                ArchivalPassage.id.asc(),
             )
     else:
         if query_text:
-            query = query.where(func.lower(AgentPassage.text).contains(func.lower(query_text)))
+            query = query.where(func.lower(ArchivalPassage.text).contains(func.lower(query_text)))
 
     # Handle pagination
     if before or after:
         if before:
             # Get the reference record
-            before_subq = select(AgentPassage.created_at, AgentPassage.id).where(AgentPassage.id == before).subquery()
+            before_subq = select(ArchivalPassage.created_at, ArchivalPassage.id).where(ArchivalPassage.id == before).subquery()
             query = query.where(
                 or_(
-                    AgentPassage.created_at < before_subq.c.created_at,
+                    ArchivalPassage.created_at < before_subq.c.created_at,
                     and_(
-                        AgentPassage.created_at == before_subq.c.created_at,
-                        AgentPassage.id < before_subq.c.id,
+                        ArchivalPassage.created_at == before_subq.c.created_at,
+                        ArchivalPassage.id < before_subq.c.id,
                     ),
                 )
             )
 
         if after:
             # Get the reference record
-            after_subq = select(AgentPassage.created_at, AgentPassage.id).where(AgentPassage.id == after).subquery()
+            after_subq = select(ArchivalPassage.created_at, ArchivalPassage.id).where(ArchivalPassage.id == after).subquery()
             query = query.where(
                 or_(
-                    AgentPassage.created_at > after_subq.c.created_at,
+                    ArchivalPassage.created_at > after_subq.c.created_at,
                     and_(
-                        AgentPassage.created_at == after_subq.c.created_at,
-                        AgentPassage.id > after_subq.c.id,
+                        ArchivalPassage.created_at == after_subq.c.created_at,
+                        ArchivalPassage.id > after_subq.c.id,
                     ),
                 )
             )
@@ -968,8 +1256,45 @@ def build_agent_passage_query(
     # Apply ordering if not already ordered by similarity
     if not embed_query:
         if ascending:
-            query = query.order_by(AgentPassage.created_at.asc(), AgentPassage.id.asc())
+            query = query.order_by(ArchivalPassage.created_at.asc(), ArchivalPassage.id.asc())
         else:
-            query = query.order_by(AgentPassage.created_at.desc(), AgentPassage.id.asc())
+            query = query.order_by(ArchivalPassage.created_at.desc(), ArchivalPassage.id.asc())
 
     return query
+
+
+def calculate_base_tools(is_v2: bool) -> Set[str]:
+    if is_v2:
+        return (set(BASE_TOOLS) - set(DEPRECATED_LETTA_TOOLS)) | set(BASE_MEMORY_TOOLS_V2)
+    else:
+        return (set(BASE_TOOLS) - set(DEPRECATED_LETTA_TOOLS)) | set(BASE_MEMORY_TOOLS)
+
+
+def calculate_multi_agent_tools() -> Set[str]:
+    """Calculate multi-agent tools, excluding local-only tools in production environment."""
+    if settings.environment == "PRODUCTION":
+        return set(MULTI_AGENT_TOOLS) - set(LOCAL_ONLY_MULTI_AGENT_TOOLS)
+    else:
+        return set(MULTI_AGENT_TOOLS)
+
+
+@trace_method
+async def validate_agent_exists_async(session, agent_id: str, actor: User) -> None:
+    """
+    Validate that an agent exists and user has access to it using raw SQL for efficiency.
+
+    Args:
+        session: Database session
+        agent_id: ID of the agent to validate
+        actor: User performing the action
+
+    Raises:
+        NoResultFound: If agent doesn't exist or user doesn't have access
+    """
+    agent_exists_query = select(
+        exists().where(and_(AgentModel.id == agent_id, AgentModel.organization_id == actor.organization_id, AgentModel.is_deleted == False))
+    )
+    result = await session.execute(agent_exists_query)
+
+    if not result.scalar():
+        raise LettaAgentNotFoundError(f"Agent with ID {agent_id} not found")

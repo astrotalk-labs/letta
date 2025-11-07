@@ -3,11 +3,10 @@ from typing import AsyncGenerator, List, Optional, Tuple, Union
 from letta.agents.helpers import _create_letta_response, serialize_message_history
 from letta.agents.letta_agent import LettaAgent
 from letta.constants import DEFAULT_MAX_STEPS
-from letta.orm.enums import ToolType
 from letta.otel.tracing import trace_method
 from letta.schemas.agent import AgentState
 from letta.schemas.block import BlockUpdate
-from letta.schemas.enums import MessageStreamStatus
+from letta.schemas.enums import MessageStreamStatus, ToolType
 from letta.schemas.letta_message import LegacyLettaMessage, LettaMessage, MessageType
 from letta.schemas.letta_response import LettaResponse
 from letta.schemas.message import MessageCreate
@@ -17,6 +16,7 @@ from letta.services.agent_manager import AgentManager
 from letta.services.block_manager import BlockManager
 from letta.services.message_manager import MessageManager
 from letta.services.passage_manager import PassageManager
+from letta.services.run_manager import RunManager
 from letta.services.summarizer.enums import SummarizationMode
 from letta.services.summarizer.summarizer import Summarizer
 from letta.types import JsonDict
@@ -34,6 +34,7 @@ class VoiceSleeptimeAgent(LettaAgent):
         message_manager: MessageManager,
         agent_manager: AgentManager,
         block_manager: BlockManager,
+        run_manager: RunManager,
         passage_manager: PassageManager,
         target_block_label: str,
         actor: User,
@@ -43,6 +44,7 @@ class VoiceSleeptimeAgent(LettaAgent):
             message_manager=message_manager,
             agent_manager=agent_manager,
             block_manager=block_manager,
+            job_manager=run_manager,
             passage_manager=passage_manager,
             actor=actor,
         )
@@ -64,7 +66,9 @@ class VoiceSleeptimeAgent(LettaAgent):
         self,
         input_messages: List[MessageCreate],
         max_steps: int = DEFAULT_MAX_STEPS,
+        run_id: Optional[str] = None,
         use_assistant_message: bool = True,
+        request_start_timestamp_ns: Optional[int] = None,
         include_return_message_types: Optional[List[MessageType]] = None,
     ) -> LettaResponse:
         """
@@ -82,10 +86,10 @@ class VoiceSleeptimeAgent(LettaAgent):
         ]
 
         # Summarize
-        current_in_context_messages, new_in_context_messages, usage, stop_reason = await super()._step(
+        current_in_context_messages, new_in_context_messages, stop_reason, usage = await super()._step(
             agent_state=agent_state, input_messages=input_messages, max_steps=max_steps
         )
-        new_in_context_messages, updated = self.summarizer.summarize(
+        new_in_context_messages, updated = await self.summarizer.summarize(
             in_context_messages=current_in_context_messages, new_letta_messages=new_in_context_messages
         )
         self.agent_manager.set_in_context_messages(
@@ -161,7 +165,6 @@ class VoiceSleeptimeAgent(LettaAgent):
             memory = serialize_message_history(messages, context)
             self.agent_manager.passage_manager.insert_passage(
                 agent_state=agent_state,
-                agent_id=agent_state.id,
                 text=memory,
                 actor=self.actor,
             )
@@ -172,7 +175,12 @@ class VoiceSleeptimeAgent(LettaAgent):
             return f"Failed to store memory given start_index {start_index} and end_index {end_index}: {e}", False
 
     async def step_stream(
-        self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS, use_assistant_message: bool = True
+        self,
+        input_messages: List[MessageCreate],
+        max_steps: int = DEFAULT_MAX_STEPS,
+        use_assistant_message: bool = True,
+        request_start_timestamp_ns: Optional[int] = None,
+        include_return_message_types: Optional[List[MessageType]] = None,
     ) -> AsyncGenerator[Union[LettaMessage, LegacyLettaMessage, MessageStreamStatus], None]:
         """
         This agent is synchronous-only. If called in an async context, raise an error.

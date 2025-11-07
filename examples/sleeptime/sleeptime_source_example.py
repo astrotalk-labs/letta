@@ -30,7 +30,7 @@ source_name = "employee_handbook"
 source = client.sources.create(
     name=source_name,
     description="Provides reference information for the employee handbook",
-    embedding="openai/text-embedding-ada-002" # must match agent
+    embedding="openai/text-embedding-3-small" # must match agent
 )
 # attach the source to the agent
 client.agents.sources.attach(
@@ -39,10 +39,11 @@ client.agents.sources.attach(
 )
 
 # upload a file: this will trigger processing
-job = client.sources.files.upload(
-    file=open("handbook.pdf", "rb"),
-    source_id=source.id
-)
+with open("handbook.pdf", "rb") as f:
+    job = client.sources.files.upload(
+        file=f,
+        source_id=source.id
+    )
 
 time.sleep(2)
 

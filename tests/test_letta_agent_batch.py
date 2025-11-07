@@ -18,15 +18,14 @@ from letta.agents.letta_agent_batch import LettaAgentBatch
 from letta.config import LettaConfig
 from letta.helpers import ToolRulesSolver
 from letta.jobs.llm_batch_job_polling import poll_running_llm_batches
-from letta.orm import Base
-from letta.schemas.agent import AgentState, AgentStepState, CreateAgent
+from letta.schemas.agent import AgentState, CreateAgent
 from letta.schemas.enums import AgentStepStatus, JobStatus, MessageRole, ProviderType
 from letta.schemas.job import BatchJob
 from letta.schemas.letta_message_content import TextContent
 from letta.schemas.letta_request import LettaBatchRequest
+from letta.schemas.llm_batch_job import AgentStepState
 from letta.schemas.message import MessageCreate
 from letta.schemas.tool_rule import InitToolRule
-from letta.server.db import db_context
 from letta.server.server import SyncServer
 from tests.utils import create_tool_from_func
 
@@ -50,17 +49,17 @@ EXPECTED_ROLES = ["system", "assistant", "tool", "user", "user"]
 # --------------------------------------------------------------------------- #
 
 
-@pytest.fixture(scope="function")
-def weather_tool(server):
+@pytest.fixture
+async def weather_tool(server):
     def get_weather(location: str) -> str:
         """
         Fetches the current weather for a given location.
 
-        Parameters:
-            location (str): The location to get the weather for.
+        Args:
+            location: The location to get the weather for.
 
         Returns:
-            str: A formatted string describing the weather in the given location.
+            A formatted string describing the weather in the given location.
 
         Raises:
             RuntimeError: If the request to fetch weather data fails.
@@ -76,14 +75,14 @@ def weather_tool(server):
         else:
             raise RuntimeError(f"Failed to get weather data, status code: {response.status_code}")
 
-    actor = server.user_manager.get_user_or_default()
-    tool = server.tool_manager.create_or_update_tool(create_tool_from_func(func=get_weather), actor=actor)
+    actor = await server.user_manager.get_actor_or_default_async()
+    tool = await server.tool_manager.create_or_update_tool_async(create_tool_from_func(func=get_weather), actor=actor)
     # Yield the created tool
     yield tool
 
 
-@pytest.fixture(scope="function")
-def rethink_tool(server):
+@pytest.fixture
+async def rethink_tool(server):
     def rethink_memory(agent_state: "AgentState", new_memory: str, target_block_label: str) -> str:  # type: ignore
         """
         Re-evaluate the memory in block_name, integrating new and updated facts.
@@ -99,24 +98,24 @@ def rethink_tool(server):
         agent_state.memory.update_block_value(label=target_block_label, value=new_memory)
         return None
 
-    actor = server.user_manager.get_user_or_default()
-    tool = server.tool_manager.create_or_update_tool(create_tool_from_func(func=rethink_memory), actor=actor)
+    actor = await server.user_manager.get_actor_or_default_async()
+    tool = await server.tool_manager.create_or_update_tool_async(create_tool_from_func(func=rethink_memory), actor=actor)
     # Yield the created tool
     yield tool
 
 
 @pytest.fixture
-def agents(server, weather_tool):
+async def agents(server, weather_tool):
     """
     Create three test agents with different models.
 
     Returns:
         Tuple[Agent, Agent, Agent]: Three agents with sonnet, haiku, and opus models
     """
-    actor = server.user_manager.get_user_or_default()
+    actor = await server.user_manager.get_actor_or_default_async()
 
-    def create_agent(suffix, model_name):
-        return server.create_agent(
+    async def create_agent(suffix, model_name):
+        return await server.create_agent_async(
             CreateAgent(
                 name=f"test_agent_{suffix}",
                 include_base_tools=True,
@@ -129,13 +128,13 @@ def agents(server, weather_tool):
         )
 
     return (
-        create_agent("sonnet", MODELS["sonnet"]),
-        create_agent("haiku", MODELS["haiku"]),
-        create_agent("opus", MODELS["opus"]),
+        await create_agent("sonnet", MODELS["sonnet"]),
+        await create_agent("haiku", MODELS["haiku"]),
+        await create_agent("opus", MODELS["opus"]),
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def batch_requests(agents):
     """
     Create batch requests for each test agent.
@@ -152,7 +151,7 @@ def batch_requests(agents):
     ]
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def step_state_map(agents):
     """
     Create a mapping of agent IDs to their step states.
@@ -265,7 +264,7 @@ def create_failed_response(custom_id: str) -> BetaMessageBatchIndividualResponse
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def dummy_batch_response():
     """
     Create a minimal dummy batch response similar to what Anthropic would return.
@@ -282,19 +281,19 @@ def dummy_batch_response():
 # Server and Database Management
 # --------------------------------------------------------------------------- #
 
+#
+# @pytest.fixture(autouse=True)
+# def clear_batch_tables():
+#     """Clear batch-related tables before each test."""
+#     with db_context() as session:
+#         for table in reversed(Base.metadata.sorted_tables):
+#             if table.name in {"jobs", "llm_batch_job", "llm_batch_items"}:
+#                 session.execute(table.delete())  # Truncate table
+#         session.commit()
 
-@pytest.fixture(autouse=True)
-def clear_batch_tables():
-    """Clear batch-related tables before each test."""
-    with db_context() as session:
-        for table in reversed(Base.metadata.sorted_tables):
-            if table.name in {"jobs", "llm_batch_job", "llm_batch_items"}:
-                session.execute(table.delete())  # Truncate table
-        session.commit()
 
-
-@pytest.fixture(scope="module")
-def server():
+@pytest.fixture
+async def server():
     """
     Creates a SyncServer instance for testing.
 
@@ -305,11 +304,26 @@ def server():
     config.save()
 
     server = SyncServer(init_with_default_org_and_user=True)
+    await server.init_async(init_with_default_org_and_user=True)
     yield server
 
 
 @pytest.fixture
-def batch_job(default_user, server):
+async def default_organization(server):
+    """Fixture to create and return the default organization."""
+    org = await server.organization_manager.get_default_organization_async()
+    yield org
+
+
+@pytest.fixture
+async def default_user(server, default_organization):
+    """Fixture to create and return the default user within the default organization."""
+    user = await server.user_manager.get_default_actor_async()
+    yield user
+
+
+@pytest.fixture
+async def batch_job(default_user, server):
     job = BatchJob(
         user_id=default_user.id,
         status=JobStatus.created,
@@ -317,11 +331,11 @@ def batch_job(default_user, server):
             "job_type": "batch_messages",
         },
     )
-    job = server.job_manager.create_job(pydantic_job=job, actor=default_user)
+    job = await server.job_manager.create_job_async(pydantic_job=job, actor=default_user)
     yield job
 
     # cleanup
-    server.job_manager.delete_job_by_id(job.id, actor=default_user)
+    await server.job_manager.delete_job_by_id_async(job.id, actor=default_user)
 
 
 class MockAsyncIterable:
@@ -342,14 +356,14 @@ class MockAsyncIterable:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.asyncio(loop_scope="module")
+@pytest.mark.asyncio
 async def test_rethink_tool_modify_agent_state(disable_e2b_api_key, server, default_user, batch_job, rethink_tool):
     target_block_label = "human"
     new_memory = "banana"
-    actor = server.user_manager.get_user_or_default()
+    actor = await server.user_manager.get_actor_or_default_async()
     agent = await server.create_agent_async(
         request=CreateAgent(
-            name=f"test_agent_rethink",
+            name="test_agent_rethink",
             include_base_tools=True,
             model=MODELS["sonnet"],
             tags=["test_agents"],
@@ -366,7 +380,7 @@ async def test_rethink_tool_modify_agent_state(disable_e2b_api_key, server, defa
     )
     agents = [agent]
     batch_requests = [
-        LettaBatchRequest(agent_id=agent.id, messages=[MessageCreate(role="user", content=[TextContent(text=f"Rethink memory.")])])
+        LettaBatchRequest(agent_id=agent.id, messages=[MessageCreate(role="user", content=[TextContent(text="Rethink memory.")])])
         for agent in agents
     ]
 
@@ -422,13 +436,13 @@ async def test_rethink_tool_modify_agent_state(disable_e2b_api_key, server, defa
                 await poll_running_llm_batches(server)
 
                 # Check that the tool has been executed correctly
-                agent = server.agent_manager.get_agent_by_id(agent_id=agent.id, actor=actor)
+                agent = await server.agent_manager.get_agent_by_id_async(agent_id=agent.id, actor=actor)
                 for block in agent.memory.blocks:
                     if block.label == target_block_label:
                         assert block.value == new_memory
 
 
-@pytest.mark.asyncio(loop_scope="module")
+@pytest.mark.asyncio
 async def test_partial_error_from_anthropic_batch(
     disable_e2b_api_key, server, default_user, agents: Tuple[AgentState], batch_requests, step_state_map, batch_job
 ):
@@ -507,12 +521,12 @@ async def test_partial_error_from_anthropic_batch(
 
                 print("POST", post_resume_response)
                 print("PRE", pre_resume_response)
-                assert (
-                    post_resume_response.letta_batch_id == pre_resume_response.letta_batch_id
-                ), "resume_step_after_request is expected to have the same letta_batch_id"
-                assert (
-                    post_resume_response.last_llm_batch_id != pre_resume_response.last_llm_batch_id
-                ), "resume_step_after_request is expected to have different llm_batch_id."
+                assert post_resume_response.letta_batch_id == pre_resume_response.letta_batch_id, (
+                    "resume_step_after_request is expected to have the same letta_batch_id"
+                )
+                assert post_resume_response.last_llm_batch_id != pre_resume_response.last_llm_batch_id, (
+                    "resume_step_after_request is expected to have different llm_batch_id."
+                )
                 assert post_resume_response.status == JobStatus.running
                 # NOTE: We only expect 2 agents to continue (succeeded ones)
                 assert post_resume_response.agent_count == 2
@@ -529,13 +543,13 @@ async def test_partial_error_from_anthropic_batch(
 
                 # Confirm that tool_rules_solver state was preserved correctly
                 # Assert every new item's step_state's tool_rules_solver has "get_weather" in the tool_call_history
-                assert all(
-                    "get_weather" in item.step_state.tool_rules_solver.tool_call_history for item in new_items
-                ), "Expected 'get_weather' in tool_call_history for all new_items"
+                assert all("get_weather" in item.step_state.tool_rules_solver.tool_call_history for item in new_items), (
+                    "Expected 'get_weather' in tool_call_history for all new_items"
+                )
                 # Assert that each new item's step_number was incremented to 1
-                assert all(
-                    item.step_state.step_number == 1 for item in new_items
-                ), "Expected step_number to be incremented to 1 for all new_items"
+                assert all(item.step_state.step_number == 1 for item in new_items), (
+                    "Expected step_number to be incremented to 1 for all new_items"
+                )
 
                 # Old items must have been flipped to completed / finished earlier
                 #     (sanity – we already asserted this above, but we keep it close for clarity)
@@ -559,20 +573,20 @@ async def test_partial_error_from_anthropic_batch(
                         assert after == before, f"Agent {agent.id} should not have extra messages persisted due to Anthropic failure"
                     else:
                         assert after - before >= 2, (
-                            f"Agent {agent.id} should have an assistant tool‑call " f"and tool‑response message persisted."
+                            f"Agent {agent.id} should have an assistant tool‑call and tool‑response message persisted."
                         )
 
                 # Check that agent states have been properly modified to have extended in-context messages
                 for agent in agents:
-                    refreshed_agent = server.agent_manager.get_agent_by_id(agent_id=agent.id, actor=default_user)
+                    refreshed_agent = await server.agent_manager.get_agent_by_id_async(agent_id=agent.id, actor=default_user)
                     if refreshed_agent.id == agents_failed[0].id:
-                        assert (
-                            len(refreshed_agent.message_ids) == 4
-                        ), f"Agent's in-context messages have not been extended, are length: {len(refreshed_agent.message_ids)}"
+                        assert len(refreshed_agent.message_ids) == 4, (
+                            f"Agent's in-context messages have not been extended, are length: {len(refreshed_agent.message_ids)}"
+                        )
                     else:
-                        assert (
-                            len(refreshed_agent.message_ids) == 6
-                        ), f"Agent's in-context messages have been extended, are length: {len(refreshed_agent.message_ids)}"
+                        assert len(refreshed_agent.message_ids) == 6, (
+                            f"Agent's in-context messages have been extended, are length: {len(refreshed_agent.message_ids)}"
+                        )
 
                 # Check the total list of messages
                 messages = await server.batch_manager.get_messages_for_letta_batch_async(
@@ -595,7 +609,7 @@ async def test_partial_error_from_anthropic_batch(
                     assert agent_messages[0].role == MessageRole.user, "Expected initial user message"
 
 
-@pytest.mark.asyncio(loop_scope="module")
+@pytest.mark.asyncio
 async def test_resume_step_some_stop(
     disable_e2b_api_key, server, default_user, agents: Tuple[AgentState], batch_requests, step_state_map, batch_job
 ):
@@ -675,12 +689,12 @@ async def test_resume_step_some_stop(
                 assert len(new_batch_responses) == 1
                 post_resume_response = new_batch_responses[0]
 
-                assert (
-                    post_resume_response.letta_batch_id == pre_resume_response.letta_batch_id
-                ), "resume_step_after_request is expected to have the same letta_batch_id"
-                assert (
-                    post_resume_response.last_llm_batch_id != pre_resume_response.last_llm_batch_id
-                ), "resume_step_after_request is expected to have different llm_batch_id."
+                assert post_resume_response.letta_batch_id == pre_resume_response.letta_batch_id, (
+                    "resume_step_after_request is expected to have the same letta_batch_id"
+                )
+                assert post_resume_response.last_llm_batch_id != pre_resume_response.last_llm_batch_id, (
+                    "resume_step_after_request is expected to have different llm_batch_id."
+                )
                 assert post_resume_response.status == JobStatus.running
                 # NOTE: We only expect 1 agent to continue
                 assert post_resume_response.agent_count == 1
@@ -697,13 +711,13 @@ async def test_resume_step_some_stop(
 
                 # Confirm that tool_rules_solver state was preserved correctly
                 # Assert every new item's step_state's tool_rules_solver has "get_weather" in the tool_call_history
-                assert all(
-                    "get_weather" in item.step_state.tool_rules_solver.tool_call_history for item in new_items
-                ), "Expected 'get_weather' in tool_call_history for all new_items"
+                assert all("get_weather" in item.step_state.tool_rules_solver.tool_call_history for item in new_items), (
+                    "Expected 'get_weather' in tool_call_history for all new_items"
+                )
                 # Assert that each new item's step_number was incremented to 1
-                assert all(
-                    item.step_state.step_number == 1 for item in new_items
-                ), "Expected step_number to be incremented to 1 for all new_items"
+                assert all(item.step_state.step_number == 1 for item in new_items), (
+                    "Expected step_number to be incremented to 1 for all new_items"
+                )
 
                 # Old items must have been flipped to completed / finished earlier
                 #     (sanity – we already asserted this above, but we keep it close for clarity)
@@ -717,16 +731,14 @@ async def test_resume_step_some_stop(
                 for agent in agents:
                     before = msg_counts_before[agent.id]  # captured just before resume
                     after = await server.message_manager.size_async(actor=default_user, agent_id=agent.id)
-                    assert after - before >= 2, (
-                        f"Agent {agent.id} should have an assistant tool‑call " f"and tool‑response message persisted."
-                    )
+                    assert after - before >= 2, f"Agent {agent.id} should have an assistant tool‑call and tool‑response message persisted."
 
                 # Check that agent states have been properly modified to have extended in-context messages
                 for agent in agents:
-                    refreshed_agent = server.agent_manager.get_agent_by_id(agent_id=agent.id, actor=default_user)
-                    assert (
-                        len(refreshed_agent.message_ids) == 6
-                    ), f"Agent's in-context messages have been extended, are length: {len(refreshed_agent.message_ids)}"
+                    refreshed_agent = await server.agent_manager.get_agent_by_id_async(agent_id=agent.id, actor=default_user)
+                    assert len(refreshed_agent.message_ids) == 6, (
+                        f"Agent's in-context messages have been extended, are length: {len(refreshed_agent.message_ids)}"
+                    )
 
                 # Check the total list of messages
                 messages = await server.batch_manager.get_messages_for_letta_batch_async(
@@ -757,13 +769,13 @@ def _assert_descending_order(messages):
         return True
 
     for prev, next in zip(messages[:-1], messages[1:]):
-        assert (
-            prev.created_at >= next.created_at
-        ), f"Order violation: {prev.id} ({prev.created_at}) followed by {next.id} ({next.created_at})"
+        assert prev.created_at >= next.created_at, (
+            f"Order violation: {prev.id} ({prev.created_at}) followed by {next.id} ({next.created_at})"
+        )
     return True
 
 
-@pytest.mark.asyncio(loop_scope="module")
+@pytest.mark.asyncio
 async def test_resume_step_after_request_all_continue(
     disable_e2b_api_key, server, default_user, agents: Tuple[AgentState], batch_requests, step_state_map, batch_job
 ):
@@ -840,12 +852,12 @@ async def test_resume_step_after_request_all_continue(
                 assert len(new_batch_responses) == 1
                 post_resume_response = new_batch_responses[0]
 
-                assert (
-                    post_resume_response.letta_batch_id == pre_resume_response.letta_batch_id
-                ), "resume_step_after_request is expected to have the same letta_batch_id"
-                assert (
-                    post_resume_response.last_llm_batch_id != pre_resume_response.last_llm_batch_id
-                ), "resume_step_after_request is expected to have different llm_batch_id."
+                assert post_resume_response.letta_batch_id == pre_resume_response.letta_batch_id, (
+                    "resume_step_after_request is expected to have the same letta_batch_id"
+                )
+                assert post_resume_response.last_llm_batch_id != pre_resume_response.last_llm_batch_id, (
+                    "resume_step_after_request is expected to have different llm_batch_id."
+                )
                 assert post_resume_response.status == JobStatus.running
                 assert post_resume_response.agent_count == 3
 
@@ -859,13 +871,13 @@ async def test_resume_step_after_request_all_continue(
 
                 # Confirm that tool_rules_solver state was preserved correctly
                 # Assert every new item's step_state's tool_rules_solver has "get_weather" in the tool_call_history
-                assert all(
-                    "get_weather" in item.step_state.tool_rules_solver.tool_call_history for item in new_items
-                ), "Expected 'get_weather' in tool_call_history for all new_items"
+                assert all("get_weather" in item.step_state.tool_rules_solver.tool_call_history for item in new_items), (
+                    "Expected 'get_weather' in tool_call_history for all new_items"
+                )
                 # Assert that each new item's step_number was incremented to 1
-                assert all(
-                    item.step_state.step_number == 1 for item in new_items
-                ), "Expected step_number to be incremented to 1 for all new_items"
+                assert all(item.step_state.step_number == 1 for item in new_items), (
+                    "Expected step_number to be incremented to 1 for all new_items"
+                )
 
                 # Old items must have been flipped to completed / finished earlier
                 #     (sanity – we already asserted this above, but we keep it close for clarity)
@@ -879,16 +891,14 @@ async def test_resume_step_after_request_all_continue(
                 for agent in agents:
                     before = msg_counts_before[agent.id]  # captured just before resume
                     after = await server.message_manager.size_async(actor=default_user, agent_id=agent.id)
-                    assert after - before >= 2, (
-                        f"Agent {agent.id} should have an assistant tool‑call " f"and tool‑response message persisted."
-                    )
+                    assert after - before >= 2, f"Agent {agent.id} should have an assistant tool‑call and tool‑response message persisted."
 
                 # Check that agent states have been properly modified to have extended in-context messages
                 for agent in agents:
-                    refreshed_agent = server.agent_manager.get_agent_by_id(agent_id=agent.id, actor=default_user)
-                    assert (
-                        len(refreshed_agent.message_ids) == 6
-                    ), f"Agent's in-context messages have been extended, are length: {len(refreshed_agent.message_ids)}"
+                    refreshed_agent = await server.agent_manager.get_agent_by_id_async(agent_id=agent.id, actor=default_user)
+                    assert len(refreshed_agent.message_ids) == 6, (
+                        f"Agent's in-context messages have been extended, are length: {len(refreshed_agent.message_ids)}"
+                    )
 
                 # Check the total list of messages
                 messages = await server.batch_manager.get_messages_for_letta_batch_async(
@@ -906,7 +916,7 @@ async def test_resume_step_after_request_all_continue(
                     assert agent_messages[-4].role == MessageRole.user, "Expected final system-level heartbeat user message"
 
 
-@pytest.mark.asyncio(loop_scope="module")
+@pytest.mark.asyncio
 async def test_step_until_request_prepares_and_submits_batch_correctly(
     disable_e2b_api_key, server, default_user, agents, batch_requests, step_state_map, dummy_batch_response, batch_job
 ):
@@ -931,7 +941,7 @@ async def test_step_until_request_prepares_and_submits_batch_correctly(
     # Set up spy function for the Anthropic client
     with patch("letta.llm_api.anthropic_client.AnthropicClient.send_llm_batch_request_async") as mock_send:
         # Configure mock to validate input and return dummy response
-        async def validate_batch_request(*, agent_messages_mapping, agent_tools_mapping, agent_llm_config_mapping):
+        async def validate_batch_request(*, agent_type, agent_messages_mapping, agent_tools_mapping, agent_llm_config_mapping):
             # Verify all agent IDs are present in all mappings
             expected_ids = sorted(expected_models.keys())
             actual_ids = sorted(agent_messages_mapping.keys())

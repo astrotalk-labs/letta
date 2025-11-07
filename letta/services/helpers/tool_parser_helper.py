@@ -1,7 +1,7 @@
 import ast
 import base64
 import pickle
-from typing import Any
+from typing import Any, Union
 
 from letta.constants import REQUEST_HEARTBEAT_DESCRIPTION, REQUEST_HEARTBEAT_PARAM, SEND_MESSAGE_TOOL_NAME
 from letta.schemas.agent import AgentState
@@ -9,7 +9,7 @@ from letta.schemas.response_format import ResponseFormatType, ResponseFormatUnio
 from letta.types import JsonDict, JsonValue
 
 
-def parse_stdout_best_effort(text: str | bytes) -> tuple[Any, AgentState | None]:
+def parse_stdout_best_effort(text: Union[str, bytes]) -> tuple[Any, AgentState | None]:
     """
     Decode and unpickle the result from the function execution if possible.
     Returns (function_return_value, agent_state).
@@ -28,7 +28,8 @@ def parse_function_arguments(source_code: str, tool_name: str):
     tree = ast.parse(source_code)
     args = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == tool_name:
+        # Handle both sync and async functions
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == tool_name:
             for arg in node.args.args:
                 args.append(arg.arg)
     return args
@@ -69,13 +70,16 @@ def runtime_override_tool_json_schema(
     tool_list: list[JsonDict],
     response_format: ResponseFormatUnion | None,
     request_heartbeat: bool = True,
+    terminal_tools: set[str] | None = None,
 ) -> list[JsonDict]:
     """Override the tool JSON schemas at runtime if certain conditions are met.
 
     Cases:
         1. We will inject `send_message` tool calls with `response_format` if provided
-        2. Tools will have an additional `request_heartbeat` parameter added.
+        2. Tools will have an additional `request_heartbeat` parameter added (except for terminal tools).
     """
+    if terminal_tools is None:
+        terminal_tools = set()
     for tool_json in tool_list:
         if tool_json["name"] == SEND_MESSAGE_TOOL_NAME and response_format and response_format.type != ResponseFormatType.text:
             if response_format.type == ResponseFormatType.json_schema:
@@ -88,8 +92,8 @@ def runtime_override_tool_json_schema(
                     "properties": {},
                 }
         if request_heartbeat:
-            # TODO (cliandy): see support for tool control loop parameters
-            if tool_json["name"] != SEND_MESSAGE_TOOL_NAME:
+            # Only add request_heartbeat to non-terminal tools
+            if tool_json["name"] not in terminal_tools:
                 tool_json["parameters"]["properties"][REQUEST_HEARTBEAT_PARAM] = {
                     "type": "boolean",
                     "description": REQUEST_HEARTBEAT_DESCRIPTION,

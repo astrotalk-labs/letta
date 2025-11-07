@@ -5,7 +5,7 @@ from functools import wraps
 from pprint import pformat
 from typing import TYPE_CHECKING, List, Literal, Optional, Tuple, Union
 
-from sqlalchemy import Sequence, String, and_, delete, func, or_, select, text
+from sqlalchemy import Sequence, String, and_, delete, func, or_, select
 from sqlalchemy.exc import DBAPIError, IntegrityError, TimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -14,7 +14,7 @@ from sqlalchemy.orm.interfaces import ORMOption
 from letta.log import get_logger
 from letta.orm.base import Base, CommonSqlalchemyMetaMixins
 from letta.orm.errors import DatabaseTimeoutError, ForeignKeyConstraintViolationError, NoResultFound, UniqueConstraintViolationError
-from letta.orm.sqlite_functions import adapt_array
+from letta.settings import DatabaseChoice
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -49,6 +49,11 @@ def handle_db_timeout(func):
         return async_wrapper
 
 
+def is_postgresql_session(session: Session) -> bool:
+    """Check if the database session is PostgreSQL instead of SQLite for setting query options."""
+    return session.bind.dialect.name == "postgresql"
+
+
 class AccessType(str, Enum):
     ORGANIZATION = "organization"
     USER = "user"
@@ -60,101 +65,6 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
     __order_by_default__ = "created_at"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-
-    @classmethod
-    @handle_db_timeout
-    def list(
-        cls,
-        *,
-        db_session: "Session",
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        limit: Optional[int] = 50,
-        query_text: Optional[str] = None,
-        query_embedding: Optional[List[float]] = None,
-        ascending: bool = True,
-        actor: Optional["User"] = None,
-        access: Optional[List[Literal["read", "write", "admin"]]] = ["read"],
-        access_type: AccessType = AccessType.ORGANIZATION,
-        join_model: Optional[Base] = None,
-        join_conditions: Optional[Union[Tuple, List]] = None,
-        identifier_keys: Optional[List[str]] = None,
-        identity_id: Optional[str] = None,
-        **kwargs,
-    ) -> List["SqlalchemyBase"]:
-        """
-        List records with before/after pagination, ordering by created_at.
-        Can use both before and after to fetch a window of records.
-
-        Args:
-            db_session: SQLAlchemy session
-            before: ID of item to paginate before (upper bound)
-            after: ID of item to paginate after (lower bound)
-            start_date: Filter items after this date
-            end_date: Filter items before this date
-            limit: Maximum number of items to return
-            query_text: Text to search for
-            query_embedding: Vector to search for similar embeddings
-            ascending: Sort direction
-            **kwargs: Additional filters to apply
-        """
-        if start_date and end_date and start_date > end_date:
-            raise ValueError("start_date must be earlier than or equal to end_date")
-
-        logger.debug(f"Listing {cls.__name__} with kwarg filters {kwargs}")
-
-        with db_session as session:
-            # Get the reference objects for pagination
-            before_obj = None
-            after_obj = None
-
-            if before:
-                before_obj = session.get(cls, before)
-                if not before_obj:
-                    raise NoResultFound(f"No {cls.__name__} found with id {before}")
-
-            if after:
-                after_obj = session.get(cls, after)
-                if not after_obj:
-                    raise NoResultFound(f"No {cls.__name__} found with id {after}")
-
-            # Validate that before comes after the after object if both are provided
-            if before_obj and after_obj and before_obj.created_at < after_obj.created_at:
-                raise ValueError("'before' reference must be later than 'after' reference")
-
-            query = cls._list_preprocess(
-                before_obj=before_obj,
-                after_obj=after_obj,
-                start_date=start_date,
-                end_date=end_date,
-                limit=limit,
-                query_text=query_text,
-                query_embedding=query_embedding,
-                ascending=ascending,
-                actor=actor,
-                access=access,
-                access_type=access_type,
-                join_model=join_model,
-                join_conditions=join_conditions,
-                identifier_keys=identifier_keys,
-                identity_id=identity_id,
-                **kwargs,
-            )
-
-            # Execute the query
-            results = session.execute(query)
-
-            results = list(results.scalars())
-            results = cls._list_postprocess(
-                before=before,
-                after=after,
-                limit=limit,
-                results=results,
-            )
-
-            return results
 
     @classmethod
     @handle_db_timeout
@@ -178,6 +88,7 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         identifier_keys: Optional[List[str]] = None,
         identity_id: Optional[str] = None,
         query_options: Sequence[ORMOption] | None = None,  # ← new
+        has_feedback: Optional[bool] = None,
         **kwargs,
     ) -> List["SqlalchemyBase"]:
         """
@@ -237,6 +148,7 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
             join_conditions=join_conditions,
             identifier_keys=identifier_keys,
             identity_id=identity_id,
+            has_feedback=has_feedback,
             **kwargs,
         )
         if query_options:
@@ -276,6 +188,7 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         identifier_keys: Optional[List[str]] = None,
         identity_id: Optional[str] = None,
         check_is_deleted: bool = False,
+        has_feedback: Optional[bool] = None,
         **kwargs,
     ):
         """
@@ -332,29 +245,38 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         if end_date:
             query = query.filter(cls.created_at < end_date)
 
+        # Feedback filtering
+        if has_feedback is not None and hasattr(cls, "feedback"):
+            if has_feedback:
+                query = query.filter(cls.feedback.isnot(None))
+            else:
+                query = query.filter(cls.feedback.is_(None))
+
         # Handle pagination based on before/after
         if before_obj or after_obj:
             conditions = []
 
             if before_obj and after_obj:
                 # Window-based query - get records between before and after
-                conditions = [
-                    or_(cls.created_at < before_obj.created_at, and_(cls.created_at == before_obj.created_at, cls.id < before_obj.id)),
-                    or_(cls.created_at > after_obj.created_at, and_(cls.created_at == after_obj.created_at, cls.id > after_obj.id)),
-                ]
+                conditions.append(
+                    or_(cls.created_at < before_obj.created_at, and_(cls.created_at == before_obj.created_at, cls.id < before_obj.id))
+                )
+                conditions.append(
+                    or_(cls.created_at > after_obj.created_at, and_(cls.created_at == after_obj.created_at, cls.id > after_obj.id))
+                )
             else:
                 # Pure pagination query
                 if before_obj:
                     conditions.append(
                         or_(
-                            cls.created_at < before_obj.created_at,
+                            cls.created_at < before_obj.created_at if ascending else cls.created_at > before_obj.created_at,
                             and_(cls.created_at == before_obj.created_at, cls.id < before_obj.id),
                         )
                     )
                 if after_obj:
                     conditions.append(
                         or_(
-                            cls.created_at > after_obj.created_at,
+                            cls.created_at > after_obj.created_at if ascending else cls.created_at < after_obj.created_at,
                             and_(cls.created_at == after_obj.created_at, cls.id > after_obj.id),
                         )
                     )
@@ -378,11 +300,13 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
 
             from letta.settings import settings
 
-            if settings.letta_pg_uri_no_default:
+            if settings.database_engine is DatabaseChoice.POSTGRES:
                 # PostgreSQL with pgvector
                 query = query.order_by(cls.embedding.cosine_distance(query_embedding).asc())
             else:
                 # SQLite with custom vector type
+                from letta.orm.sqlite_functions import adapt_array
+
                 query_embedding_binary = adapt_array(query_embedding)
                 query = query.order_by(
                     func.cosine_distance(cls.embedding, query_embedding_binary).asc(),
@@ -429,45 +353,6 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
 
     @classmethod
     @handle_db_timeout
-    def read(
-        cls,
-        db_session: "Session",
-        identifier: Optional[str] = None,
-        actor: Optional["User"] = None,
-        access: Optional[List[Literal["read", "write", "admin"]]] = ["read"],
-        access_type: AccessType = AccessType.ORGANIZATION,
-        check_is_deleted: bool = False,
-        **kwargs,
-    ) -> "SqlalchemyBase":
-        """The primary accessor for an ORM record.
-        Args:
-            db_session: the database session to use when retrieving the record
-            identifier: the identifier of the record to read, can be the id string or the UUID object for backwards compatibility
-            actor: if specified, results will be scoped only to records the user is able to access
-            access: if actor is specified, records will be filtered to the minimum permission level for the actor
-            kwargs: additional arguments to pass to the read, used for more complex objects
-        Returns:
-            The matching object
-        Raises:
-            NoResultFound: if the object is not found
-        """
-        # this is ok because read_multiple will check if the
-        identifiers = [] if identifier is None else [identifier]
-        found = cls.read_multiple(db_session, identifiers, actor, access, access_type, check_is_deleted, **kwargs)
-        if len(found) == 0:
-            # for backwards compatibility.
-            conditions = []
-            if identifier:
-                conditions.append(f"id={identifier}")
-            if actor:
-                conditions.append(f"access level in {access} for {actor}")
-            if check_is_deleted and hasattr(cls, "is_deleted"):
-                conditions.append("is_deleted=False")
-            raise NoResultFound(f"{cls.__name__} not found with {', '.join(conditions if conditions else ['no conditions'])}")
-        return found[0]
-
-    @classmethod
-    @handle_db_timeout
     async def read_async(
         cls,
         db_session: "AsyncSession",
@@ -490,55 +375,17 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         Raises:
             NoResultFound: if the object is not found
         """
-        from letta.settings import settings
-
         identifiers = [] if identifier is None else [identifier]
         query, query_conditions = cls._read_multiple_preprocess(identifiers, actor, access, access_type, check_is_deleted, **kwargs)
         if query is None:
             raise NoResultFound(f"{cls.__name__} not found with identifier {identifier}")
 
-        if settings.letta_pg_uri_no_default:
-            await db_session.execute(text("SET LOCAL enable_seqscan = OFF"))
-        try:
-            result = await db_session.execute(query)
-            item = result.scalar_one_or_none()
-        finally:
-            if settings.letta_pg_uri_no_default:
-                await db_session.execute(text("SET LOCAL enable_seqscan = ON"))
+        result = await db_session.execute(query)
+        item = result.scalar_one_or_none()
 
         if item is None:
             raise NoResultFound(f"{cls.__name__} not found with {', '.join(query_conditions if query_conditions else ['no conditions'])}")
         return item
-
-    @classmethod
-    @handle_db_timeout
-    def read_multiple(
-        cls,
-        db_session: "Session",
-        identifiers: List[str] = [],
-        actor: Optional["User"] = None,
-        access: Optional[List[Literal["read", "write", "admin"]]] = ["read"],
-        access_type: AccessType = AccessType.ORGANIZATION,
-        check_is_deleted: bool = False,
-        **kwargs,
-    ) -> List["SqlalchemyBase"]:
-        """The primary accessor for ORM record(s)
-        Args:
-            db_session: the database session to use when retrieving the record
-            identifiers: a list of identifiers of the records to read, can be the id string or the UUID object for backwards compatibility
-            actor: if specified, results will be scoped only to records the user is able to access
-            access: if actor is specified, records will be filtered to the minimum permission level for the actor
-            kwargs: additional arguments to pass to the read, used for more complex objects
-        Returns:
-            The matching object
-        Raises:
-            NoResultFound: if the object is not found
-        """
-        query, query_conditions = cls._read_multiple_preprocess(identifiers, actor, access, access_type, check_is_deleted, **kwargs)
-        if query is None:
-            return []
-        results = db_session.execute(query).scalars().all()
-        return cls._read_multiple_postprocess(results, identifiers, query_conditions)
 
     @classmethod
     @handle_db_timeout
@@ -627,24 +474,13 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         return []
 
     @handle_db_timeout
-    def create(self, db_session: "Session", actor: Optional["User"] = None, no_commit: bool = False) -> "SqlalchemyBase":
-        logger.debug(f"Creating {self.__class__.__name__} with ID: {self.id} with actor={actor}")
-
-        if actor:
-            self._set_created_and_updated_by_fields(actor.id)
-        try:
-            db_session.add(self)
-            if no_commit:
-                db_session.flush()  # no commit, just flush to get PK
-            else:
-                db_session.commit()
-            db_session.refresh(self)
-            return self
-        except (DBAPIError, IntegrityError) as e:
-            self._handle_dbapi_error(e)
-
-    @handle_db_timeout
-    async def create_async(self, db_session: "AsyncSession", actor: Optional["User"] = None, no_commit: bool = False) -> "SqlalchemyBase":
+    async def create_async(
+        self,
+        db_session: "AsyncSession",
+        actor: Optional["User"] = None,
+        no_commit: bool = False,
+        no_refresh: bool = False,
+    ) -> "SqlalchemyBase":
         """Async version of create function"""
         logger.debug(f"Creating {self.__class__.__name__} with ID: {self.id} with actor={actor}")
 
@@ -656,56 +492,22 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
                 await db_session.flush()  # no commit, just flush to get PK
             else:
                 await db_session.commit()
-            await db_session.refresh(self)
+
+            if not no_refresh:
+                await db_session.refresh(self)
             return self
         except (DBAPIError, IntegrityError) as e:
             self._handle_dbapi_error(e)
 
     @classmethod
     @handle_db_timeout
-    def batch_create(cls, items: List["SqlalchemyBase"], db_session: "Session", actor: Optional["User"] = None) -> List["SqlalchemyBase"]:
-        """
-        Create multiple records in a single transaction for better performance.
-        Args:
-            items: List of model instances to create
-            db_session: SQLAlchemy session
-            actor: Optional user performing the action
-        Returns:
-            List of created model instances
-        """
-        logger.debug(f"Batch creating {len(items)} {cls.__name__} items with actor={actor}")
-        if not items:
-            return []
-
-        # Set created/updated by fields if actor is provided
-        if actor:
-            for item in items:
-                item._set_created_and_updated_by_fields(actor.id)
-
-        try:
-            with db_session as session:
-                session.add_all(items)
-                session.flush()  # Flush to generate IDs but don't commit yet
-
-                # Collect IDs to fetch the complete objects after commit
-                item_ids = [item.id for item in items]
-
-                session.commit()
-
-                # Re-query the objects to get them with relationships loaded
-                query = select(cls).where(cls.id.in_(item_ids))
-                if hasattr(cls, "created_at"):
-                    query = query.order_by(cls.created_at)
-
-                return list(session.execute(query).scalars())
-
-        except (DBAPIError, IntegrityError) as e:
-            cls._handle_dbapi_error(e)
-
-    @classmethod
-    @handle_db_timeout
     async def batch_create_async(
-        cls, items: List["SqlalchemyBase"], db_session: "AsyncSession", actor: Optional["User"] = None
+        cls,
+        items: List["SqlalchemyBase"],
+        db_session: "AsyncSession",
+        actor: Optional["User"] = None,
+        no_commit: bool = False,
+        no_refresh: bool = False,
     ) -> List["SqlalchemyBase"]:
         """
         Async version of batch_create method.
@@ -714,10 +516,13 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
             items: List of model instances to create
             db_session: AsyncSession session
             actor: Optional user performing the action
+            no_commit: Whether to commit the transaction
+            no_refresh: Whether to refresh the created objects
         Returns:
             List of created model instances
         """
         logger.debug(f"Async batch creating {len(items)} {cls.__name__} items with actor={actor}")
+
         if not items:
             return []
 
@@ -728,33 +533,24 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
 
         try:
             db_session.add_all(items)
-            await db_session.flush()  # Flush to generate IDs but don't commit yet
+            if no_commit:
+                await db_session.flush()
+            else:
+                await db_session.commit()
 
-            # Collect IDs to fetch the complete objects after commit
-            item_ids = [item.id for item in items]
+            if no_refresh:
+                return items
+            else:
+                # Re-query the objects to get them with relationships loaded
+                item_ids = [item.id for item in items]
+                query = select(cls).where(cls.id.in_(item_ids))
+                if hasattr(cls, "created_at"):
+                    query = query.order_by(cls.created_at)
 
-            await db_session.commit()
-
-            # Re-query the objects to get them with relationships loaded
-            query = select(cls).where(cls.id.in_(item_ids))
-            if hasattr(cls, "created_at"):
-                query = query.order_by(cls.created_at)
-
-            result = await db_session.execute(query)
-            return list(result.scalars())
-
+                result = await db_session.execute(query)
+                return list(result.scalars())
         except (DBAPIError, IntegrityError) as e:
             cls._handle_dbapi_error(e)
-
-    @handle_db_timeout
-    def delete(self, db_session: "Session", actor: Optional["User"] = None) -> "SqlalchemyBase":
-        logger.debug(f"Soft deleting {self.__class__.__name__} with ID: {self.id} with actor={actor}")
-
-        if actor:
-            self._set_created_and_updated_by_fields(actor.id)
-
-        self.is_deleted = True
-        return self.update(db_session)
 
     @handle_db_timeout
     async def delete_async(self, db_session: "AsyncSession", actor: Optional["User"] = None) -> "SqlalchemyBase":
@@ -766,22 +562,6 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
 
         self.is_deleted = True
         return await self.update_async(db_session)
-
-    @handle_db_timeout
-    def hard_delete(self, db_session: "Session", actor: Optional["User"] = None) -> None:
-        """Permanently removes the record from the database."""
-        logger.debug(f"Hard deleting {self.__class__.__name__} with ID: {self.id} with actor={actor}")
-
-        with db_session as session:
-            try:
-                session.delete(self)
-                session.commit()
-            except Exception as e:
-                session.rollback()
-                logger.exception(f"Failed to hard delete {self.__class__.__name__} with ID {self.id}")
-                raise ValueError(f"Failed to hard delete {self.__class__.__name__} with ID {self.id}: {e}")
-            else:
-                logger.debug(f"{self.__class__.__name__} with ID {self.id} successfully hard deleted")
 
     @handle_db_timeout
     async def hard_delete_async(self, db_session: "AsyncSession", actor: Optional["User"] = None) -> None:
@@ -826,36 +606,27 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
             raise ValueError(f"Failed to hard delete {cls.__name__} with identifiers {identifiers}: {e}")
 
     @handle_db_timeout
-    def update(self, db_session: Session, actor: Optional["User"] = None, no_commit: bool = False) -> "SqlalchemyBase":
-        logger.debug(...)
-        if actor:
-            self._set_created_and_updated_by_fields(actor.id)
-        self.set_updated_at()
-
-        # remove the context manager:
-        db_session.add(self)
-        if no_commit:
-            db_session.flush()  # no commit, just flush to get PK
-        else:
-            db_session.commit()
-        db_session.refresh(self)
-        return self
-
-    @handle_db_timeout
-    async def update_async(self, db_session: AsyncSession, actor: "User | None" = None, no_commit: bool = False) -> "SqlalchemyBase":
+    async def update_async(
+        self, db_session: "AsyncSession", actor: Optional["User"] = None, no_commit: bool = False, no_refresh: bool = False
+    ) -> "SqlalchemyBase":
         """Async version of update function"""
-        logger.debug(...)
+        logger.debug(f"Updating {self.__class__.__name__} with ID: {self.id} with actor={actor}")
+
         if actor:
             self._set_created_and_updated_by_fields(actor.id)
         self.set_updated_at()
+        try:
+            db_session.add(self)
+            if no_commit:
+                await db_session.flush()
+            else:
+                await db_session.commit()
 
-        db_session.add(self)
-        if no_commit:
-            await db_session.flush()
-        else:
-            await db_session.commit()
-        await db_session.refresh(self)
-        return self
+            if not no_refresh:
+                await db_session.refresh(self)
+            return self
+        except (DBAPIError, IntegrityError) as e:
+            self._handle_dbapi_error(e)
 
     @classmethod
     def _size_preprocess(
@@ -889,48 +660,6 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
             query = query.where(cls.is_deleted == False)
 
         return query
-
-    @classmethod
-    @handle_db_timeout
-    def size(
-        cls,
-        *,
-        db_session: "Session",
-        actor: Optional["User"] = None,
-        access: Optional[List[Literal["read", "write", "admin"]]] = ["read"],
-        access_type: AccessType = AccessType.ORGANIZATION,
-        check_is_deleted: bool = False,
-        **kwargs,
-    ) -> int:
-        """
-        Get the count of rows that match the provided filters.
-
-        Args:
-            db_session: SQLAlchemy session
-            **kwargs: Filters to apply to the query (e.g., column_name=value)
-
-        Returns:
-            int: The count of rows that match the filters
-
-        Raises:
-            DBAPIError: If a database error occurs
-        """
-        with db_session as session:
-            query = cls._size_preprocess(
-                db_session=session,
-                actor=actor,
-                access=access,
-                access_type=access_type,
-                check_is_deleted=check_is_deleted,
-                **kwargs,
-            )
-
-            try:
-                count = session.execute(query).scalar()
-                return count if count else 0
-            except DBAPIError as e:
-                logger.exception(f"Failed to calculate size for {cls.__name__}")
-                raise e
 
     @classmethod
     @handle_db_timeout

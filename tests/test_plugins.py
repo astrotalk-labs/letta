@@ -1,12 +1,12 @@
 import pytest
 
-from letta.data_sources.redis_client import get_redis_client
+from letta.data_sources.redis_client import NoopAsyncRedisClient, get_redis_client
 from letta.helpers.decorators import experimental
 from letta.settings import settings
 
 
 @pytest.mark.asyncio
-async def test_default_experimental_decorator(event_loop):
+async def test_default_experimental_decorator():
     settings.plugin_register = "experimental_check=tests.helpers.plugins_helper:is_experimental_okay"
 
     @experimental("test_just_pass", fallback_function=lambda: False, kwarg1=3)
@@ -18,7 +18,7 @@ async def test_default_experimental_decorator(event_loop):
 
 
 @pytest.mark.asyncio
-async def test_overwrite_arg_success(event_loop):
+async def test_overwrite_arg_success():
     settings.plugin_register = "experimental_check=tests.helpers.plugins_helper:is_experimental_okay"
 
     @experimental("test_override_kwarg", fallback_function=lambda *args, **kwargs: False, bool_val=True)
@@ -31,7 +31,7 @@ async def test_overwrite_arg_success(event_loop):
 
 
 @pytest.mark.asyncio
-async def test_overwrite_arg_fail(event_loop):
+async def test_overwrite_arg_fail():
     # Should fallback to lambda
     settings.plugin_register = "experimental_check=tests.helpers.plugins_helper:is_experimental_okay"
 
@@ -61,7 +61,7 @@ async def test_overwrite_arg_fail(event_loop):
 
 
 @pytest.mark.asyncio
-async def test_redis_flag(event_loop):
+async def test_redis_flag():
     settings.plugin_register = "experimental_check=tests.helpers.plugins_helper:is_experimental_okay"
 
     @experimental("test_redis_flag", fallback_function=lambda *args, **kwargs: _raise())
@@ -86,7 +86,11 @@ async def test_redis_flag(event_loop):
     await redis_client.create_inclusion_exclusion_keys(group=group_name)
     await redis_client.sadd(include_key, test_user)
 
-    assert await _new_feature(user_id=test_user) == "new_feature"
-    with pytest.raises(Exception):
-        assert await _new_feature(user_id=test_user + "1")
-    print("members: ", await redis_client.smembers(include_key))
+    if not isinstance(redis_client, NoopAsyncRedisClient):
+        assert await _new_feature(user_id=test_user) == "new_feature"
+        with pytest.raises(Exception):
+            await _new_feature(user_id=test_user + "1")
+        print("members: ", await redis_client.smembers(include_key))
+    else:
+        with pytest.raises(Exception):
+            await _new_feature(user_id=test_user)

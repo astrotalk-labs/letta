@@ -1,6 +1,7 @@
-from typing import List, Optional
+from datetime import datetime
+from typing import List, Optional, Union
 
-from sqlalchemy import select
+from sqlalchemy import and_, asc, delete, desc, or_, select
 from sqlalchemy.orm import Session
 
 from letta.orm.agent import Agent as AgentModel
@@ -8,20 +9,21 @@ from letta.orm.errors import NoResultFound
 from letta.orm.group import Group as GroupModel
 from letta.orm.message import Message as MessageModel
 from letta.otel.tracing import trace_method
-from letta.schemas.group import Group as PydanticGroup
-from letta.schemas.group import GroupCreate, GroupUpdate, ManagerType
+from letta.schemas.enums import PrimitiveType
+from letta.schemas.group import Group as PydanticGroup, GroupCreate, GroupUpdate, InternalTemplateGroupCreate, ManagerType
 from letta.schemas.letta_message import LettaMessage
 from letta.schemas.message import Message as PydanticMessage
 from letta.schemas.user import User as PydanticUser
 from letta.server.db import db_registry
+from letta.settings import DatabaseChoice, settings
 from letta.utils import enforce_types
+from letta.validators import raise_on_invalid_id
 
 
 class GroupManager:
-
-    @trace_method
     @enforce_types
-    def list_groups(
+    @trace_method
+    async def list_groups_async(
         self,
         actor: PydanticUser,
         project_id: Optional[str] = None,
@@ -29,84 +31,47 @@ class GroupManager:
         before: Optional[str] = None,
         after: Optional[str] = None,
         limit: Optional[int] = 50,
+        ascending: bool = True,
+        show_hidden_groups: Optional[bool] = None,
     ) -> list[PydanticGroup]:
-        with db_registry.session() as session:
-            filters = {"organization_id": actor.organization_id}
+        async with db_registry.async_session() as session:
+            from sqlalchemy import select
+
+            from letta.orm.sqlalchemy_base import AccessType
+
+            query = select(GroupModel)
+            query = GroupModel.apply_access_predicate(query, actor, ["read"], AccessType.ORGANIZATION)
+
+            # Apply filters
             if project_id:
-                filters["project_id"] = project_id
+                query = query.where(GroupModel.project_id == project_id)
             if manager_type:
-                filters["manager_type"] = manager_type
-            groups = GroupModel.list(
-                db_session=session,
-                before=before,
-                after=after,
-                limit=limit,
-                **filters,
-            )
+                query = query.where(GroupModel.manager_type == manager_type)
+
+            # Apply hidden filter
+            if not show_hidden_groups:
+                query = query.where((GroupModel.hidden.is_(None)) | (GroupModel.hidden == False))
+
+            # Apply pagination
+            query = await _apply_group_pagination_async(query, before, after, session, ascending=ascending)
+
+            if limit:
+                query = query.limit(limit)
+
+            result = await session.execute(query)
+            groups = result.scalars().all()
             return [group.to_pydantic() for group in groups]
 
-    @trace_method
     @enforce_types
-    def retrieve_group(self, group_id: str, actor: PydanticUser) -> PydanticGroup:
-        with db_registry.session() as session:
-            group = GroupModel.read(db_session=session, identifier=group_id, actor=actor)
-            return group.to_pydantic()
-
     @trace_method
-    @enforce_types
+    @raise_on_invalid_id(param_name="group_id", expected_prefix=PrimitiveType.GROUP)
     async def retrieve_group_async(self, group_id: str, actor: PydanticUser) -> PydanticGroup:
         async with db_registry.async_session() as session:
             group = await GroupModel.read_async(db_session=session, identifier=group_id, actor=actor)
             return group.to_pydantic()
 
-    @trace_method
     @enforce_types
-    def create_group(self, group: GroupCreate, actor: PydanticUser) -> PydanticGroup:
-        with db_registry.session() as session:
-            new_group = GroupModel()
-            new_group.organization_id = actor.organization_id
-            new_group.description = group.description
-
-            match group.manager_config.manager_type:
-                case ManagerType.round_robin:
-                    new_group.manager_type = ManagerType.round_robin
-                    new_group.max_turns = group.manager_config.max_turns
-                case ManagerType.dynamic:
-                    new_group.manager_type = ManagerType.dynamic
-                    new_group.manager_agent_id = group.manager_config.manager_agent_id
-                    new_group.max_turns = group.manager_config.max_turns
-                    new_group.termination_token = group.manager_config.termination_token
-                case ManagerType.supervisor:
-                    new_group.manager_type = ManagerType.supervisor
-                    new_group.manager_agent_id = group.manager_config.manager_agent_id
-                case ManagerType.sleeptime:
-                    new_group.manager_type = ManagerType.sleeptime
-                    new_group.manager_agent_id = group.manager_config.manager_agent_id
-                    new_group.sleeptime_agent_frequency = group.manager_config.sleeptime_agent_frequency
-                    if new_group.sleeptime_agent_frequency:
-                        new_group.turns_counter = -1
-                case ManagerType.voice_sleeptime:
-                    new_group.manager_type = ManagerType.voice_sleeptime
-                    new_group.manager_agent_id = group.manager_config.manager_agent_id
-                    max_message_buffer_length = group.manager_config.max_message_buffer_length
-                    min_message_buffer_length = group.manager_config.min_message_buffer_length
-                    # Safety check for buffer length range
-                    self.ensure_buffer_length_range_valid(max_value=max_message_buffer_length, min_value=min_message_buffer_length)
-                    new_group.max_message_buffer_length = max_message_buffer_length
-                    new_group.min_message_buffer_length = min_message_buffer_length
-                case _:
-                    raise ValueError(f"Unsupported manager type: {group.manager_config.manager_type}")
-
-            self._process_agent_relationship(session=session, group=new_group, agent_ids=group.agent_ids, allow_partial=False)
-
-            if group.shared_block_ids:
-                self._process_shared_block_relationship(session=session, group=new_group, block_ids=group.shared_block_ids)
-
-            new_group.create(session, actor=actor)
-            return new_group.to_pydantic()
-
-    @enforce_types
-    async def create_group_async(self, group: GroupCreate, actor: PydanticUser) -> PydanticGroup:
+    async def create_group_async(self, group: Union[GroupCreate, InternalTemplateGroupCreate], actor: PydanticUser) -> PydanticGroup:
         async with db_registry.async_session() as session:
             new_group = GroupModel()
             new_group.organization_id = actor.organization_id
@@ -141,6 +106,11 @@ class GroupManager:
                     new_group.min_message_buffer_length = min_message_buffer_length
                 case _:
                     raise ValueError(f"Unsupported manager type: {group.manager_config.manager_type}")
+
+            if isinstance(group, InternalTemplateGroupCreate):
+                new_group.base_template_id = group.base_template_id
+                new_group.template_id = group.template_id
+                new_group.deployment_id = group.deployment_id
 
             await self._process_agent_relationship_async(session=session, group=new_group, agent_ids=group.agent_ids, allow_partial=False)
 
@@ -150,8 +120,9 @@ class GroupManager:
             await new_group.create_async(session, actor=actor)
             return new_group.to_pydantic()
 
-    @trace_method
     @enforce_types
+    @trace_method
+    @raise_on_invalid_id(param_name="group_id", expected_prefix=PrimitiveType.GROUP)
     async def modify_group_async(self, group_id: str, group_update: GroupUpdate, actor: PydanticUser) -> PydanticGroup:
         async with db_registry.async_session() as session:
             group = await GroupModel.read_async(db_session=session, identifier=group_id, actor=actor)
@@ -164,7 +135,7 @@ class GroupManager:
             manager_agent_id = None
             if group_update.manager_config:
                 if group_update.manager_config.manager_type != group.manager_type:
-                    raise ValueError(f"Cannot change group pattern after creation")
+                    raise ValueError("Cannot change group pattern after creation")
                 match group_update.manager_config.manager_type:
                     case ManagerType.round_robin:
                         max_turns = group_update.manager_config.max_turns
@@ -213,17 +184,18 @@ class GroupManager:
             await group.update_async(session, actor=actor)
             return group.to_pydantic()
 
-    @trace_method
     @enforce_types
-    def delete_group(self, group_id: str, actor: PydanticUser) -> None:
-        with db_registry.session() as session:
-            # Retrieve the agent
-            group = GroupModel.read(db_session=session, identifier=group_id, actor=actor)
-            group.hard_delete(session)
+    @trace_method
+    @raise_on_invalid_id(param_name="group_id", expected_prefix=PrimitiveType.GROUP)
+    async def delete_group_async(self, group_id: str, actor: PydanticUser) -> None:
+        async with db_registry.async_session() as session:
+            group = await GroupModel.read_async(db_session=session, identifier=group_id, actor=actor)
+            await group.hard_delete_async(session)
 
-    @trace_method
     @enforce_types
-    def list_group_messages(
+    @trace_method
+    @raise_on_invalid_id(param_name="group_id", expected_prefix=PrimitiveType.GROUP)
+    async def list_group_messages_async(
         self,
         actor: PydanticUser,
         group_id: Optional[str] = None,
@@ -234,12 +206,12 @@ class GroupManager:
         assistant_message_tool_name: str = "send_message",
         assistant_message_tool_kwarg: str = "message",
     ) -> list[LettaMessage]:
-        with db_registry.session() as session:
+        async with db_registry.async_session() as session:
             filters = {
                 "organization_id": actor.organization_id,
                 "group_id": group_id,
             }
-            messages = MessageModel.list(
+            messages = await MessageModel.list_async(
                 db_session=session,
                 before=before,
                 after=after,
@@ -258,34 +230,25 @@ class GroupManager:
 
             return messages
 
-    @trace_method
     @enforce_types
-    def reset_messages(self, group_id: str, actor: PydanticUser) -> None:
-        with db_registry.session() as session:
+    @trace_method
+    @raise_on_invalid_id(param_name="group_id", expected_prefix=PrimitiveType.GROUP)
+    async def reset_messages_async(self, group_id: str, actor: PydanticUser) -> None:
+        async with db_registry.async_session() as session:
             # Ensure group is loadable by user
-            group = GroupModel.read(db_session=session, identifier=group_id, actor=actor)
+            group = await GroupModel.read_async(db_session=session, identifier=group_id, actor=actor)
 
             # Delete all messages in the group
-            session.query(MessageModel).filter(
+            delete_stmt = delete(MessageModel).where(
                 MessageModel.organization_id == actor.organization_id, MessageModel.group_id == group_id
-            ).delete(synchronize_session=False)
+            )
+            await session.execute(delete_stmt)
 
-            session.commit()
+            await session.commit()
 
-    @trace_method
     @enforce_types
-    def bump_turns_counter(self, group_id: str, actor: PydanticUser) -> int:
-        with db_registry.session() as session:
-            # Ensure group is loadable by user
-            group = GroupModel.read(db_session=session, identifier=group_id, actor=actor)
-
-            # Update turns counter
-            group.turns_counter = (group.turns_counter + 1) % group.sleeptime_agent_frequency
-            group.update(session, actor=actor)
-            return group.turns_counter
-
     @trace_method
-    @enforce_types
+    @raise_on_invalid_id(param_name="group_id", expected_prefix=PrimitiveType.GROUP)
     async def bump_turns_counter_async(self, group_id: str, actor: PydanticUser) -> int:
         async with db_registry.async_session() as session:
             # Ensure group is loadable by user
@@ -297,20 +260,9 @@ class GroupManager:
             return group.turns_counter
 
     @enforce_types
-    def get_last_processed_message_id_and_update(self, group_id: str, last_processed_message_id: str, actor: PydanticUser) -> str:
-        with db_registry.session() as session:
-            # Ensure group is loadable by user
-            group = GroupModel.read(db_session=session, identifier=group_id, actor=actor)
-
-            # Update last processed message id
-            prev_last_processed_message_id = group.last_processed_message_id
-            group.last_processed_message_id = last_processed_message_id
-            group.update(session, actor=actor)
-
-            return prev_last_processed_message_id
-
     @trace_method
-    @enforce_types
+    @raise_on_invalid_id(param_name="group_id", expected_prefix=PrimitiveType.GROUP)
+    @raise_on_invalid_id(param_name="last_processed_message_id", expected_prefix=PrimitiveType.MESSAGE)
     async def get_last_processed_message_id_and_update_async(
         self, group_id: str, last_processed_message_id: str, actor: PydanticUser
     ) -> str:
@@ -326,15 +278,15 @@ class GroupManager:
             return prev_last_processed_message_id
 
     @enforce_types
-    def size(
+    async def size(
         self,
         actor: PydanticUser,
     ) -> int:
         """
         Get the total count of groups for the given user.
         """
-        with db_registry.session() as session:
-            return GroupModel.size(db_session=session, actor=actor)
+        async with db_registry.async_session() as session:
+            return await GroupModel.size_async(db_session=session, actor=actor)
 
     def _process_agent_relationship(self, session: Session, group: GroupModel, agent_ids: List[str], allow_partial=False, replace=True):
         if not agent_ids:
@@ -473,7 +425,7 @@ class GroupManager:
         # 1) require both-or-none
         if (max_value is None) != (min_value is None):
             raise ValueError(
-                f"Both '{max_name}' and '{min_name}' must be provided together " f"(got {max_name}={max_value}, {min_name}={min_value})"
+                f"Both '{max_name}' and '{min_name}' must be provided together (got {max_name}={max_value}, {min_name}={min_value})"
             )
 
         # no further checks if neither is provided
@@ -488,9 +440,56 @@ class GroupManager:
             )
         if max_value <= 4 or min_value <= 4:
             raise ValueError(
-                f"Both '{max_name}' and '{min_name}' must be greater than 4 " f"(got {max_name}={max_value}, {min_name}={min_value})"
+                f"Both '{max_name}' and '{min_name}' must be greater than 4 (got {max_name}={max_value}, {min_name}={min_value})"
             )
 
         # 3) ordering
         if max_value <= min_value:
-            raise ValueError(f"'{max_name}' must be greater than '{min_name}' " f"(got {max_name}={max_value} <= {min_name}={min_value})")
+            raise ValueError(f"'{max_name}' must be greater than '{min_name}' (got {max_name}={max_value} <= {min_name}={min_value})")
+
+
+def _cursor_filter(sort_col, id_col, ref_sort_col, ref_id, forward: bool):
+    """
+    Returns a SQLAlchemy filter expression for cursor-based pagination for groups.
+
+    If `forward` is True, returns records after the reference.
+    If `forward` is False, returns records before the reference.
+    """
+    if forward:
+        return or_(
+            sort_col > ref_sort_col,
+            and_(sort_col == ref_sort_col, id_col > ref_id),
+        )
+    else:
+        return or_(
+            sort_col < ref_sort_col,
+            and_(sort_col == ref_sort_col, id_col < ref_id),
+        )
+
+
+async def _apply_group_pagination_async(query, before: Optional[str], after: Optional[str], session, ascending: bool = True) -> any:
+    """Apply cursor-based pagination to group queries."""
+    sort_column = GroupModel.created_at
+
+    if after:
+        result = (await session.execute(select(sort_column, GroupModel.id).where(GroupModel.id == after))).first()
+        if result:
+            after_sort_value, after_id = result
+            # SQLite does not support as granular timestamping, so we need to round the timestamp
+            if settings.database_engine is DatabaseChoice.SQLITE and isinstance(after_sort_value, datetime):
+                after_sort_value = after_sort_value.strftime("%Y-%m-%d %H:%M:%S")
+            query = query.where(_cursor_filter(sort_column, GroupModel.id, after_sort_value, after_id, forward=ascending))
+
+    if before:
+        result = (await session.execute(select(sort_column, GroupModel.id).where(GroupModel.id == before))).first()
+        if result:
+            before_sort_value, before_id = result
+            # SQLite does not support as granular timestamping, so we need to round the timestamp
+            if settings.database_engine is DatabaseChoice.SQLITE and isinstance(before_sort_value, datetime):
+                before_sort_value = before_sort_value.strftime("%Y-%m-%d %H:%M:%S")
+            query = query.where(_cursor_filter(sort_column, GroupModel.id, before_sort_value, before_id, forward=not ascending))
+
+    # Apply ordering
+    order_fn = asc if ascending else desc
+    query = query.order_by(order_fn(sort_column), order_fn(GroupModel.id))
+    return query

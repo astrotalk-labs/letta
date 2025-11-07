@@ -1,3 +1,4 @@
+import asyncio
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from e2b.sandbox.commands.command_handle import CommandExitException
@@ -6,7 +7,8 @@ from e2b_code_interpreter import AsyncSandbox
 from letta.log import get_logger
 from letta.otel.tracing import log_event, trace_method
 from letta.schemas.agent import AgentState
-from letta.schemas.sandbox_config import SandboxConfig, SandboxType
+from letta.schemas.enums import SandboxType
+from letta.schemas.sandbox_config import SandboxConfig
 from letta.schemas.tool import Tool
 from letta.schemas.tool_execution_result import ToolExecutionResult
 from letta.services.helpers.tool_parser_helper import parse_stdout_best_effort
@@ -42,22 +44,7 @@ class AsyncToolSandboxE2B(AsyncToolSandboxBase):
         agent_state: Optional[AgentState] = None,
         additional_env_vars: Optional[Dict] = None,
     ) -> ToolExecutionResult:
-        """
-        Run the tool in a sandbox environment asynchronously,
-        *always* using a subprocess for execution.
-        """
-        result = await self.run_e2b_sandbox(agent_state=agent_state, additional_env_vars=additional_env_vars)
-
-        # Simple console logging for demonstration
-        for log_line in (result.stdout or []) + (result.stderr or []):
-            print(f"Tool execution log: {log_line}")
-
-        return result
-
-    @trace_method
-    async def run_e2b_sandbox(
-        self, agent_state: Optional[AgentState] = None, additional_env_vars: Optional[Dict] = None
-    ) -> ToolExecutionResult:
+        await self._init_async()
         if self.provided_sandbox_config:
             sbx_config = self.provided_sandbox_config
         else:
@@ -76,75 +63,79 @@ class AsyncToolSandboxE2B(AsyncToolSandboxBase):
         # await sbx.set_timeout(sbx_config.get_e2b_config().timeout)
 
         # Get environment variables for the sandbox
-        # TODO: We set limit to 100 here, but maybe we want it uncapped? Realistically this should be fine.
-        env_vars = {}
-        if self.provided_sandbox_env_vars:
-            env_vars.update(self.provided_sandbox_env_vars)
-        else:
-            db_env_vars = await self.sandbox_config_manager.get_sandbox_env_vars_as_dict_async(
-                sandbox_config_id=sbx_config.id, actor=self.user, limit=100
-            )
-            env_vars.update(db_env_vars)
-        # Get environment variables for this agent specifically
-        if agent_state:
-            env_vars.update(agent_state.get_agent_env_vars_as_dict())
+        envs = await self._gather_env_vars(agent_state, additional_env_vars, sbx_config.id, is_local=False)
+        code = await self.generate_execution_script(agent_state=agent_state)
 
-        # Finally, get any that are passed explicitly into the `run` function call
-        if additional_env_vars:
-            env_vars.update(additional_env_vars)
-        code = self.generate_execution_script(agent_state=agent_state)
+        try:
+            logger.info(f"E2B execution started for ID {e2b_sandbox.sandbox_id}: {self.tool_name}")
+            log_event(
+                "e2b_execution_started",
+                {"tool": self.tool_name, "sandbox_id": e2b_sandbox.sandbox_id, "code": code, "env_vars": envs},
+            )
+            try:
+                execution = await e2b_sandbox.run_code(code, envs=envs)
+            except asyncio.CancelledError:
+                logger.info(f"E2B execution cancelled for ID {e2b_sandbox.sandbox_id}: {self.tool_name}")
+                log_event(
+                    "e2b_execution_cancelled",
+                    {"tool": self.tool_name, "sandbox_id": e2b_sandbox.sandbox_id},
+                )
+                raise Exception("Execution cancelled. Transient failure, please retry.")
 
-        log_event(
-            "e2b_execution_started",
-            {"tool": self.tool_name, "sandbox_id": e2b_sandbox.sandbox_id, "code": code, "env_vars": env_vars},
-        )
-        execution = await e2b_sandbox.run_code(code, envs=env_vars)
-        if execution.results:
-            func_return, agent_state = parse_stdout_best_effort(execution.results[0].text)
-            log_event(
-                "e2b_execution_succeeded",
-                {
-                    "tool": self.tool_name,
-                    "sandbox_id": e2b_sandbox.sandbox_id,
-                    "func_return": func_return,
-                },
-            )
-        elif execution.error:
-            logger.error(f"Executing tool {self.tool_name} raised a {execution.error.name} with message: \n{execution.error.value}")
-            logger.error(f"Traceback from e2b sandbox: \n{execution.error.traceback}")
-            func_return = get_friendly_error_msg(
-                function_name=self.tool_name, exception_name=execution.error.name, exception_message=execution.error.value
-            )
-            execution.logs.stderr.append(execution.error.traceback)
-            log_event(
-                "e2b_execution_failed",
-                {
-                    "tool": self.tool_name,
-                    "sandbox_id": e2b_sandbox.sandbox_id,
-                    "error_type": execution.error.name,
-                    "error_message": execution.error.value,
-                    "func_return": func_return,
-                },
-            )
-        else:
-            log_event(
-                "e2b_execution_empty",
-                {
-                    "tool": self.tool_name,
-                    "sandbox_id": e2b_sandbox.sandbox_id,
-                    "status": "no_results_no_error",
-                },
-            )
-            raise ValueError(f"Tool {self.tool_name} returned execution with None")
+            if execution.results:
+                func_return, agent_state = parse_stdout_best_effort(execution.results[0].text)
+                logger.info(f"E2B execution succeeded for ID {e2b_sandbox.sandbox_id}: {self.tool_name}")
+                log_event(
+                    "e2b_execution_succeeded",
+                    {
+                        "tool": self.tool_name,
+                        "sandbox_id": e2b_sandbox.sandbox_id,
+                        "func_return": func_return,
+                    },
+                )
+            elif execution.error:
+                # Tool errors are expected behavior - tools can raise exceptions as part of their normal operation
+                # Only log at debug level to avoid triggering Sentry alerts for expected errors
+                logger.debug(f"Tool {self.tool_name} raised a {execution.error.name}: {execution.error.value}")
+                logger.debug(f"Traceback from e2b sandbox: \n{execution.error.traceback}")
+                func_return = get_friendly_error_msg(
+                    function_name=self.tool_name, exception_name=execution.error.name, exception_message=execution.error.value
+                )
+                execution.logs.stderr.append(execution.error.traceback)
+                logger.info(f"E2B execution failed for ID {e2b_sandbox.sandbox_id}: {self.tool_name}")
+                log_event(
+                    "e2b_execution_failed",
+                    {
+                        "tool": self.tool_name,
+                        "sandbox_id": e2b_sandbox.sandbox_id,
+                        "error_type": execution.error.name,
+                        "error_message": execution.error.value,
+                        "func_return": func_return,
+                    },
+                )
+            else:
+                logger.info(f"E2B execution empty for ID {e2b_sandbox.sandbox_id}: {self.tool_name}")
+                log_event(
+                    "e2b_execution_empty",
+                    {
+                        "tool": self.tool_name,
+                        "sandbox_id": e2b_sandbox.sandbox_id,
+                        "status": "no_results_no_error",
+                    },
+                )
+                raise ValueError(f"Tool {self.tool_name} returned execution with None")
 
-        return ToolExecutionResult(
-            func_return=func_return,
-            agent_state=agent_state,
-            stdout=execution.logs.stdout,
-            stderr=execution.logs.stderr,
-            status="error" if execution.error else "success",
-            sandbox_config_fingerprint=sbx_config.fingerprint(),
-        )
+            return ToolExecutionResult(
+                func_return=func_return,
+                agent_state=agent_state,
+                stdout=execution.logs.stdout,
+                stderr=execution.logs.stderr,
+                status="error" if execution.error else "success",
+                sandbox_config_fingerprint=sbx_config.fingerprint(),
+            )
+        finally:
+            logger.info(f"E2B sandbox {e2b_sandbox.sandbox_id} killed")
+            await e2b_sandbox.kill()
 
     @staticmethod
     def parse_exception_from_e2b_execution(e2b_execution: "Execution") -> Exception:
@@ -249,6 +240,13 @@ class AsyncToolSandboxE2B(AsyncToolSandboxBase):
                     raise RuntimeError(error_msg) from e
 
         return sbx
+
+    def use_top_level_await(self) -> bool:
+        """
+        E2B sandboxes run in a Jupyter-like environment with an active event loop,
+        so they support top-level await.
+        """
+        return True
 
     @staticmethod
     async def list_running_e2b_sandboxes():

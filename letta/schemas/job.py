@@ -1,24 +1,46 @@
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from letta.schemas.enums import PrimitiveType
+
+if TYPE_CHECKING:
+    from letta.schemas.letta_request import LettaRequest
 
 from letta.constants import DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG
-from letta.orm.enums import JobType
-from letta.schemas.enums import JobStatus
+from letta.helpers.datetime_helpers import get_utc_time
+from letta.schemas.enums import JobStatus, JobType
 from letta.schemas.letta_base import OrmMetadataBase
+from letta.schemas.letta_message import MessageType
+from letta.schemas.letta_stop_reason import StopReasonType
 
 
 class JobBase(OrmMetadataBase):
-    __id_prefix__ = "job"
+    __id_prefix__ = PrimitiveType.JOB.value
     status: JobStatus = Field(default=JobStatus.created, description="The status of the job.")
+    created_at: datetime = Field(default_factory=get_utc_time, description="The unix timestamp of when the job was created.")
+
+    # completion related
     completed_at: Optional[datetime] = Field(None, description="The unix timestamp of when the job was completed.")
+    stop_reason: Optional[StopReasonType] = Field(None, description="The reason why the job was stopped.")
+
+    # metadata
     metadata: Optional[dict] = Field(None, validation_alias="metadata_", description="The metadata of the job.")
     job_type: JobType = Field(default=JobType.JOB, description="The type of the job.")
+
+    # Run-specific fields
+    background: Optional[bool] = Field(None, description="Whether the job was created in background mode.")
+    agent_id: Optional[str] = Field(None, description="The agent associated with this job/run.")
 
     callback_url: Optional[str] = Field(None, description="If set, POST to this URL when the job completes.")
     callback_sent_at: Optional[datetime] = Field(None, description="Timestamp when the callback was last attempted.")
     callback_status_code: Optional[int] = Field(None, description="HTTP status code returned by the callback endpoint.")
+    callback_error: Optional[str] = Field(None, description="Optional error message from attempting to POST the callback endpoint.")
+
+    # Timing metrics (in nanoseconds for precision)
+    ttft_ns: int | None = Field(None, description="Time to first token for a run in nanoseconds")
+    total_duration_ns: int | None = Field(None, description="Total run duration in nanoseconds")
 
 
 class Job(JobBase):
@@ -76,8 +98,7 @@ class BatchJob(JobBase):
 class JobUpdate(JobBase):
     status: Optional[JobStatus] = Field(None, description="The status of the job.")
 
-    class Config:
-        extra = "ignore"  # Ignores extra fields
+    model_config = ConfigDict(extra="ignore")  # Ignores extra fields
 
 
 class LettaRequestConfig(BaseModel):
@@ -93,3 +114,16 @@ class LettaRequestConfig(BaseModel):
         default=DEFAULT_MESSAGE_TOOL_KWARG,
         description="The name of the message argument in the designated message tool.",
     )
+    include_return_message_types: Optional[List[MessageType]] = Field(
+        default=None, description="Only return specified message types in the response. If `None` (default) returns all messages."
+    )
+
+    @classmethod
+    def from_letta_request(cls, request: "LettaRequest") -> "LettaRequestConfig":
+        """Create a LettaRequestConfig from a LettaRequest."""
+        return cls(
+            use_assistant_message=request.use_assistant_message,
+            assistant_message_tool_name=request.assistant_message_tool_name,
+            assistant_message_tool_kwarg=request.assistant_message_tool_kwarg,
+            include_return_message_types=request.include_return_message_types,
+        )

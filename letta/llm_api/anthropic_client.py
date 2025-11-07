@@ -5,12 +5,12 @@ from typing import Dict, List, Optional, Union
 
 import anthropic
 from anthropic import AsyncStream
-from anthropic.types.beta import BetaMessage as AnthropicMessage
-from anthropic.types.beta import BetaRawMessageStreamEvent
+from anthropic.types.beta import BetaMessage as AnthropicMessage, BetaRawMessageStreamEvent
 from anthropic.types.beta.message_create_params import MessageCreateParamsNonStreaming
 from anthropic.types.beta.messages import BetaMessageBatch
 from anthropic.types.beta.messages.batch_create_params import Request
 
+from letta.constants import FUNC_FAILED_HEARTBEAT_MESSAGE, REQ_HEARTBEAT_MESSAGE, REQUEST_HEARTBEAT_PARAM
 from letta.errors import (
     ContextWindowExceededError,
     ErrorCode,
@@ -21,22 +21,28 @@ from letta.errors import (
     LLMPermissionDeniedError,
     LLMRateLimitError,
     LLMServerError,
+    LLMTimeoutError,
     LLMUnprocessableEntityError,
 )
 from letta.helpers.datetime_helpers import get_utc_time_int
+from letta.helpers.decorators import deprecated
 from letta.llm_api.helpers import add_inner_thoughts_to_functions, unpack_all_inner_thoughts_from_kwargs
 from letta.llm_api.llm_client_base import LLMClientBase
 from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION
 from letta.log import get_logger
 from letta.otel.tracing import trace_method
-from letta.schemas.enums import ProviderCategory
+from letta.schemas.agent import AgentType
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.message import Message as PydanticMessage
 from letta.schemas.openai.chat_completion_request import Tool as OpenAITool
-from letta.schemas.openai.chat_completion_response import ChatCompletionResponse, Choice, FunctionCall
-from letta.schemas.openai.chat_completion_response import Message as ChoiceMessage
-from letta.schemas.openai.chat_completion_response import ToolCall, UsageStatistics
-from letta.services.provider_manager import ProviderManager
+from letta.schemas.openai.chat_completion_response import (
+    ChatCompletionResponse,
+    Choice,
+    FunctionCall,
+    Message as ChoiceMessage,
+    ToolCall,
+    UsageStatistics,
+)
 from letta.settings import model_settings
 
 DUMMY_FIRST_USER_MESSAGE = "User initializing bootup sequence."
@@ -47,15 +53,55 @@ logger = get_logger(__name__)
 class AnthropicClient(LLMClientBase):
 
     @trace_method
+    @deprecated("Synchronous version of this is no longer valid. Will result in model_dump of coroutine")
     def request(self, request_data: dict, llm_config: LLMConfig) -> dict:
         client = self._get_anthropic_client(llm_config, async_client=False)
-        response = client.beta.messages.create(**request_data, betas=["tools-2024-04-04"])
+        betas: list[str] = []
+        # Interleaved thinking for reasoner (sync path parity)
+        if llm_config.enable_reasoner:
+            betas.append("interleaved-thinking-2025-05-14")
+        # 1M context beta for Sonnet 4/4.5 when enabled
+        try:
+            from letta.settings import model_settings
+
+            if model_settings.anthropic_sonnet_1m and (
+                llm_config.model.startswith("claude-sonnet-4") or llm_config.model.startswith("claude-sonnet-4-5")
+            ):
+                betas.append("context-1m-2025-08-07")
+        except Exception:
+            pass
+
+        if betas:
+            response = client.beta.messages.create(**request_data, betas=betas)
+        else:
+            response = client.beta.messages.create(**request_data)
+        logger.info("Beta response: %s", response)
         return response.model_dump()
 
     @trace_method
     async def request_async(self, request_data: dict, llm_config: LLMConfig) -> dict:
         client = await self._get_anthropic_client_async(llm_config, async_client=True)
-        response = await client.beta.messages.create(**request_data, betas=["tools-2024-04-04"])
+
+        betas: list[str] = []
+        # interleaved thinking for reasoner
+        if llm_config.enable_reasoner:
+            betas.append("interleaved-thinking-2025-05-14")
+
+        # 1M context beta for Sonnet 4/4.5 when enabled
+        try:
+            from letta.settings import model_settings
+
+            if model_settings.anthropic_sonnet_1m and (
+                llm_config.model.startswith("claude-sonnet-4") or llm_config.model.startswith("claude-sonnet-4-5")
+            ):
+                betas.append("context-1m-2025-08-07")
+        except Exception:
+            pass
+
+        if betas:
+            response = await client.beta.messages.create(**request_data, betas=betas)
+        else:        response = await client.beta.messages.create(**request_data)
+        logger.info(response.usage)
         logger.info("This is the usage response from calude %s", response.usage)
         return response.model_dump()
 
@@ -63,11 +109,35 @@ class AnthropicClient(LLMClientBase):
     async def stream_async(self, request_data: dict, llm_config: LLMConfig) -> AsyncStream[BetaRawMessageStreamEvent]:
         client = await self._get_anthropic_client_async(llm_config, async_client=True)
         request_data["stream"] = True
-        return await client.beta.messages.create(**request_data, betas=["tools-2024-04-04"])
+        return await client.beta.messages.create(**request_data)
+
+        # Add fine-grained tool streaming beta header for better streaming performance
+        # This helps reduce buffering when streaming tool call parameters
+        # See: https://docs.anthropic.com/en/docs/build-with-claude/tool-use/fine-grained-streaming
+        betas = ["fine-grained-tool-streaming-2025-05-14"]
+
+        # If extended thinking, turn on interleaved header
+        # https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#interleaved-thinking
+        if llm_config.enable_reasoner:
+            betas.append("interleaved-thinking-2025-05-14")
+
+        # 1M context beta for Sonnet 4/4.5 when enabled
+        try:
+            from letta.settings import model_settings
+
+            if model_settings.anthropic_sonnet_1m and (
+                llm_config.model.startswith("claude-sonnet-4") or llm_config.model.startswith("claude-sonnet-4-5")
+            ):
+                betas.append("context-1m-2025-08-07")
+        except Exception:
+            pass
+
+        return await client.beta.messages.create(**request_data, betas=betas)
 
     @trace_method
     async def send_llm_batch_request_async(
         self,
+        agent_type: AgentType,
         agent_messages_mapping: Dict[str, List[PydanticMessage]],
         agent_tools_mapping: Dict[str, List[dict]],
         agent_llm_config_mapping: Dict[str, LLMConfig],
@@ -94,6 +164,7 @@ class AnthropicClient(LLMClientBase):
         try:
             requests = {
                 agent_id: self.build_request_data(
+                    agent_type=agent_type,
                     messages=agent_messages_mapping[agent_id],
                     llm_config=agent_llm_config_mapping[agent_id],
                     tools=agent_tools_mapping[agent_id],
@@ -120,19 +191,17 @@ class AnthropicClient(LLMClientBase):
     def _get_anthropic_client(
         self, llm_config: LLMConfig, async_client: bool = False
     ) -> Union[anthropic.AsyncAnthropic, anthropic.Anthropic]:
-        override_key = None
-        if llm_config.provider_category == ProviderCategory.byok:
-            override_key = ProviderManager().get_override_key(llm_config.provider_name, actor=self.actor)
+        api_key, _, _ = self.get_byok_overrides(llm_config)
 
         if async_client:
             return (
-                anthropic.AsyncAnthropic(api_key=override_key, max_retries=model_settings.anthropic_max_retries)
-                if override_key
+                anthropic.AsyncAnthropic(api_key=api_key, max_retries=model_settings.anthropic_max_retries)
+                if api_key
                 else anthropic.AsyncAnthropic(max_retries=model_settings.anthropic_max_retries)
             )
         return (
-            anthropic.Anthropic(api_key=override_key, max_retries=model_settings.anthropic_max_retries)
-            if override_key
+            anthropic.Anthropic(api_key=api_key, max_retries=model_settings.anthropic_max_retries)
+            if api_key
             else anthropic.Anthropic(max_retries=model_settings.anthropic_max_retries)
         )
 
@@ -140,50 +209,61 @@ class AnthropicClient(LLMClientBase):
     async def _get_anthropic_client_async(
         self, llm_config: LLMConfig, async_client: bool = False
     ) -> Union[anthropic.AsyncAnthropic, anthropic.Anthropic]:
-        override_key = None
-        if llm_config.provider_category == ProviderCategory.byok:
-            override_key = await ProviderManager().get_override_key_async(llm_config.provider_name, actor=self.actor)
+        api_key, _, _ = await self.get_byok_overrides_async(llm_config)
 
         if async_client:
             return (
-                anthropic.AsyncAnthropic(api_key=override_key, max_retries=model_settings.anthropic_max_retries)
-                if override_key
+                anthropic.AsyncAnthropic(api_key=api_key, max_retries=model_settings.anthropic_max_retries)
+                if api_key
                 else anthropic.AsyncAnthropic(max_retries=model_settings.anthropic_max_retries)
             )
         return (
-            anthropic.Anthropic(api_key=override_key, max_retries=model_settings.anthropic_max_retries)
-            if override_key
+            anthropic.Anthropic(api_key=api_key, max_retries=model_settings.anthropic_max_retries)
+            if api_key
             else anthropic.Anthropic(max_retries=model_settings.anthropic_max_retries)
         )
 
     @trace_method
     def build_request_data(
         self,
+        agent_type: AgentType,  # if react, use native content + strip heartbeats
         messages: List[PydanticMessage],
         llm_config: LLMConfig,
         tools: Optional[List[dict]] = None,
         force_tool_call: Optional[str] = None,
+        requires_subsequent_tool_call: bool = False,
     ) -> dict:
         # TODO: This needs to get cleaned up. The logic here is pretty confusing.
         # TODO: I really want to get rid of prefixing, it's a recipe for disaster code maintenance wise
-        prefix_fill = True
+        prefix_fill = True if agent_type != AgentType.letta_v1_agent else False
+        is_v1 = agent_type == AgentType.letta_v1_agent
+        # Determine local behavior for putting inner thoughts in kwargs without mutating llm_config
+        put_kwargs = bool(llm_config.put_inner_thoughts_in_kwargs) and not is_v1
         if not self.use_tool_naming:
             raise NotImplementedError("Only tool calling supported on Anthropic API requests")
 
         if not llm_config.max_tokens:
-            raise ValueError("Max  tokens must be set for anthropic")
+            # TODO strip this default once we add provider-specific defaults
+            max_output_tokens = 4096  # the minimum max tokens (for Haiku 3)
+        else:
+            max_output_tokens = llm_config.max_tokens
 
         data = {
             "model": llm_config.model,
-            "max_tokens": llm_config.max_tokens,
+            "max_tokens": max_output_tokens,
             "temperature": llm_config.temperature,
         }
 
         # Extended Thinking
-        if llm_config.enable_reasoner:
+        if self.is_reasoning_model(llm_config) and llm_config.enable_reasoner:
+            thinking_budget = max(llm_config.max_reasoning_tokens, 1024)
+            if thinking_budget != llm_config.max_reasoning_tokens:
+                logger.warning(
+                    f"Max reasoning tokens must be at least 1024 for Claude. Setting max_reasoning_tokens to 1024 for model {llm_config.model}."
+                )
             data["thinking"] = {
                 "type": "enabled",
-                "budget_tokens": llm_config.max_reasoning_tokens,
+                "budget_tokens": thinking_budget,
             }
             # `temperature` may only be set to 1 when thinking is enabled. Please consult our documentation at https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking'
             data["temperature"] = 1.0
@@ -198,8 +278,9 @@ class AnthropicClient(LLMClientBase):
             # Special case for summarization path
             tools_for_request = None
             tool_choice = None
-        elif llm_config.enable_reasoner:
+        elif self.is_reasoning_model(llm_config) and llm_config.enable_reasoner or agent_type == AgentType.letta_v1_agent:
             # NOTE: reasoning models currently do not allow for `any`
+            # NOTE: react agents should always have auto on, since the precense/absense of tool calls controls chaining
             tool_choice = {"type": "auto", "disable_parallel_tool_use": True}
             tools_for_request = [OpenAITool(function=f) for f in tools]
         elif force_tool_call is not None:
@@ -207,17 +288,19 @@ class AnthropicClient(LLMClientBase):
             tools_for_request = [OpenAITool(function=f) for f in tools if f["name"] == force_tool_call]
 
             # need to have this setting to be able to put inner thoughts in kwargs
-            if not llm_config.put_inner_thoughts_in_kwargs:
-                logger.warning(
-                    f"Force setting put_inner_thoughts_in_kwargs to True for Claude because there is a forced tool call: {force_tool_call}"
-                )
-                llm_config.put_inner_thoughts_in_kwargs = True
+            if not put_kwargs:
+                if is_v1:
+                    # For v1 agents, native content is used and kwargs must remain disabled to avoid conflicts
+                    logger.warning(
+                        "Forced tool call requested but inner_thoughts_in_kwargs is disabled for v1 agent; proceeding without inner thoughts in kwargs."
+                    )
+                else:
+                    logger.warning(
+                        f"Force enabling inner thoughts in kwargs for Claude due to forced tool call: {force_tool_call} (local override only)"
+                    )
+                    put_kwargs = True
         else:
-            if llm_config.put_inner_thoughts_in_kwargs:
-                # tool_choice_type other than "auto" only plays nice if thinking goes inside the tool calls
-                tool_choice = {"type": "any", "disable_parallel_tool_use": True}
-            else:
-                tool_choice = {"type": "auto", "disable_parallel_tool_use": True}
+            tool_choice = {"type": "any", "disable_parallel_tool_use": True}
             tools_for_request = [OpenAITool(function=f) for f in tools] if tools is not None else None
 
         # Add tool choice
@@ -226,7 +309,7 @@ class AnthropicClient(LLMClientBase):
 
         # Add inner thoughts kwarg
         # TODO: Can probably make this more efficient
-        if tools_for_request and len(tools_for_request) > 0 and llm_config.put_inner_thoughts_in_kwargs:
+        if tools_for_request and len(tools_for_request) > 0 and put_kwargs:
             tools_with_inner_thoughts = add_inner_thoughts_to_functions(
                 functions=[t.function.model_dump() for t in tools_for_request],
                 inner_thoughts_key=INNER_THOUGHTS_KWARG,
@@ -244,29 +327,50 @@ class AnthropicClient(LLMClientBase):
         # Move 'system' to the top level
         if messages[0].role != "system":
             raise RuntimeError(f"First message is not a system message, instead has role {messages[0].role}")
+
         system_content = messages[0].content if isinstance(messages[0].content, str) else messages[0].content[0].text
         static_part_1, dynamic_part_1, static_part_2, dynamic_part_2 = self._split_system_message_for_caching(system_content)
         data["system"] = self._add_cache_control_to_system_message(static_part_1, dynamic_part_1, static_part_2, dynamic_part_2)
-        data["messages"] = [
-            m.to_anthropic_dict(
-                inner_thoughts_xml_tag=inner_thoughts_xml_tag,
-                put_inner_thoughts_in_kwargs=bool(llm_config.put_inner_thoughts_in_kwargs),
-            )
-            for m in messages[1:]
-        ]
+        data["system"] = self._add_cache_control_to_system_message(system_content)
+        data["messages"] = PydanticMessage.to_anthropic_dicts_from_list(
+            messages=messages[1:],
+            current_model=llm_config.model,
+            inner_thoughts_xml_tag=inner_thoughts_xml_tag,
+            put_inner_thoughts_in_kwargs=put_kwargs,
+            # if react, use native content + strip heartbeats
+            native_content=is_v1,
+            strip_request_heartbeat=is_v1,
+        )
 
         # Ensure first message is user
+
         if data["messages"][0]["role"] != "user":
             data["messages"] = [{"role": "user", "content": DUMMY_FIRST_USER_MESSAGE}] + data["messages"]
 
         # Handle alternating messages
         data["messages"] = merge_tool_results_into_user_messages(data["messages"])
 
+        if agent_type == AgentType.letta_v1_agent:
+            # Both drop heartbeats in the payload
+            data["messages"] = drop_heartbeats(data["messages"])
+            # And drop heartbeats in the tools
+            if "tools" in data:
+                for tool in data["tools"]:
+                    tool["input_schema"]["properties"].pop(REQUEST_HEARTBEAT_PARAM, None)
+                    if "required" in tool["input_schema"] and REQUEST_HEARTBEAT_PARAM in tool["input_schema"]["required"]:
+                        # NOTE: required is not always present
+                        tool["input_schema"]["required"].remove(REQUEST_HEARTBEAT_PARAM)
+
+        else:
+            # Strip heartbeat pings if extended thinking
+            if llm_config.enable_reasoner:
+                data["messages"] = merge_heartbeats_into_tool_responses(data["messages"])
+
         # Prefix fill
         # https://docs.anthropic.com/en/api/messages#body-messages
         # NOTE: cannot prefill with tools for opus:
         # Your API request included an `assistant` message in the final position, which would pre-fill the `assistant` response. When using tools with "claude-3-opus-20240229"
-        if prefix_fill and not llm_config.put_inner_thoughts_in_kwargs and "opus" not in data["model"]:
+        if prefix_fill and not put_kwargs and "opus" not in data["model"]:
             data["messages"].append(
                 # Start the thinking process for the assistant
                 {"role": "assistant", "content": f"<{inner_thoughts_xml_tag}>"},
@@ -350,6 +454,7 @@ class AnthropicClient(LLMClientBase):
     async def count_tokens(self, messages: List[dict] = None, model: str = None, tools: List[OpenAITool] = None) -> int:
         logging.getLogger("httpx").setLevel(logging.WARNING)
 
+        # Use the default client; token counting is lightweight and does not require BYOK overrides
         client = anthropic.AsyncAnthropic()
         if messages and len(messages) == 0:
             messages = None
@@ -358,12 +463,49 @@ class AnthropicClient(LLMClientBase):
         else:
             anthropic_tools = None
 
+        # Detect presence of reasoning blocks anywhere in the final assistant message.
+        # Interleaved thinking is not guaranteed to be the first content part.
+        thinking_enabled = False
+        if messages and len(messages) > 0:
+            last_assistant_message = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
+            if last_assistant_message:
+                content = last_assistant_message.get("content")
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") in {"thinking", "redacted_thinking"}:
+                            thinking_enabled = True
+                            break
+                elif isinstance(content, str) and "<thinking>" in content:
+                    thinking_enabled = True
+
         try:
-            result = await client.beta.messages.count_tokens(
-                model=model or "claude-3-7-sonnet-20250219",
-                messages=messages or [{"role": "user", "content": "hi"}],
-                tools=anthropic_tools or [],
-            )
+            count_params = {
+                "model": model or "claude-3-7-sonnet-20250219",
+                "messages": messages or [{"role": "user", "content": "hi"}],
+                "tools": anthropic_tools or [],
+            }
+
+            betas: list[str] = []
+            if thinking_enabled:
+                # Match interleaved thinking behavior so token accounting is consistent
+                count_params["thinking"] = {"type": "enabled", "budget_tokens": 16000}
+                betas.append("interleaved-thinking-2025-05-14")
+
+            # Opt-in to 1M context if enabled for this model in settings
+            try:
+                if (
+                    model
+                    and model_settings.anthropic_sonnet_1m
+                    and (model.startswith("claude-sonnet-4") or model.startswith("claude-sonnet-4-5"))
+                ):
+                    betas.append("context-1m-2025-08-07")
+            except Exception:
+                pass
+
+            if betas:
+                result = await client.beta.messages.count_tokens(**count_params, betas=betas)
+            else:
+                result = await client.beta.messages.count_tokens(**count_params)
         except:
             raise
 
@@ -372,8 +514,24 @@ class AnthropicClient(LLMClientBase):
             token_count -= 8
         return token_count
 
+    def is_reasoning_model(self, llm_config: LLMConfig) -> bool:
+        return (
+            llm_config.model.startswith("claude-3-7-sonnet")
+            or llm_config.model.startswith("claude-sonnet-4")
+            or llm_config.model.startswith("claude-opus-4")
+            or llm_config.model.startswith("claude-haiku-4-5")
+        )
+
     @trace_method
     def handle_llm_error(self, e: Exception) -> Exception:
+        if isinstance(e, anthropic.APITimeoutError):
+            logger.warning(f"[Anthropic] Request timeout: {e}")
+            return LLMTimeoutError(
+                message=f"Request to Anthropic timed out: {str(e)}",
+                code=ErrorCode.TIMEOUT,
+                details={"cause": str(e.__cause__) if e.__cause__ else None},
+            )
+
         if isinstance(e, anthropic.APIConnectionError):
             logger.warning(f"[Anthropic] API connection error: {e.__cause__}")
             return LLMConnectionError(
@@ -391,9 +549,11 @@ class AnthropicClient(LLMClientBase):
 
         if isinstance(e, anthropic.BadRequestError):
             logger.warning(f"[Anthropic] Bad request: {str(e)}")
-            if "prompt is too long" in str(e).lower():
-                # If the context window is too large, we expect to receive:
+            error_str = str(e).lower()
+            if "prompt is too long" in error_str or "exceed context limit" in error_str:
+                # If the context window is too large, we expect to receive either:
                 # 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'prompt is too long: 200758 tokens > 200000 maximum'}}
+                # 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'input length and `max_tokens` exceed context limit: 173298 + 32000 > 200000, decrease input length or `max_tokens` and try again'}}
                 return ContextWindowExceededError(
                     message=f"Bad request to Anthropic (context window exceeded): {str(e)}",
                 )
@@ -496,7 +656,7 @@ class AnthropicClient(LLMClientBase):
         reasoning_content = None
         reasoning_content_signature = None
         redacted_reasoning_content = None
-        tool_calls = None
+        tool_calls: list[ToolCall] = []
 
         if len(response.content) > 0:
             for content_part in response.content:
@@ -506,16 +666,18 @@ class AnthropicClient(LLMClientBase):
                     # hack for incorrect tool format
                     tool_input = json.loads(json.dumps(content_part.input))
                     if "id" in tool_input and tool_input["id"].startswith("toolu_") and "function" in tool_input:
+                        if isinstance(tool_input["function"], str):
+                            tool_input["function"] = json.loads(tool_input["function"])
                         arguments = json.dumps(tool_input["function"]["arguments"], indent=2)
                         try:
                             args_json = json.loads(arguments)
                             if not isinstance(args_json, dict):
-                                raise ValueError("Expected parseable json object for arguments")
+                                raise LLMServerError("Expected parseable json object for arguments")
                         except:
                             arguments = str(tool_input["function"]["arguments"])
                     else:
                         arguments = json.dumps(tool_input, indent=2)
-                    tool_calls = [
+                    tool_calls.append(
                         ToolCall(
                             id=content_part.id,
                             type="function",
@@ -524,7 +686,7 @@ class AnthropicClient(LLMClientBase):
                                 arguments=arguments,
                             ),
                         )
-                    ]
+                    )
                 if content_part.type == "thinking":
                     reasoning_content = content_part.thinking
                     reasoning_content_signature = content_part.signature
@@ -544,7 +706,7 @@ class AnthropicClient(LLMClientBase):
                 reasoning_content=reasoning_content,
                 reasoning_content_signature=reasoning_content_signature,
                 redacted_reasoning_content=redacted_reasoning_content,
-                tool_calls=tool_calls,
+                tool_calls=tool_calls or None,
             ),
         )
 
@@ -565,6 +727,22 @@ class AnthropicClient(LLMClientBase):
             )
 
         return chat_completion_response
+
+    def _add_cache_control_to_system_message(self, system_content):
+        """Add cache control to system message content"""
+        if isinstance(system_content, str):
+            # For string content, convert to list format with cache control
+            return [{"type": "text", "text": system_content, "cache_control": {"type": "ephemeral"}}]
+        elif isinstance(system_content, list):
+            # For list content, add cache control to the last text block
+            cached_content = system_content.copy()
+            for i in range(len(cached_content) - 1, -1, -1):
+                if cached_content[i].get("type") == "text":
+                    cached_content[i]["cache_control"] = {"type": "ephemeral"}
+                    break
+            return cached_content
+
+        return system_content
 
 
 def convert_tools_to_anthropic_format(tools: List[OpenAITool]) -> List[dict]:
@@ -615,14 +793,203 @@ def convert_tools_to_anthropic_format(tools: List[OpenAITool]) -> List[dict]:
     """
     formatted_tools = []
     for tool in tools:
+        # Get the input schema
+        input_schema = tool.function.parameters or {"type": "object", "properties": {}, "required": []}
+
+        # Clean up the properties in the schema
+        # The presence of union types / default fields seems Anthropic to produce invalid JSON for tool calls
+        if isinstance(input_schema, dict) and "properties" in input_schema:
+            cleaned_properties = {}
+            for prop_name, prop_schema in input_schema.get("properties", {}).items():
+                if isinstance(prop_schema, dict):
+                    cleaned_properties[prop_name] = _clean_property_schema(prop_schema)
+                else:
+                    cleaned_properties[prop_name] = prop_schema
+
+            # Create cleaned input schema
+            cleaned_input_schema = {
+                "type": input_schema.get("type", "object"),
+                "properties": cleaned_properties,
+            }
+
+            # Only add required field if it exists and is non-empty
+            if "required" in input_schema and input_schema["required"]:
+                cleaned_input_schema["required"] = input_schema["required"]
+        else:
+            cleaned_input_schema = input_schema
+
         formatted_tool = {
             "name": tool.function.name,
             "description": tool.function.description if tool.function.description else "",
-            "input_schema": tool.function.parameters or {"type": "object", "properties": {}, "required": []},
+            "input_schema": cleaned_input_schema,
         }
         formatted_tools.append(formatted_tool)
 
     return formatted_tools
+
+
+def _clean_property_schema(prop_schema: dict) -> dict:
+    """Clean up a property schema by removing defaults and simplifying union types."""
+    cleaned = {}
+
+    # Handle type field - simplify union types like ["null", "string"] to just "string"
+    if "type" in prop_schema:
+        prop_type = prop_schema["type"]
+        if isinstance(prop_type, list):
+            # Remove "null" from union types to simplify
+            # e.g., ["null", "string"] becomes "string"
+            non_null_types = [t for t in prop_type if t != "null"]
+            if len(non_null_types) == 1:
+                cleaned["type"] = non_null_types[0]
+            elif len(non_null_types) > 1:
+                # Keep as array if multiple non-null types
+                cleaned["type"] = non_null_types
+            else:
+                # If only "null" was in the list, default to string
+                cleaned["type"] = "string"
+        else:
+            cleaned["type"] = prop_type
+
+    # Copy over other fields except 'default'
+    for key, value in prop_schema.items():
+        if key not in ["type", "default"]:  # Skip 'default' field
+            if key == "properties" and isinstance(value, dict):
+                # Recursively clean nested properties
+                cleaned["properties"] = {k: _clean_property_schema(v) if isinstance(v, dict) else v for k, v in value.items()}
+            else:
+                cleaned[key] = value
+
+    return cleaned
+
+
+def is_heartbeat(message: dict, is_ping: bool = False) -> bool:
+    """Check if the message is an automated heartbeat ping"""
+
+    if "role" not in message or message["role"] != "user" or "content" not in message:
+        return False
+
+    try:
+        message_json = json.loads(message["content"])
+    except:
+        return False
+
+    if "reason" not in message_json:
+        return False
+
+    if message_json["type"] != "heartbeat":
+        return False
+
+    if not is_ping:
+        # Just checking if 'type': 'heartbeat'
+        return True
+    else:
+        # Also checking if it's specifically a 'ping' style message
+        # NOTE: this will not catch tool rule heartbeats
+        if REQ_HEARTBEAT_MESSAGE in message_json["reason"] or FUNC_FAILED_HEARTBEAT_MESSAGE in message_json["reason"]:
+            return True
+        else:
+            return False
+
+
+def drop_heartbeats(messages: List[dict]):
+    cleaned_messages = []
+
+    # Loop through messages
+    # For messages with role 'user' and len(content) > 1,
+    #   Check if content[0].type == 'tool_result'
+    #   If so, iterate over content[1:] and while content.type == 'text' and is_heartbeat(content.text),
+    #     merge into content[0].content
+
+    for message in messages:
+        if "role" in message and "content" in message and message["role"] == "user":
+            content_parts = message["content"]
+
+            if isinstance(content_parts, str):
+                if is_heartbeat({"role": "user", "content": content_parts}):
+                    continue
+            elif isinstance(content_parts, list) and len(content_parts) == 1 and "text" in content_parts[0]:
+                if is_heartbeat({"role": "user", "content": content_parts[0]["text"]}):
+                    continue  # skip
+            else:
+                cleaned_parts = []
+                # Drop all the parts
+                for content_part in content_parts:
+                    if "text" in content_part and is_heartbeat({"role": "user", "content": content_part["text"]}):
+                        continue  # skip
+                    else:
+                        cleaned_parts.append(content_part)
+
+                if len(cleaned_parts) == 0:
+                    continue
+                else:
+                    message["content"] = cleaned_parts
+
+        cleaned_messages.append(message)
+
+    return cleaned_messages
+
+
+def merge_heartbeats_into_tool_responses(messages: List[dict]):
+    """For extended thinking mode, we don't want anything other than tool responses in-between assistant actions
+
+    Otherwise, the thinking will silently get dropped.
+
+    NOTE: assumes merge_tool_results_into_user_messages has already been called
+    """
+
+    merged_messages = []
+
+    # Loop through messages
+    # For messages with role 'user' and len(content) > 1,
+    #   Check if content[0].type == 'tool_result'
+    #   If so, iterate over content[1:] and while content.type == 'text' and is_heartbeat(content.text),
+    #     merge into content[0].content
+
+    for message in messages:
+        if "role" not in message or "content" not in message:
+            # Skip invalid messages
+            merged_messages.append(message)
+            continue
+
+        if message["role"] == "user" and len(message["content"]) > 1:
+            content_parts = message["content"]
+
+            # If the first content part is a tool result, merge the heartbeat content into index 0 of the content
+            # Two end cases:
+            # 1. It was [tool_result, heartbeat], in which case merged result is [tool_result+heartbeat] (len 1)
+            # 2. It was [tool_result, user_text], in which case it should be unchanged (len 2)
+            if "type" in content_parts[0] and "content" in content_parts[0] and content_parts[0]["type"] == "tool_result":
+                new_content_parts = [content_parts[0]]
+
+                # If the first content part is a tool result, merge the heartbeat content into index 0 of the content
+                for i, content_part in enumerate(content_parts[1:]):
+                    # If it's a heartbeat, add it to the merge
+                    if (
+                        content_part["type"] == "text"
+                        and "text" in content_part
+                        and is_heartbeat({"role": "user", "content": content_part["text"]})
+                    ):
+                        # NOTE: joining with a ','
+                        new_content_parts[0]["content"] += ", " + content_part["text"]
+
+                    # If it's not, break, and concat to finish
+                    else:
+                        # Append the rest directly, no merging of content strings
+                        new_content_parts.extend(content_parts[i + 1 :])
+                        break
+
+                # Set the content_parts
+                message["content"] = new_content_parts
+                merged_messages.append(message)
+
+            else:
+                # Skip invalid messages parts
+                merged_messages.append(message)
+                continue
+        else:
+            merged_messages.append(message)
+
+    return merged_messages
 
 
 def merge_tool_results_into_user_messages(messages: List[dict]):
@@ -663,7 +1030,7 @@ def merge_tool_results_into_user_messages(messages: List[dict]):
                 if isinstance(next_message["content"], list)
                 else [{"type": "text", "text": next_message["content"]}]
             )
-            merged_content = current_content + next_content
+            merged_content: list = current_content + next_content
             current_message["content"] = merged_content
         else:
             # Append the current message to result as it's complete
@@ -700,7 +1067,7 @@ def remap_finish_reason(stop_reason: str) -> str:
     elif stop_reason == "tool_use":
         return "function_call"
     else:
-        raise ValueError(f"Unexpected stop_reason: {stop_reason}")
+        raise LLMServerError(f"Unexpected stop_reason: {stop_reason}")
 
 
 def strip_xml_tags(string: str, tag: Optional[str]) -> str:

@@ -1,11 +1,19 @@
 import asyncio
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
+from sqlalchemy.exc import NoResultFound
+
+from letta.constants import PINECONE_TEXT_FIELD_NAME
+from letta.functions.types import FileOpenRequest
+from letta.helpers.pinecone_utils import search_pinecone_index, should_use_pinecone
+from letta.helpers.tpuf_client import should_use_tpuf
 from letta.log import get_logger
+from letta.otel.tracing import trace_method
 from letta.schemas.agent import AgentState
-from letta.schemas.file import FileMetadata
+from letta.schemas.enums import VectorDBProvider
 from letta.schemas.sandbox_config import SandboxConfig
+from letta.schemas.source import Source
 from letta.schemas.tool import Tool
 from letta.schemas.tool_execution_result import ToolExecutionResult
 from letta.schemas.user import User
@@ -16,6 +24,7 @@ from letta.services.file_processor.chunker.line_chunker import LineChunker
 from letta.services.files_agents_manager import FileAgentManager
 from letta.services.message_manager import MessageManager
 from letta.services.passage_manager import PassageManager
+from letta.services.run_manager import RunManager
 from letta.services.source_manager import SourceManager
 from letta.services.tool_executor.tool_executor_base import ToolExecutor
 from letta.utils import get_friendly_error_msg
@@ -28,16 +37,19 @@ class LettaFileToolExecutor(ToolExecutor):
     MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50MB limit per file
     MAX_TOTAL_CONTENT_SIZE = 200 * 1024 * 1024  # 200MB total across all files
     MAX_REGEX_COMPLEXITY = 1000  # Prevent catastrophic backtracking
-    MAX_MATCHES_PER_FILE = 20  # Limit matches per file
-    MAX_TOTAL_MATCHES = 50  # Global match limit
-    GREP_TIMEOUT_SECONDS = 30  # Max time for grep operation
+    MAX_MATCHES_PER_FILE = 20  # Limit matches per file (legacy, not used with new pagination)
+    MAX_TOTAL_MATCHES = 50  # Keep original value for semantic search
+    GREP_PAGE_SIZE = 20  # Number of grep matches to show per page
+    GREP_TIMEOUT_SECONDS = 30  # Max time for grep_files operation
     MAX_CONTEXT_LINES = 1  # Lines of context around matches
+    MAX_TOTAL_COLLECTED = 1000  # Reasonable upper limit to prevent memory issues
 
     def __init__(
         self,
         message_manager: MessageManager,
         agent_manager: AgentManager,
         block_manager: BlockManager,
+        run_manager: RunManager,
         passage_manager: PassageManager,
         actor: User,
     ):
@@ -45,6 +57,7 @@ class LettaFileToolExecutor(ToolExecutor):
             message_manager=message_manager,
             agent_manager=agent_manager,
             block_manager=block_manager,
+            run_manager=run_manager,
             passage_manager=passage_manager,
             actor=actor,
         )
@@ -69,10 +82,9 @@ class LettaFileToolExecutor(ToolExecutor):
             raise ValueError("Agent state is required for file tools")
 
         function_map = {
-            "open_file": self.open_file,
-            "close_file": self.close_file,
-            "grep": self.grep,
-            "search_files": self.search_files,
+            "open_files": self.open_files,
+            "grep_files": self.grep_files,
+            "semantic_search_files": self.semantic_search_files,
         }
 
         if function_name not in function_map:
@@ -94,46 +106,151 @@ class LettaFileToolExecutor(ToolExecutor):
                 stderr=[get_friendly_error_msg(function_name=function_name, exception_name=type(e).__name__, exception_message=str(e))],
             )
 
-    async def open_file(self, agent_state: AgentState, file_name: str, view_range: Optional[Tuple[int, int]] = None) -> str:
-        """Stub for open_file tool."""
-        start, end = None, None
-        if view_range:
-            start, end = view_range
-            if start >= end:
-                raise ValueError(f"Provided view range {view_range} is invalid, starting range must be less than ending range.")
+    @trace_method
+    async def open_files(self, agent_state: AgentState, file_requests: List[FileOpenRequest], close_all_others: bool = False) -> str:
+        """Open one or more files and load their contents into memory blocks."""
+        # Parse raw dictionaries into FileOpenRequest objects if needed
+        parsed_requests = []
+        for req in file_requests:
+            if isinstance(req, dict):
+                # LLM returned a dictionary, parse it into FileOpenRequest
+                parsed_requests.append(FileOpenRequest(**req))
+            elif isinstance(req, FileOpenRequest):
+                # Already a FileOpenRequest object
+                parsed_requests.append(req)
+            else:
+                raise ValueError(f"Invalid file request type: {type(req)}. Expected dict or FileOpenRequest.")
 
-        # TODO: This is inefficient. We can skip the initial DB lookup by preserving on the block metadata what the file_id is
-        file_agent = await self.files_agents_manager.get_file_agent_by_file_name(
-            agent_id=agent_state.id, file_name=file_name, actor=self.actor
-        )
+        file_requests = parsed_requests
 
-        if not file_agent:
-            file_blocks = agent_state.memory.file_blocks
-            file_names = [fb.label for fb in file_blocks]
+        # Validate file count first
+        if len(file_requests) > agent_state.max_files_open:
             raise ValueError(
-                f"{file_name} not attached - did you get the filename correct? Currently you have the following files attached: {file_names}"
+                f"Cannot open {len(file_requests)} files: exceeds configured maximum limit of {agent_state.max_files_open} files"
             )
 
-        file_id = file_agent.file_id
-        file = await self.file_manager.get_file_by_id(file_id=file_id, actor=self.actor, include_content=True)
+        if not file_requests:
+            raise ValueError("No file requests provided")
 
-        # TODO: Inefficient, maybe we can pre-compute this
-        # TODO: This is also not the best way to split things - would be cool to have "content aware" splitting
-        # TODO: Split code differently from large text blurbs
-        content_lines = LineChunker().chunk_text(text=file.content, file_metadata=file, start=start, end=end)
-        visible_content = "\n".join(content_lines)
+        # Extract file names for various operations
+        file_names = [req.file_name for req in file_requests]
 
-        await self.files_agents_manager.update_file_agent_by_id(
-            agent_id=agent_state.id, file_id=file_id, actor=self.actor, is_open=True, visible_content=visible_content
-        )
-        return f"Successfully opened file {file_name}, lines {start} to {end} are now visible in memory block <{file_name}>"
+        # Get all currently attached files for error reporting
+        file_blocks = agent_state.memory.file_blocks
+        attached_file_names = [fb.label for fb in file_blocks]
 
-    async def close_file(self, agent_state: AgentState, file_name: str) -> str:
-        """Stub for close_file tool."""
-        await self.files_agents_manager.update_file_agent_by_name(
-            agent_id=agent_state.id, file_name=file_name, actor=self.actor, is_open=False
-        )
-        return f"Successfully closed file {file_name}, use function calls to re-open file"
+        # Close all other files if requested
+        closed_by_close_all_others = []
+        if close_all_others:
+            closed_by_close_all_others = await self.files_agents_manager.close_all_other_files(
+                agent_id=agent_state.id, keep_file_names=file_names, actor=self.actor
+            )
+
+        # Process each file
+        opened_files = []
+        all_closed_files = []
+        all_previous_ranges = {}  # Collect all previous ranges from all files
+
+        for file_request in file_requests:
+            file_name = file_request.file_name
+            offset = file_request.offset
+            length = file_request.length
+
+            # Use 0-indexed offset/length directly for LineChunker
+            start, end = None, None
+            if offset is not None or length is not None:
+                if offset is not None and offset < 0:
+                    raise ValueError(f"Offset for file {file_name} must be >= 0 (0-indexed), got {offset}")
+                if length is not None and length < 1:
+                    raise ValueError(f"Length for file {file_name} must be >= 1, got {length}")
+
+                # Use offset directly as it's already 0-indexed
+                start = offset if offset is not None else None
+                if start is not None and length is not None:
+                    end = start + length
+                else:
+                    end = None
+
+            # Validate file exists and is attached to agent
+            file_agent = await self.files_agents_manager.get_file_agent_by_file_name(
+                agent_id=agent_state.id, file_name=file_name, actor=self.actor
+            )
+
+            if not file_agent:
+                raise ValueError(
+                    f"{file_name} not attached - did you get the filename correct? Currently you have the following files attached: {attached_file_names}"
+                )
+
+            file_id = file_agent.file_id
+            file = await self.file_manager.get_file_by_id(file_id=file_id, actor=self.actor, include_content=True)
+
+            # Process file content
+            content_lines = LineChunker().chunk_text(file_metadata=file, start=start, end=end, validate_range=True)
+            visible_content = "\n".join(content_lines)
+
+            # Handle LRU eviction and file opening
+            closed_files, was_already_open, previous_ranges = await self.files_agents_manager.enforce_max_open_files_and_open(
+                agent_id=agent_state.id,
+                file_id=file_id,
+                file_name=file_name,
+                source_id=file.source_id,
+                actor=self.actor,
+                visible_content=visible_content,
+                max_files_open=agent_state.max_files_open,
+                start_line=start + 1 if start is not None else None,  # convert to 1-indexed for user display
+                end_line=end if end is not None else None,  # end is already exclusive, shows as 1-indexed inclusive
+            )
+
+            opened_files.append(file_name)
+            all_closed_files.extend(closed_files)
+            all_previous_ranges.update(previous_ranges)  # Merge previous ranges from this file
+
+        # Update access timestamps for all opened files efficiently
+        await self.files_agents_manager.mark_access_bulk(agent_id=agent_state.id, file_names=file_names, actor=self.actor)
+
+        # Helper function to format previous range info
+        def format_previous_range(file_name: str) -> str:
+            if file_name in all_previous_ranges:
+                old_start, old_end = all_previous_ranges[file_name]
+                if old_start is not None and old_end is not None:
+                    return f" (previously lines {old_start}-{old_end})"
+                elif old_start is not None:
+                    return f" (previously lines {old_start}-end)"
+                else:
+                    return " (previously full file)"
+            return ""
+
+        # Build unified success message - treat single and multiple files consistently
+        file_summaries = []
+        for req in file_requests:
+            previous_info = format_previous_range(req.file_name)
+            if req.offset is not None and req.length is not None:
+                # Display as 1-indexed for user readability: (offset+1) to (offset+length)
+                start_line = req.offset + 1
+                end_line = req.offset + req.length
+                file_summaries.append(f"{req.file_name} (lines {start_line}-{end_line}){previous_info}")
+            elif req.offset is not None:
+                # Display as 1-indexed
+                start_line = req.offset + 1
+                file_summaries.append(f"{req.file_name} (lines {start_line}-end){previous_info}")
+            else:
+                file_summaries.append(f"{req.file_name}{previous_info}")
+
+        if len(file_requests) == 1:
+            success_msg = f"* Opened {file_summaries[0]}"
+        else:
+            success_msg = f"* Opened {len(file_requests)} files: {', '.join(file_summaries)}"
+
+        # Add information about closed files
+        if closed_by_close_all_others:
+            success_msg += f"\nNote: Closed {len(closed_by_close_all_others)} file(s) due to close_all_others=True: {', '.join(closed_by_close_all_others)}"
+
+        if all_closed_files:
+            success_msg += (
+                f"\nNote: Closed {len(all_closed_files)} least recently used file(s) due to open file limit: {', '.join(all_closed_files)}"
+            )
+
+        return success_msg
 
     def _validate_regex_pattern(self, pattern: str) -> None:
         """Validate regex pattern to prevent catastrophic backtracking."""
@@ -146,32 +263,59 @@ class LettaFileToolExecutor(ToolExecutor):
         except re.error as e:
             raise ValueError(f"Invalid regex pattern: {e}")
 
-    def _get_context_lines(self, text: str, file_metadata: FileMetadata, match_line_idx: int, total_lines: int) -> List[str]:
-        """Get context lines around a match using LineChunker."""
-        start_idx = max(0, match_line_idx - self.MAX_CONTEXT_LINES)
-        end_idx = min(total_lines, match_line_idx + self.MAX_CONTEXT_LINES + 1)
+    def _get_context_lines(
+        self,
+        formatted_lines: List[str],
+        match_line_num: int,
+        context_lines: int,
+    ) -> List[str]:
+        """Get context lines around a match from already-chunked lines.
 
-        # Use LineChunker to get formatted lines with numbers
-        chunker = LineChunker()
-        context_lines = chunker.chunk_text(text, file_metadata=file_metadata, start=start_idx, end=end_idx, add_metadata=False)
+        Args:
+            formatted_lines: Already chunked lines from LineChunker (format: "line_num: content")
+            match_line_num: The 1-based line number of the match
+            context_lines: Number of context lines before and after
+        """
+        if not formatted_lines or context_lines < 0:
+            return []
 
-        # Add match indicator
-        formatted_lines = []
-        for line in context_lines:
+        # Find the index of the matching line in the formatted_lines list
+        match_formatted_idx = None
+        for i, line in enumerate(formatted_lines):
             if line and ":" in line:
-                line_num_str = line.split(":")[0].strip()
                 try:
-                    line_num = int(line_num_str)
-                    prefix = ">" if line_num == match_line_idx + 1 else " "
-                    formatted_lines.append(f"{prefix} {line}")
+                    line_num = int(line.split(":", 1)[0].strip())
+                    if line_num == match_line_num:
+                        match_formatted_idx = i
+                        break
                 except ValueError:
-                    formatted_lines.append(f"  {line}")
-            else:
-                formatted_lines.append(f"  {line}")
+                    continue
 
-        return formatted_lines
+        if match_formatted_idx is None:
+            return []
 
-    async def grep(self, agent_state: AgentState, pattern: str, include: Optional[str] = None) -> str:
+        # Calculate context range with bounds checking
+        start_idx = max(0, match_formatted_idx - context_lines)
+        end_idx = min(len(formatted_lines), match_formatted_idx + context_lines + 1)
+
+        # Extract context lines and add match indicator
+        context_lines_with_indicator = []
+        for i in range(start_idx, end_idx):
+            line = formatted_lines[i]
+            prefix = ">" if i == match_formatted_idx else " "
+            context_lines_with_indicator.append(f"{prefix} {line}")
+
+        return context_lines_with_indicator
+
+    @trace_method
+    async def grep_files(
+        self,
+        agent_state: AgentState,
+        pattern: str,
+        include: Optional[str] = None,
+        context_lines: Optional[int] = 1,
+        offset: Optional[int] = None,
+    ) -> str:
         """
         Search for pattern in all attached files and return matches with context.
 
@@ -179,6 +323,10 @@ class LettaFileToolExecutor(ToolExecutor):
             agent_state: Current agent state
             pattern: Regular expression pattern to search for
             include: Optional pattern to filter filenames to include in the search
+            context_lines (Optional[int]): Number of lines of context to show before and after each match.
+                                       Equivalent to `-C` in grep_files. Defaults to 1.
+            offset (Optional[int]): Number of matches to skip before showing results. Used for pagination.
+                                   Defaults to 0 (show from first match).
 
         Returns:
             Formatted string with search results, file names, line numbers, and context
@@ -206,7 +354,9 @@ class LettaFileToolExecutor(ToolExecutor):
             include_regex = re.compile(include_pattern, re.IGNORECASE)
 
         # Get all attached files for this agent
-        file_agents = await self.files_agents_manager.list_files_for_agent(agent_id=agent_state.id, actor=self.actor)
+        file_agents = await self.files_agents_manager.list_files_for_agent(
+            agent_id=agent_state.id, per_file_view_window_char_limit=agent_state.per_file_view_window_char_limit, actor=self.actor
+        )
 
         if not file_agents:
             return "No files are currently attached to search"
@@ -218,27 +368,32 @@ class LettaFileToolExecutor(ToolExecutor):
             if not file_agents:
                 return f"No files match the filename pattern '{include}' (filtered {original_count} files)"
 
+        # Validate offset parameter
+        if offset is not None and offset < 0:
+            offset = 0  # Treat negative offsets as 0
+
         # Compile regex pattern with appropriate flags
         regex_flags = re.MULTILINE
         regex_flags |= re.IGNORECASE
 
         pattern_regex = re.compile(pattern, regex_flags)
 
-        results = []
-        total_matches = 0
+        # Collect all matches first (up to a reasonable limit)
+        all_matches = []  # List of tuples: (file_name, line_num, context_lines)
         total_content_size = 0
         files_processed = 0
         files_skipped = 0
+        files_with_matches = set()  # Track files that had matches for LRU policy
 
         # Use asyncio timeout to prevent hanging
         async def _search_files():
-            nonlocal results, total_matches, total_content_size, files_processed, files_skipped
+            nonlocal all_matches, total_content_size, files_processed, files_skipped, files_with_matches
 
             for file_agent in file_agents:
                 # Load file content
-                file = await self.file_manager.get_file_by_id(file_id=file_agent.file_id, actor=self.actor, include_content=True)
-
-                if not file or not file.content:
+                try:
+                    file = await self.file_manager.get_file_by_id(file_id=file_agent.file_id, actor=self.actor, include_content=True)
+                except NoResultFound:
                     files_skipped += 1
                     self.logger.warning(f"Grep: Skipping file {file_agent.file_name} - no content available")
                     continue
@@ -250,7 +405,6 @@ class LettaFileToolExecutor(ToolExecutor):
                     self.logger.warning(
                         f"Grep: Skipping file {file.file_name} - too large ({content_size:,} bytes > {self.MAX_FILE_SIZE_BYTES:,} limit)"
                     )
-                    results.append(f"[SKIPPED] {file.file_name}: File too large ({content_size:,} bytes)")
                     continue
 
                 # Check total content size across all files
@@ -260,15 +414,13 @@ class LettaFileToolExecutor(ToolExecutor):
                     self.logger.warning(
                         f"Grep: Skipping file {file.file_name} - total content size limit exceeded ({total_content_size:,} bytes > {self.MAX_TOTAL_CONTENT_SIZE:,} limit)"
                     )
-                    results.append(f"[SKIPPED] {file.file_name}: Total content size limit exceeded")
                     break
 
                 files_processed += 1
-                file_matches = 0
 
                 # Use LineChunker to get all lines with proper formatting
                 chunker = LineChunker()
-                formatted_lines = chunker.chunk_text(file.content, file_metadata=file)
+                formatted_lines = chunker.chunk_text(file_metadata=file)
 
                 # Remove metadata header
                 if formatted_lines and formatted_lines[0].startswith("[Viewing"):
@@ -276,12 +428,8 @@ class LettaFileToolExecutor(ToolExecutor):
 
                 # Search for matches in formatted lines
                 for formatted_line in formatted_lines:
-                    if total_matches >= self.MAX_TOTAL_MATCHES:
-                        results.append(f"[TRUNCATED] Maximum total matches ({self.MAX_TOTAL_MATCHES}) reached")
-                        return
-
-                    if file_matches >= self.MAX_MATCHES_PER_FILE:
-                        results.append(f"[TRUNCATED] {file.file_name}: Maximum matches per file ({self.MAX_MATCHES_PER_FILE}) reached")
+                    if len(all_matches) >= self.MAX_TOTAL_COLLECTED:
+                        # Stop collecting if we hit the upper limit
                         break
 
                     # Extract line number and content from formatted line
@@ -294,26 +442,27 @@ class LettaFileToolExecutor(ToolExecutor):
                             continue
 
                         if pattern_regex.search(line_content):
-                            # Get context around the match (convert back to 0-based indexing)
-                            context_lines = self._get_context_lines(file.content, file, line_num - 1, len(file.content.splitlines()))
+                            # Mark this file as having matches for LRU tracking
+                            files_with_matches.add(file.file_name)
+                            context = self._get_context_lines(formatted_lines, match_line_num=line_num, context_lines=context_lines or 0)
 
-                            # Format the match result
-                            match_header = f"\n=== {file.file_name}:{line_num} ==="
-                            match_content = "\n".join(context_lines)
-                            results.append(f"{match_header}\n{match_content}")
+                            # Store match data for later pagination
+                            all_matches.append((file.file_name, line_num, context))
 
-                            file_matches += 1
-                            total_matches += 1
-
-                # Break if global limits reached
-                if total_matches >= self.MAX_TOTAL_MATCHES:
+                # Break if we've collected enough matches
+                if len(all_matches) >= self.MAX_TOTAL_COLLECTED:
                     break
 
         # Execute with timeout
         await asyncio.wait_for(_search_files(), timeout=self.GREP_TIMEOUT_SECONDS)
 
-        # Format final results
-        if not results or total_matches == 0:
+        # Mark access for files that had matches
+        if files_with_matches:
+            await self.files_agents_manager.mark_access_bulk(agent_id=agent_state.id, file_names=list(files_with_matches), actor=self.actor)
+
+        # Handle no matches case
+        total_matches = len(all_matches)
+        if total_matches == 0:
             summary = f"No matches found for pattern: '{pattern}'"
             if include:
                 summary += f" in files matching '{include}'"
@@ -321,30 +470,81 @@ class LettaFileToolExecutor(ToolExecutor):
                 summary += f" (searched {files_processed} files, skipped {files_skipped})"
             return summary
 
-        # Add summary header
-        summary_parts = [f"Found {total_matches} matches"]
-        if files_processed > 0:
-            summary_parts.append(f"in {files_processed} files")
+        # Apply pagination
+        start_idx = offset if offset else 0
+        end_idx = start_idx + self.GREP_PAGE_SIZE
+        paginated_matches = all_matches[start_idx:end_idx]
+
+        # Check if we hit the collection limit
+        hit_collection_limit = len(all_matches) >= self.MAX_TOTAL_COLLECTED
+
+        # Format the paginated results
+        results = []
+
+        # Build summary showing the range of matches displayed
+        if hit_collection_limit:
+            # We collected MAX_TOTAL_COLLECTED but there might be more
+            summary = f"Found {self.MAX_TOTAL_COLLECTED}+ total matches across {len(files_with_matches)} files (showing matches {start_idx + 1}-{min(end_idx, total_matches)} of {self.MAX_TOTAL_COLLECTED}+)"
+        else:
+            # We found all matches
+            summary = f"Found {total_matches} total matches across {len(files_with_matches)} files (showing matches {start_idx + 1}-{min(end_idx, total_matches)} of {total_matches})"
+
         if files_skipped > 0:
-            summary_parts.append(f"({files_skipped} files skipped)")
+            summary += f"\nNote: Skipped {files_skipped} files due to size limits"
 
-        summary = " ".join(summary_parts) + f" for pattern: '{pattern}'"
-        if include:
-            summary += f" in files matching '{include}'"
+        results.append(summary)
+        results.append("=" * 80)
 
-        # Combine all results
-        formatted_results = [summary, "=" * len(summary)] + results
+        # Add file summary - count matches per file
+        file_match_counts = {}
+        for file_name, _, _ in all_matches:
+            file_match_counts[file_name] = file_match_counts.get(file_name, 0) + 1
 
-        return "\n".join(formatted_results)
+        # Sort files by match count (descending) for better overview
+        sorted_files = sorted(file_match_counts.items(), key=lambda x: x[1], reverse=True)
 
-    async def search_files(self, agent_state: AgentState, query: str, limit: int = 10) -> str:
+        results.append("\nFiles with matches:")
+        for file_name, count in sorted_files:
+            if hit_collection_limit and count >= self.MAX_TOTAL_COLLECTED:
+                results.append(f"  - {file_name}: {count}+ matches")
+            else:
+                results.append(f"  - {file_name}: {count} matches")
+        results.append("")  # blank line before matches
+
+        # Format each match in the current page
+        for file_name, line_num, context_lines in paginated_matches:
+            match_header = f"\n=== {file_name}:{line_num} ==="
+            match_content = "\n".join(context_lines)
+            results.append(f"{match_header}\n{match_content}")
+
+        # Add navigation hint
+        results.append("")  # blank line
+        if end_idx < total_matches:
+            if hit_collection_limit:
+                results.append(f'To see more matches, call: grep_files(pattern="{pattern}", offset={end_idx})')
+                results.append(
+                    f"Note: Only the first {self.MAX_TOTAL_COLLECTED} matches were collected. There may be more matches beyond this limit."
+                )
+            else:
+                results.append(f'To see more matches, call: grep_files(pattern="{pattern}", offset={end_idx})')
+        else:
+            if hit_collection_limit:
+                results.append("Showing last page of collected matches. There may be more matches beyond the collection limit.")
+            else:
+                results.append("No more matches to show.")
+
+        return "\n".join(results)
+
+    @trace_method
+    async def semantic_search_files(self, agent_state: AgentState, query: str, limit: int = 5) -> str:
         """
         Search for text within attached files using semantic search and return passages with their source filenames.
+        Uses Pinecone if configured, otherwise falls back to traditional search.
 
         Args:
             agent_state: Current agent state
             query: Search query for semantic matching
-            limit: Maximum number of results to return (default: 10)
+            limit: Maximum number of results to return (default: 5)
 
         Returns:
             Formatted string with search results in IDE/terminal style
@@ -359,8 +559,242 @@ class LettaFileToolExecutor(ToolExecutor):
 
         self.logger.info(f"Semantic search started for agent {agent_state.id} with query '{query}' (limit: {limit})")
 
+        # Check which vector DB to use - Turbopuffer takes precedence
+        attached_sources = await self.agent_manager.list_attached_sources_async(agent_id=agent_state.id, actor=self.actor)
+        attached_tpuf_sources = [source for source in attached_sources if source.vector_db_provider == VectorDBProvider.TPUF]
+        attached_pinecone_sources = [source for source in attached_sources if source.vector_db_provider == VectorDBProvider.PINECONE]
+
+        if not attached_tpuf_sources and not attached_pinecone_sources:
+            return await self._search_files_native(agent_state, query, limit)
+
+        results = []
+
+        # If both have items, we half the limit roughly
+        # TODO: This is very hacky bc it skips the re-ranking - but this is a temporary stopgap while we think about migrating data
+
+        if attached_tpuf_sources and attached_pinecone_sources:
+            limit = max(limit // 2, 1)
+
+        if should_use_tpuf() and attached_tpuf_sources:
+            tpuf_result = await self._search_files_turbopuffer(agent_state, attached_tpuf_sources, query, limit)
+            results.append(tpuf_result)
+
+        if should_use_pinecone() and attached_pinecone_sources:
+            pinecone_result = await self._search_files_pinecone(agent_state, attached_pinecone_sources, query, limit)
+            results.append(pinecone_result)
+
+        # combine results from both sources
+        if results:
+            return "\n\n".join(results)
+
+        # fallback if no results from either source
+        return "No results found"
+
+    async def _search_files_turbopuffer(self, agent_state: AgentState, attached_sources: List[Source], query: str, limit: int) -> str:
+        """Search files using Turbopuffer vector database."""
+
+        # Get attached sources
+        source_ids = [source.id for source in attached_sources]
+        if not source_ids:
+            return "No valid source IDs found for attached files"
+
+        # Get all attached files for this agent
+        file_agents = await self.files_agents_manager.list_files_for_agent(
+            agent_id=agent_state.id, per_file_view_window_char_limit=agent_state.per_file_view_window_char_limit, actor=self.actor
+        )
+        if not file_agents:
+            return "No files are currently attached to search"
+
+        # Create a map of file_id to file_name for quick lookup
+        file_map = {fa.file_id: fa.file_name for fa in file_agents}
+
+        results = []
+        total_hits = 0
+        files_with_matches = {}
+
+        try:
+            from letta.helpers.tpuf_client import TurbopufferClient
+
+            tpuf_client = TurbopufferClient()
+
+            # Query Turbopuffer for all sources at once
+            search_results = await tpuf_client.query_file_passages(
+                source_ids=source_ids,  # pass all source_ids as a list
+                organization_id=self.actor.organization_id,
+                actor=self.actor,
+                query_text=query,
+                search_mode="hybrid",  # use hybrid search for best results
+                top_k=limit,
+            )
+
+            # Process search results
+            for passage, score, metadata in search_results:
+                if total_hits >= limit:
+                    break
+
+                total_hits += 1
+
+                # get file name from our map
+                file_name = file_map.get(passage.file_id, "Unknown File")
+
+                # group by file name
+                if file_name not in files_with_matches:
+                    files_with_matches[file_name] = []
+                files_with_matches[file_name].append({"text": passage.text, "score": score, "passage_id": passage.id})
+
+        except Exception as e:
+            self.logger.error(f"Turbopuffer search failed: {str(e)}")
+            raise e
+
+        if not files_with_matches:
+            return f"No semantic matches found for query: '{query}'"
+
+        # Format results
+        passage_num = 0
+        for file_name, matches in files_with_matches.items():
+            for match in matches:
+                passage_num += 1
+
+                # format each passage with terminal-style header
+                score_display = f"(score: {match['score']:.3f})"
+                passage_header = f"\n=== {file_name} (passage #{passage_num}) {score_display} ==="
+
+                # format the passage text
+                passage_text = match["text"].strip()
+                lines = passage_text.splitlines()
+                formatted_lines = []
+                for line in lines[:20]:  # limit to first 20 lines per passage
+                    formatted_lines.append(f"  {line}")
+
+                if len(lines) > 20:
+                    formatted_lines.append(f"  ... [truncated {len(lines) - 20} more lines]")
+
+                passage_content = "\n".join(formatted_lines)
+                results.append(f"{passage_header}\n{passage_content}")
+
+        # mark access for files that had matches
+        if files_with_matches:
+            matched_file_names = [name for name in files_with_matches.keys() if name != "Unknown File"]
+            if matched_file_names:
+                await self.files_agents_manager.mark_access_bulk(agent_id=agent_state.id, file_names=matched_file_names, actor=self.actor)
+
+        # create summary header
+        file_count = len(files_with_matches)
+        summary = f"Found {total_hits} matches in {file_count} file{'s' if file_count != 1 else ''} for query: '{query}'"
+
+        # combine all results
+        formatted_results = [summary, "=" * len(summary)] + results
+
+        self.logger.info(f"Turbopuffer search completed: {total_hits} matches across {file_count} files")
+        return "\n".join(formatted_results)
+
+    async def _search_files_pinecone(self, agent_state: AgentState, attached_sources: List[Source], query: str, limit: int) -> str:
+        """Search files using Pinecone vector database."""
+
+        # Extract unique source_ids
+        # TODO: Inefficient
+        source_ids = [source.id for source in attached_sources]
+        if not source_ids:
+            return "No valid source IDs found for attached files"
+
+        # Get all attached files for this agent
+        file_agents = await self.files_agents_manager.list_files_for_agent(
+            agent_id=agent_state.id, per_file_view_window_char_limit=agent_state.per_file_view_window_char_limit, actor=self.actor
+        )
+        if not file_agents:
+            return "No files are currently attached to search"
+
+        results = []
+        total_hits = 0
+        files_with_matches = {}
+
+        try:
+            filter = {"source_id": {"$in": source_ids}}
+            search_results = await search_pinecone_index(query, limit, filter, self.actor)
+
+            # Process search results
+            if "result" in search_results and "hits" in search_results["result"]:
+                for hit in search_results["result"]["hits"]:
+                    if total_hits >= limit:
+                        break
+
+                    total_hits += 1
+
+                    # Extract hit information
+                    hit_id = hit.get("_id", "unknown")
+                    score = hit.get("_score", 0.0)
+                    fields = hit.get("fields", {})
+                    text = fields.get(PINECONE_TEXT_FIELD_NAME, "")
+                    file_id = fields.get("file_id", "")
+
+                    # Find corresponding file name
+                    file_name = "Unknown File"
+                    for fa in file_agents:
+                        if fa.file_id == file_id:
+                            file_name = fa.file_name
+                            break
+
+                    # Group by file name
+                    if file_name not in files_with_matches:
+                        files_with_matches[file_name] = []
+                    files_with_matches[file_name].append({"text": text, "score": score, "hit_id": hit_id})
+
+        except Exception as e:
+            self.logger.error(f"Pinecone search failed: {str(e)}")
+            raise e
+
+        if not files_with_matches:
+            return f"No semantic matches found in Pinecone for query: '{query}'"
+
+        # Format results
+        passage_num = 0
+        for file_name, matches in files_with_matches.items():
+            for match in matches:
+                passage_num += 1
+
+                # Format each passage with terminal-style header
+                score_display = f"(score: {match['score']:.3f})"
+                passage_header = f"\n=== {file_name} (passage #{passage_num}) {score_display} ==="
+
+                # Format the passage text
+                passage_text = match["text"].strip()
+                lines = passage_text.splitlines()
+                formatted_lines = []
+                for line in lines[:20]:  # Limit to first 20 lines per passage
+                    formatted_lines.append(f"  {line}")
+
+                if len(lines) > 20:
+                    formatted_lines.append(f"  ... [truncated {len(lines) - 20} more lines]")
+
+                passage_content = "\n".join(formatted_lines)
+                results.append(f"{passage_header}\n{passage_content}")
+
+        # Mark access for files that had matches
+        if files_with_matches:
+            matched_file_names = [name for name in files_with_matches.keys() if name != "Unknown File"]
+            if matched_file_names:
+                await self.files_agents_manager.mark_access_bulk(agent_id=agent_state.id, file_names=matched_file_names, actor=self.actor)
+
+        # Create summary header
+        file_count = len(files_with_matches)
+        summary = f"Found {total_hits} Pinecone matches in {file_count} file{'s' if file_count != 1 else ''} for query: '{query}'"
+
+        # Combine all results
+        formatted_results = [summary, "=" * len(summary)] + results
+
+        self.logger.info(f"Pinecone search completed: {total_hits} matches across {file_count} files")
+        return "\n".join(formatted_results)
+
+    async def _search_files_native(self, agent_state: AgentState, query: str, limit: int) -> str:
+        """Traditional search using existing passage manager."""
         # Get semantic search results
-        passages = await self.agent_manager.list_source_passages_async(actor=self.actor, agent_id=agent_state.id, query_text=query)
+        passages = await self.agent_manager.query_source_passages_async(
+            actor=self.actor,
+            agent_id=agent_state.id,
+            query_text=query,
+            embed_query=True,
+            embedding_config=agent_state.embedding_config,
+        )
 
         if not passages:
             return f"No semantic matches found for query: '{query}'"
@@ -400,6 +834,12 @@ class LettaFileToolExecutor(ToolExecutor):
 
                 passage_content = "\n".join(formatted_lines)
                 results.append(f"{passage_header}\n{passage_content}")
+
+        # Mark access for files that had matches
+        if files_with_passages:
+            matched_file_names = [name for name in files_with_passages.keys() if name != "Unknown File"]
+            if matched_file_names:
+                await self.files_agents_manager.mark_access_bulk(agent_id=agent_state.id, file_names=matched_file_names, actor=self.actor)
 
         # Create summary header
         file_count = len(files_with_passages)

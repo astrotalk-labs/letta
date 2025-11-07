@@ -12,6 +12,8 @@ from letta.schemas.message import Message, MessageCreate
 def convert_message_creates_to_messages(
     message_creates: list[MessageCreate],
     agent_id: str,
+    timezone: str,
+    run_id: str,
     wrap_user_message: bool = True,
     wrap_system_message: bool = True,
 ) -> list[Message]:
@@ -19,6 +21,8 @@ def convert_message_creates_to_messages(
         _convert_message_create_to_message(
             message_create=create,
             agent_id=agent_id,
+            timezone=timezone,
+            run_id=run_id,
             wrap_user_message=wrap_user_message,
             wrap_system_message=wrap_system_message,
         )
@@ -29,6 +33,8 @@ def convert_message_creates_to_messages(
 def _convert_message_create_to_message(
     message_create: MessageCreate,
     agent_id: str,
+    timezone: str,
+    run_id: str,
     wrap_user_message: bool = True,
     wrap_system_message: bool = True,
 ) -> Message:
@@ -37,8 +43,7 @@ def _convert_message_create_to_message(
     assert isinstance(message_create, MessageCreate)
 
     # Extract message content
-    if isinstance(message_create.content, str):
-        assert message_create.content != "", "Message content must not be empty"
+    if isinstance(message_create.content, str) and message_create.content != "":
         message_content = [TextContent(text=message_create.content)]
     elif isinstance(message_create.content, list) and len(message_create.content) > 0:
         message_content = message_create.content
@@ -50,9 +55,9 @@ def _convert_message_create_to_message(
         if isinstance(content, TextContent):
             # Apply wrapping if needed
             if message_create.role == MessageRole.user and wrap_user_message:
-                content.text = system.package_user_message(user_message=content.text)
+                content.text = system.package_user_message(user_message=content.text, timezone=timezone)
             elif message_create.role == MessageRole.system and wrap_system_message:
-                content.text = system.package_system_message(system_message=content.text)
+                content.text = system.package_system_message(system_message=content.text, timezone=timezone)
         elif isinstance(content, ImageContent):
             if content.source.type == ImageSourceType.url:
                 # Convert URL image to Base64Image if needed
@@ -79,4 +84,5 @@ def _convert_message_create_to_message(
         sender_id=message_create.sender_id,
         group_id=message_create.group_id,
         batch_item_id=message_create.batch_item_id,
+        run_id=run_id,
     )

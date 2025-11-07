@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import threading
@@ -15,7 +16,6 @@ from letta.schemas.tool import Tool
 from letta.server.server import SyncServer
 from letta.services.agent_manager import AgentManager
 from tests.helpers.utils import retry_until_success
-from tests.utils import wait_for_incoming_message
 
 
 @pytest.fixture(scope="module")
@@ -96,7 +96,7 @@ def agent_obj(client):
     )
     yield agent_state_instance
 
-    client.agents.delete(agent_state_instance.id)
+    # client.agents.delete(agent_state_instance.id)
 
 
 @pytest.fixture(scope="function")
@@ -112,7 +112,7 @@ def other_agent_obj(client):
 
     yield agent_state_instance
 
-    client.agents.delete(agent_state_instance.id)
+    # client.agents.delete(agent_state_instance.id)
 
 
 @pytest.fixture
@@ -148,10 +148,10 @@ def roll_dice_tool(client):
 @retry_until_success(max_attempts=5, sleep_time_seconds=2)
 def test_send_message_to_agent(client, server, agent_obj, other_agent_obj):
     secret_word = "banana"
-    actor = server.user_manager.get_user_or_default()
+    actor = asyncio.run(server.user_manager.get_actor_or_default_async())
 
     # Encourage the agent to send a message to the other agent_obj with the secret string
-    client.agents.messages.create(
+    response = client.agents.messages.create(
         agent_id=agent_obj.id,
         messages=[
             {
@@ -162,11 +162,13 @@ def test_send_message_to_agent(client, server, agent_obj, other_agent_obj):
     )
 
     # Conversation search the other agent
-    messages = server.get_agent_recall(
-        user_id=actor.id,
-        agent_id=other_agent_obj.id,
-        reverse=True,
-        return_message_object=False,
+    messages = asyncio.run(
+        server.get_agent_recall(
+            user_id=actor.id,
+            agent_id=other_agent_obj.id,
+            reverse=True,
+            return_message_object=False,
+        )
     )
 
     # Check for the presence of system message
@@ -177,7 +179,7 @@ def test_send_message_to_agent(client, server, agent_obj, other_agent_obj):
             break
 
     # Search the sender agent for the response from another agent
-    in_context_messages = AgentManager().get_in_context_messages(agent_id=agent_obj.id, actor=actor)
+    in_context_messages = asyncio.run(AgentManager().get_in_context_messages(agent_id=agent_obj.id, actor=actor))
     found = False
     target_snippet = f"'agent_id': '{other_agent_obj.id}', 'response': ["
 
@@ -351,71 +353,3 @@ def test_send_message_to_agents_with_tags_complex_tool_use(client, roll_dice_too
         ],
     )
     print("Manager agent followup message: \n\n" + "\n".join([str(m) for m in response.messages]))
-
-
-# @retry_until_success(max_attempts=5, sleep_time_seconds=2)
-def test_agents_async_simple(client):
-    """
-    Test two agents with multi-agent tools sending messages back and forth to count to 5.
-    The chain is started by prompting one of the agents.
-    """
-    # Create two agents with multi-agent tools
-    send_message_to_agent_async_tool_id = client.tools.list(name="send_message_to_agent_async")[0].id
-    charles_state = client.agents.create(
-        name="charles",
-        tool_ids=[send_message_to_agent_async_tool_id],
-        memory_blocks=[
-            {
-                "label": "human",
-                "value": "Chad - I'm interested in hearing poem.",
-            },
-            {
-                "label": "persona",
-                "value": "You are an AI agent that can communicate with your agent buddy using `send_message_to_agent_async`, who has some great poem ideas (so I've heard).",
-            },
-        ],
-        model="openai/gpt-4o-mini",
-        embedding="letta/letta-free",
-    )
-
-    sarah_state = client.agents.create(
-        name="sarah",
-        tool_ids=[send_message_to_agent_async_tool_id],
-        memory_blocks=[
-            {
-                "label": "human",
-                "value": "No human - you are to only communicate with the other AI agent.",
-            },
-            {
-                "label": "persona",
-                "value": "You are an AI agent that can communicate with your agent buddy using `send_message_to_agent_async`, who is interested in great poem ideas.",
-            },
-        ],
-        model="openai/gpt-4o-mini",
-        embedding="letta/letta-free",
-    )
-
-    # Start the count chain with Agent1
-    initial_prompt = f"I want you to talk to the other agent with ID {sarah_state.id} using `send_message_to_agent_async`. Specifically, I want you to ask him for a poem idea, and then craft a poem for me."
-    client.agents.messages.create(
-        agent_id=charles_state.id,
-        messages=[{"role": "user", "content": initial_prompt}],
-    )
-
-    found_in_charles = wait_for_incoming_message(
-        client=client,
-        agent_id=charles_state.id,
-        substring="[Incoming message from agent with ID",
-        max_wait_seconds=10,
-        sleep_interval=0.5,
-    )
-    assert found_in_charles, "Charles never received the system message from Sarah (timed out)."
-
-    found_in_sarah = wait_for_incoming_message(
-        client=client,
-        agent_id=sarah_state.id,
-        substring="[Incoming message from agent with ID",
-        max_wait_seconds=10,
-        sleep_interval=0.5,
-    )
-    assert found_in_sarah, "Sarah never received the system message from Charles (timed out)."

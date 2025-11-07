@@ -4,9 +4,9 @@ from typing import Optional
 from sqlalchemy import JSON, BigInteger, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from letta.orm.enums import ActorType
 from letta.orm.mixins import OrganizationMixin
 from letta.orm.sqlalchemy_base import SqlalchemyBase
+from letta.schemas.enums import ActorType
 
 
 class BlockHistory(OrganizationMixin, SqlalchemyBase):
@@ -38,7 +38,9 @@ class BlockHistory(OrganizationMixin, SqlalchemyBase):
 
     # Relationships
     block_id: Mapped[str] = mapped_column(
-        String, ForeignKey("block.id", ondelete="CASCADE"), nullable=False  # History deleted if Block is deleted
+        String,
+        ForeignKey("block.id", ondelete="CASCADE"),
+        nullable=False,  # History deleted if Block is deleted
     )
 
     sequence_number: Mapped[int] = mapped_column(

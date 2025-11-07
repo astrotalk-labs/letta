@@ -36,22 +36,22 @@ from letta.interface import AgentInterface
 from letta.llm_api.helpers import calculate_summarizer_cutoff, get_token_counts_for_messages, is_context_overflow_error
 from letta.llm_api.llm_api_tools import create
 from letta.llm_api.llm_client import LLMClient
+from letta.local_llm.constants import INNER_THOUGHTS_KWARG
 from letta.local_llm.utils import num_tokens_from_functions, num_tokens_from_messages
 from letta.log import get_logger
 from letta.memory import summarize_messages
 from letta.orm import User
 from letta.orm.enums import ToolType
 from letta.otel.tracing import log_event, trace_method
-from letta.schemas.agent import AgentState, AgentStepResponse, UpdateAgent, get_prompt_template_for_agent_type
+from letta.prompts.prompt_generator import PromptGenerator
+from letta.schemas.agent import AgentState, AgentStepResponse, UpdateAgent
 from letta.schemas.block import BlockUpdate
 from letta.schemas.embedding_config import EmbeddingConfig
-from letta.schemas.enums import MessageRole, ProviderType
+from letta.schemas.enums import MessageRole, ProviderType, StepStatus, ToolType
 from letta.schemas.letta_message_content import ImageContent, TextContent
 from letta.schemas.memory import ContextWindowOverview, Memory
 from letta.schemas.message import Message, MessageCreate, ToolReturn
-from letta.schemas.openai.chat_completion_response import ChatCompletionResponse
-from letta.schemas.openai.chat_completion_response import Message as ChatCompletionMessage
-from letta.schemas.openai.chat_completion_response import UsageStatistics
+from letta.schemas.openai.chat_completion_response import ChatCompletionResponse, Message as ChatCompletionMessage, UsageStatistics
 from letta.schemas.response_format import ResponseFormatType
 from letta.schemas.tool import Tool
 from letta.schemas.tool_execution_result import ToolExecutionResult
@@ -59,7 +59,7 @@ from letta.schemas.tool_rule import TerminalToolRule
 from letta.schemas.usage import LettaUsageStatistics
 from letta.services.agent_manager import AgentManager
 from letta.services.block_manager import BlockManager
-from letta.services.helpers.agent_manager_helper import check_supports_structured_output, compile_memory_metadata_block
+from letta.services.helpers.agent_manager_helper import check_supports_structured_output
 from letta.services.helpers.tool_parser_helper import runtime_override_tool_json_schema
 from letta.services.job_manager import JobManager
 from letta.services.mcp.base_client import AsyncBaseMCPClient
@@ -70,7 +70,7 @@ from letta.services.step_manager import StepManager
 from letta.services.telemetry_manager import NoopTelemetryManager, TelemetryManager
 from letta.services.tool_executor.tool_execution_sandbox import ToolExecutionSandbox
 from letta.services.tool_manager import ToolManager
-from letta.settings import settings, summarizer_settings
+from letta.settings import model_settings, settings, summarizer_settings
 from letta.streaming_interface import StreamingRefreshCLIInterface
 from letta.system import get_heartbeat, get_token_limit_warning, package_function_response, package_summarize_message, package_user_message
 from letta.utils import count_tokens, get_friendly_error_msg, get_tool_call_id, log_telemetry, parse_json, validate_function_response
@@ -223,7 +223,7 @@ class Agent(BaseAgent):
             self.agent_state.memory = Memory(
                 blocks=[self.block_manager.get_block_by_id(block.id, actor=self.user) for block in self.agent_state.memory.get_blocks()],
                 file_blocks=self.agent_state.memory.file_blocks,
-                prompt_template=get_prompt_template_for_agent_type(self.agent_state.agent_type),
+                agent_type=self.agent_state.agent_type,
             )
 
             # NOTE: don't do this since re-buildin the memory is handled at the start of the step
@@ -255,7 +255,7 @@ class Agent(BaseAgent):
         self.tool_rules_solver.register_tool_call(function_name)
 
         # Extend conversation with function response
-        function_response = package_function_response(False, error_msg)
+        function_response = package_function_response(False, error_msg, self.agent_state.timezone)
         new_message = Message(
             agent_id=self.agent_state.id,
             # Base info OpenAI-style
@@ -330,8 +330,13 @@ class Agent(BaseAgent):
                 return None
 
         allowed_functions = [func for func in agent_state_tool_jsons if func["name"] in allowed_tool_names]
+        # Extract terminal tool names from tool rules
+        terminal_tool_names = {rule.tool_name for rule in self.tool_rules_solver.terminal_tool_rules}
         allowed_functions = runtime_override_tool_json_schema(
-            tool_list=allowed_functions, response_format=self.agent_state.response_format, request_heartbeat=True
+            tool_list=allowed_functions,
+            response_format=self.agent_state.response_format,
+            request_heartbeat=True,
+            terminal_tools=terminal_tool_names,
         )
 
         # For the first message, force the initial tool if one is specified
@@ -548,8 +553,8 @@ class Agent(BaseAgent):
                 return messages, False, True  # force a heartbeat to allow agent to handle error
 
             # Check if inner thoughts is in the function call arguments (possible apparently if you are using Azure)
-            if "inner_thoughts" in function_args:
-                response_message.content = function_args.pop("inner_thoughts")
+            if INNER_THOUGHTS_KWARG in function_args:
+                response_message.content = function_args.pop(INNER_THOUGHTS_KWARG)
             # The content if then internal monologue, not chat
             if response_message.content and not nonnull_content:
                 self.interface.internal_monologue(response_message.content, msg_obj=messages[-1], chunk_index=chunk_index)
@@ -640,7 +645,7 @@ class Agent(BaseAgent):
                     function_response, return_char_limit=return_char_limit, truncate=truncate
                 )
                 function_args.pop("self", None)
-                function_response = package_function_response(True, function_response_string)
+                function_response = package_function_response(True, function_response_string, self.agent_state.timezone)
                 function_failed = False
             except Exception as e:
                 function_args.pop("self", None)
@@ -763,7 +768,7 @@ class Agent(BaseAgent):
         self.tool_rules_solver.clear_tool_history()
 
         # Convert MessageCreate objects to Message objects
-        next_input_messages = convert_message_creates_to_messages(input_messages, self.agent_state.id)
+        next_input_messages = convert_message_creates_to_messages(input_messages, self.agent_state.id, self.agent_state.timezone)
         counter = 0
         total_usage = UsageStatistics()
         step_count = 0
@@ -823,7 +828,7 @@ class Agent(BaseAgent):
                         model=self.model,
                         openai_message_dict={
                             "role": "user",  # TODO: change to system?
-                            "content": get_heartbeat(FUNC_FAILED_HEARTBEAT_MESSAGE),
+                            "content": get_heartbeat(self.agent_state.timezone, FUNC_FAILED_HEARTBEAT_MESSAGE),
                         },
                     )
                 ]
@@ -836,7 +841,7 @@ class Agent(BaseAgent):
                         model=self.model,
                         openai_message_dict={
                             "role": "user",  # TODO: change to system?
-                            "content": get_heartbeat(REQ_HEARTBEAT_MESSAGE),
+                            "content": get_heartbeat(self.agent_state.timezone, REQ_HEARTBEAT_MESSAGE),
                         },
                     )
                 ]
@@ -878,7 +883,7 @@ class Agent(BaseAgent):
             current_persisted_memory = Memory(
                 blocks=[self.block_manager.get_block_by_id(block.id, actor=self.user) for block in self.agent_state.memory.get_blocks()],
                 file_blocks=self.agent_state.memory.file_blocks,
-                prompt_template=get_prompt_template_for_agent_type(self.agent_state.agent_type),
+                agent_type=self.agent_state.agent_type,
             )  # read blocks from DB
             self.update_memory_if_changed(current_persisted_memory)
 
@@ -990,6 +995,8 @@ class Agent(BaseAgent):
                 ),
                 job_id=job_id,
                 step_id=step_id,
+                project_id=self.agent_state.project_id,
+                status=StepStatus.SUCCESS,  # Set to SUCCESS since we're logging after successful completion
             )
             for message in all_new_messages:
                 message.step_id = step.id
@@ -1000,11 +1007,12 @@ class Agent(BaseAgent):
             )
             if job_id:
                 for message in all_new_messages:
-                    self.job_manager.add_message_to_job(
-                        job_id=job_id,
-                        message_id=message.id,
-                        actor=self.user,
-                    )
+                    if message.role != "user":
+                        self.job_manager.add_message_to_job(
+                            job_id=job_id,
+                            message_id=message.id,
+                            actor=self.user,
+                        )
 
             return AgentStepResponse(
                 messages=all_new_messages,
@@ -1076,10 +1084,10 @@ class Agent(BaseAgent):
         -> agent.step(messages=[Message(role='user', text=...)])
         """
         # Wrap with metadata, dumps to JSON
-        assert user_message_str and isinstance(
-            user_message_str, str
-        ), f"user_message_str should be a non-empty string, got {type(user_message_str)}"
-        user_message_json_str = package_user_message(user_message_str)
+        assert user_message_str and isinstance(user_message_str, str), (
+            f"user_message_str should be a non-empty string, got {type(user_message_str)}"
+        )
+        user_message_json_str = package_user_message(user_message_str, self.agent_state.timezone)
 
         # Validate JSON via save/load
         user_message = validate_json(user_message_json_str)
@@ -1101,7 +1109,7 @@ class Agent(BaseAgent):
 
     def summarize_messages_inplace(self):
         in_context_messages = self.agent_manager.get_in_context_messages(agent_id=self.agent_state.id, actor=self.user)
-        in_context_messages_openai = [m.to_openai_dict() for m in in_context_messages]
+        in_context_messages_openai = Message.to_openai_dicts_from_list(in_context_messages)
         in_context_messages_openai_no_system = in_context_messages_openai[1:]
         token_counts = get_token_counts_for_messages(in_context_messages)
         logger.info(f"System message token count={token_counts[0]}")
@@ -1142,7 +1150,9 @@ class Agent(BaseAgent):
         remaining_message_count = 1 + len(in_context_messages) - cutoff  # System + remaining
         hidden_message_count = all_time_message_count - remaining_message_count
         summary_message_count = len(message_sequence_to_summarize)
-        summary_message = package_summarize_message(summary, summary_message_count, hidden_message_count, all_time_message_count)
+        summary_message = package_summarize_message(
+            summary, summary_message_count, hidden_message_count, all_time_message_count, self.agent_state.timezone
+        )
         logger.info(f"Packaged into message: {summary_message}")
 
         prior_len = len(in_context_messages_openai)
@@ -1205,7 +1215,7 @@ class Agent(BaseAgent):
         # Grab the in-context messages
         # conversion of messages to OpenAI dict format, which is passed to the token counter
         in_context_messages = self.agent_manager.get_in_context_messages(agent_id=self.agent_state.id, actor=self.user)
-        in_context_messages_openai = [m.to_openai_dict() for m in in_context_messages]
+        in_context_messages_openai = Message.to_openai_dicts_from_list(in_context_messages)
 
         # Check if there's a summary message in the message queue
         if (
@@ -1241,8 +1251,9 @@ class Agent(BaseAgent):
 
         agent_manager_passage_size = self.agent_manager.passage_size(actor=self.user, agent_id=self.agent_state.id)
         message_manager_size = self.message_manager.size(actor=self.user, agent_id=self.agent_state.id)
-        external_memory_summary = compile_memory_metadata_block(
+        external_memory_summary = PromptGenerator.compile_memory_metadata_block(
             memory_edit_timestamp=get_utc_time(),
+            timezone=self.agent_state.timezone,
             previous_message_count=self.message_manager.size(actor=self.user, agent_id=self.agent_state.id),
             archival_memory_size=self.agent_manager.passage_size(actor=self.user, agent_id=self.agent_state.id),
         )
@@ -1292,20 +1303,19 @@ class Agent(BaseAgent):
         )
 
     async def get_context_window_async(self) -> ContextWindowOverview:
-        if os.getenv("LETTA_ENVIRONMENT") == "PRODUCTION":
+        if settings.environment == "PRODUCTION" and model_settings.anthropic_api_key:
             return await self.get_context_window_from_anthropic_async()
         return await self.get_context_window_from_tiktoken_async()
 
     async def get_context_window_from_tiktoken_async(self) -> ContextWindowOverview:
         """Get the context window of the agent"""
         # Grab the in-context messages
-        # conversion of messages to OpenAI dict format, which is passed to the token counter
-        (in_context_messages, passage_manager_size, message_manager_size) = await asyncio.gather(
-            self.message_manager.get_messages_by_ids_async(message_ids=self.agent_state.message_ids, actor=self.user),
-            self.passage_manager.agent_passage_size_async(actor=self.user, agent_id=self.agent_state.id),
-            self.message_manager.size_async(actor=self.user, agent_id=self.agent_state.id),
+        in_context_messages = await self.message_manager.get_messages_by_ids_async(
+            message_ids=self.agent_state.message_ids, actor=self.user
         )
-        in_context_messages_openai = [m.to_openai_dict() for m in in_context_messages]
+
+        # conversion of messages to OpenAI dict format, which is passed to the token counter
+        in_context_messages_openai = Message.to_openai_dicts_from_list(in_context_messages)
 
         # Extract system, memory and external summary
         if (
@@ -1391,6 +1401,15 @@ class Agent(BaseAgent):
         )
         assert isinstance(num_tokens_used_total, int)
 
+        passage_manager_size = await self.passage_manager.agent_passage_size_async(
+            agent_id=self.agent_state.id,
+            actor=self.user,
+        )
+        message_manager_size = await self.message_manager.size_async(
+            agent_id=self.agent_state.id,
+            actor=self.user,
+        )
+
         return ContextWindowOverview(
             # context window breakdown (in messages)
             num_messages=len(in_context_messages),
@@ -1421,13 +1440,12 @@ class Agent(BaseAgent):
         model = self.agent_state.llm_config.model if self.agent_state.llm_config.model_endpoint_type == "anthropic" else None
 
         # Grab the in-context messages
-        # conversion of messages to anthropic dict format, which is passed to the token counter
-        (in_context_messages, passage_manager_size, message_manager_size) = await asyncio.gather(
-            self.message_manager.get_messages_by_ids_async(message_ids=self.agent_state.message_ids, actor=self.user),
-            self.passage_manager.agent_passage_size_async(actor=self.user, agent_id=self.agent_state.id),
-            self.message_manager.size_async(actor=self.user, agent_id=self.agent_state.id),
+        in_context_messages = await self.message_manager.get_messages_by_ids_async(
+            message_ids=self.agent_state.message_ids, actor=self.user
         )
-        in_context_messages_anthropic = [m.to_anthropic_dict() for m in in_context_messages]
+
+        # conversion of messages to anthropic dict format, which is passed to the token counter
+        in_context_messages_anthropic = Message.to_anthropic_dicts_from_list(in_context_messages)
 
         # Extract system, memory and external summary
         if (
@@ -1541,6 +1559,15 @@ class Agent(BaseAgent):
         )
         assert isinstance(num_tokens_used_total, int)
 
+        passage_manager_size = await self.passage_manager.agent_passage_size_async(
+            agent_id=self.agent_state.id,
+            actor=self.user,
+        )
+        message_manager_size = await self.message_manager.size_async(
+            agent_id=self.agent_state.id,
+            actor=self.user,
+        )
+
         return ContextWindowOverview(
             # context window breakdown (in messages)
             num_messages=len(in_context_messages),
@@ -1604,7 +1631,7 @@ class Agent(BaseAgent):
                 action_name = generate_composio_action_from_func_name(target_letta_tool.name)
                 # Get entity ID from the agent_state
                 entity_id = None
-                for env_var in self.agent_state.tool_exec_environment_variables:
+                for env_var in self.agent_state.secrets:
                     if env_var.key == COMPOSIO_ENTITY_ENV_VAR_KEY:
                         entity_id = env_var.value
                 # Get composio_api_key
@@ -1620,7 +1647,7 @@ class Agent(BaseAgent):
                 # Get the MCPClient from the server's handle
                 # TODO these don't get raised properly
                 if not self.mcp_clients:
-                    raise ValueError(f"No MCP client available to use")
+                    raise ValueError("No MCP client available to use")
                 if server_name not in self.mcp_clients:
                     raise ValueError(f"Unknown MCP server name: {server_name}")
                 mcp_client = self.mcp_clients[server_name]

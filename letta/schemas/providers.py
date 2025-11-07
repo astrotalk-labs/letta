@@ -27,8 +27,10 @@ class Provider(ProviderBase):
     name: str = Field(..., description="The name of the provider")
     provider_type: ProviderType = Field(..., description="The type of the provider")
     provider_category: ProviderCategory = Field(..., description="The category of the provider (base or byok)")
-    api_key: Optional[str] = Field(None, description="API key used for requests to the provider.")
+    api_key: Optional[str] = Field(None, description="API key or secret key used for requests to the provider.")
     base_url: Optional[str] = Field(None, description="Base URL for the provider.")
+    access_key: Optional[str] = Field(None, description="Access key used for requests to the provider.")
+    region: Optional[str] = Field(None, description="Region used for requests to the provider.")
     organization_id: Optional[str] = Field(None, description="The organization id of the user")
     updated_at: Optional[datetime] = Field(None, description="The last update timestamp of the provider.")
 
@@ -95,8 +97,8 @@ class Provider(ProviderBase):
                 return OpenAIProvider(**self.model_dump(exclude_none=True))
             case ProviderType.anthropic:
                 return AnthropicProvider(**self.model_dump(exclude_none=True))
-            case ProviderType.anthropic_bedrock:
-                return AnthropicBedrockProvider(**self.model_dump(exclude_none=True))
+            case ProviderType.bedrock:
+                return BedrockProvider(**self.model_dump(exclude_none=True))
             case ProviderType.ollama:
                 return OllamaProvider(**self.model_dump(exclude_none=True))
             case ProviderType.google_ai:
@@ -122,16 +124,22 @@ class Provider(ProviderBase):
 class ProviderCreate(ProviderBase):
     name: str = Field(..., description="The name of the provider.")
     provider_type: ProviderType = Field(..., description="The type of the provider.")
-    api_key: str = Field(..., description="API key used for requests to the provider.")
+    api_key: str = Field(..., description="API key or secret key used for requests to the provider.")
+    access_key: Optional[str] = Field(None, description="Access key used for requests to the provider.")
+    region: Optional[str] = Field(None, description="Region used for requests to the provider.")
 
 
 class ProviderUpdate(ProviderBase):
-    api_key: str = Field(..., description="API key used for requests to the provider.")
+    api_key: str = Field(..., description="API key or secret key used for requests to the provider.")
+    access_key: Optional[str] = Field(None, description="Access key used for requests to the provider.")
+    region: Optional[str] = Field(None, description="Region used for requests to the provider.")
 
 
 class ProviderCheck(BaseModel):
     provider_type: ProviderType = Field(..., description="The type of the provider.")
-    api_key: str = Field(..., description="API key used for requests to the provider.")
+    api_key: str = Field(..., description="API key or secret key used for requests to the provider.")
+    access_key: Optional[str] = Field(None, description="Access key used for requests to the provider.")
+    region: Optional[str] = Field(None, description="Region used for requests to the provider.")
 
 
 class LettaProvider(Provider):
@@ -144,7 +152,7 @@ class LettaProvider(Provider):
                 model="letta-free",  # NOTE: renamed
                 model_endpoint_type="openai",
                 model_endpoint=LETTA_MODEL_ENDPOINT,
-                context_window=8192,
+                context_window=30000,
                 handle=self.get_handle("letta-free"),
                 provider_name=self.name,
                 provider_category=self.provider_category,
@@ -157,7 +165,7 @@ class LettaProvider(Provider):
                 model="letta-free",  # NOTE: renamed
                 model_endpoint_type="openai",
                 model_endpoint=LETTA_MODEL_ENDPOINT,
-                context_window=8192,
+                context_window=30000,
                 handle=self.get_handle("letta-free"),
                 provider_name=self.name,
                 provider_category=self.provider_category,
@@ -173,6 +181,7 @@ class LettaProvider(Provider):
                 embedding_dim=1024,
                 embedding_chunk_size=300,
                 handle=self.get_handle("letta-free", is_embedding=True),
+                batch_size=32,
             )
         ]
 
@@ -293,6 +302,7 @@ class OpenAIProvider(Provider):
             if self.base_url == "https://api.openai.com/v1":
                 allowed_types = ["gpt-4", "o1", "o3", "o4"]
                 # NOTE: o1-mini and o1-preview do not support tool calling
+                # NOTE: o1-mini does not support system messages
                 # NOTE: o1-pro is only available in Responses API
                 disallowed_types = ["transcribe", "search", "realtime", "tts", "audio", "computer", "o1-mini", "o1-preview", "o1-pro"]
                 skip = True
@@ -314,17 +324,24 @@ class OpenAIProvider(Provider):
             else:
                 handle = self.get_handle(model_name)
 
-            configs.append(
-                LLMConfig(
-                    model=model_name,
-                    model_endpoint_type="openai",
-                    model_endpoint=self.base_url,
-                    context_window=context_window_size,
-                    handle=handle,
-                    provider_name=self.name,
-                    provider_category=self.provider_category,
-                )
+            llm_config = LLMConfig(
+                model=model_name,
+                model_endpoint_type="openai",
+                model_endpoint=self.base_url,
+                context_window=context_window_size,
+                handle=handle,
+                provider_name=self.name,
+                provider_category=self.provider_category,
             )
+
+            # gpt-4o-mini has started to regress with pretty bad emoji spam loops
+            # this is to counteract that
+            if "gpt-4o-mini" in model_name:
+                llm_config.frequency_penalty = 1.0
+            if "gpt-4.1-mini" in model_name:
+                llm_config.frequency_penalty = 1.0
+
+            configs.append(llm_config)
 
         # for OpenAI, sort in reverse order
         if self.base_url == "https://api.openai.com/v1":
@@ -344,6 +361,7 @@ class OpenAIProvider(Provider):
                     embedding_dim=1536,
                     embedding_chunk_size=300,
                     handle=self.get_handle("text-embedding-ada-002", is_embedding=True),
+                    batch_size=1024,
                 ),
                 EmbeddingConfig(
                     embedding_model="text-embedding-3-small",
@@ -352,6 +370,7 @@ class OpenAIProvider(Provider):
                     embedding_dim=2000,
                     embedding_chunk_size=300,
                     handle=self.get_handle("text-embedding-3-small", is_embedding=True),
+                    batch_size=1024,
                 ),
                 EmbeddingConfig(
                     embedding_model="text-embedding-3-large",
@@ -360,6 +379,7 @@ class OpenAIProvider(Provider):
                     embedding_dim=2000,
                     embedding_chunk_size=300,
                     handle=self.get_handle("text-embedding-3-large", is_embedding=True),
+                    batch_size=1024,
                 ),
             ]
 
@@ -379,6 +399,7 @@ class OpenAIProvider(Provider):
                     embedding_dim=1536,
                     embedding_chunk_size=300,
                     handle=self.get_handle("text-embedding-ada-002", is_embedding=True),
+                    batch_size=1024,
                 ),
                 EmbeddingConfig(
                     embedding_model="text-embedding-3-small",
@@ -387,6 +408,7 @@ class OpenAIProvider(Provider):
                     embedding_dim=2000,
                     embedding_chunk_size=300,
                     handle=self.get_handle("text-embedding-3-small", is_embedding=True),
+                    batch_size=1024,
                 ),
                 EmbeddingConfig(
                     embedding_model="text-embedding-3-large",
@@ -395,6 +417,7 @@ class OpenAIProvider(Provider):
                     embedding_dim=2000,
                     embedding_chunk_size=300,
                     handle=self.get_handle("text-embedding-3-large", is_embedding=True),
+                    batch_size=1024,
                 ),
             ]
 
@@ -1046,7 +1069,7 @@ class GroqProvider(OpenAIProvider):
         response = openai_get_model_list(self.base_url, api_key=self.api_key)
         configs = []
         for model in response["data"]:
-            if not "context_window" in model:
+            if "context_window" not in model:
                 continue
             configs.append(
                 LLMConfig(
@@ -1293,6 +1316,7 @@ class GoogleAIProvider(Provider):
                     embedding_dim=768,
                     embedding_chunk_size=300,  # NOTE: max is 2048
                     handle=self.get_handle(model, is_embedding=True),
+                    batch_size=1024,
                 )
             )
         return configs
@@ -1324,6 +1348,8 @@ class GoogleVertexProvider(Provider):
         from letta.llm_api.google_constants import GOOGLE_MODEL_TO_CONTEXT_LENGTH
 
         configs = []
+
+        # Gemini models (existing functionality)
         for model, context_length in GOOGLE_MODEL_TO_CONTEXT_LENGTH.items():
             configs.append(
                 LLMConfig(
@@ -1337,6 +1363,30 @@ class GoogleVertexProvider(Provider):
                     provider_category=self.provider_category,
                 )
             )
+
+        # Claude models on Vertex AI
+        claude_models = {
+            "claude-sonnet-4-5@20250929": 200000,
+            "claude-3-5-sonnet-v2@20241022": 200000,
+            "claude-3-opus@20240229": 200000,
+            "claude-3-sonnet@20240229": 200000,
+            "claude-3-haiku@20240307": 200000,
+        }
+
+        for model, context_length in claude_models.items():
+            configs.append(
+                LLMConfig(
+                    model=model,
+                    model_endpoint_type="anthropic_vertex",
+                    model_endpoint="https://aiplatform.googleapis.com",
+                    context_window=context_length,
+                    handle=self.get_handle(model),
+                    max_tokens=8192,
+                    provider_name=self.name,
+                    provider_category=self.provider_category,
+                )
+            )
+
         return configs
 
     def list_embedding_models(self) -> List[EmbeddingConfig]:
@@ -1352,6 +1402,7 @@ class GoogleVertexProvider(Provider):
                     embedding_dim=dim,
                     embedding_chunk_size=300,  # NOTE: max is 2048
                     handle=self.get_handle(model, is_embedding=True),
+                    batch_size=1024,
                 )
             )
         return configs
@@ -1416,6 +1467,7 @@ class AzureProvider(Provider):
                     embedding_dim=768,
                     embedding_chunk_size=300,  # NOTE: max is 2048
                     handle=self.get_handle(model_name),
+                    batch_size=1024,
                 ),
             )
         return configs
@@ -1505,15 +1557,35 @@ class CohereProvider(OpenAIProvider):
     pass
 
 
-class AnthropicBedrockProvider(Provider):
+class BedrockProvider(Provider):
     provider_type: Literal[ProviderType.bedrock] = Field(ProviderType.bedrock, description="The type of the provider.")
     provider_category: ProviderCategory = Field(ProviderCategory.base, description="The category of the provider (base or byok)")
-    aws_region: str = Field(..., description="AWS region for Bedrock")
+    region: str = Field(..., description="AWS region for Bedrock")
+
+    def check_api_key(self):
+        """Check if the Bedrock credentials are valid"""
+        from letta.errors import LLMAuthenticationError
+        from letta.llm_api.aws_bedrock import bedrock_get_model_list
+
+        try:
+            # For BYOK providers, use the custom credentials
+            if self.provider_category == ProviderCategory.byok:
+                # If we can list models, the credentials are valid
+                bedrock_get_model_list(
+                    region_name=self.region,
+                    access_key_id=self.access_key,
+                    secret_access_key=self.api_key,  # api_key stores the secret access key
+                )
+            else:
+                # For base providers, use default credentials
+                bedrock_get_model_list(region_name=self.region)
+        except Exception as e:
+            raise LLMAuthenticationError(message=f"Failed to authenticate with Bedrock: {e}")
 
     def list_llm_models(self):
         from letta.llm_api.aws_bedrock import bedrock_get_model_list
 
-        models = bedrock_get_model_list(self.aws_region)
+        models = bedrock_get_model_list(self.region)
 
         configs = []
         for model_summary in models:
@@ -1531,6 +1603,32 @@ class AnthropicBedrockProvider(Provider):
             )
         return configs
 
+    async def list_llm_models_async(self) -> List[LLMConfig]:
+        from letta.llm_api.aws_bedrock import bedrock_get_model_list_async
+
+        models = await bedrock_get_model_list_async(
+            self.access_key,
+            self.api_key,
+            self.region,
+        )
+
+        configs = []
+        for model_summary in models:
+            model_arn = model_summary["inferenceProfileArn"]
+            configs.append(
+                LLMConfig(
+                    model=model_arn,
+                    model_endpoint_type=self.provider_type.value,
+                    model_endpoint=None,
+                    context_window=self.get_model_context_window(model_arn),
+                    handle=self.get_handle(model_arn),
+                    provider_name=self.name,
+                    provider_category=self.provider_category,
+                )
+            )
+
+        return configs
+
     def list_embedding_models(self):
         return []
 
@@ -1540,7 +1638,7 @@ class AnthropicBedrockProvider(Provider):
 
         return bedrock_get_model_context_window(model_name)
 
-    def get_handle(self, model_name: str) -> str:
+    def get_handle(self, model_name: str, is_embedding: bool = False, base_name: Optional[str] = None) -> str:
         print(model_name)
         model = model_name.split(".")[-1]
-        return f"bedrock/{model}"
+        return f"{self.name}/{model}"

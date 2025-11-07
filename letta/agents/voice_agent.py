@@ -1,4 +1,3 @@
-import asyncio
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -9,19 +8,14 @@ import openai
 from letta.agents.base_agent import BaseAgent
 from letta.agents.exceptions import IncompatibleAgentType
 from letta.agents.voice_sleeptime_agent import VoiceSleeptimeAgent
-from letta.constants import DEFAULT_MAX_STEPS, NON_USER_MSG_PREFIX
+from letta.constants import DEFAULT_MAX_STEPS, NON_USER_MSG_PREFIX, PRE_EXECUTION_MESSAGE_ARG, REQUEST_HEARTBEAT_PARAM
 from letta.helpers.datetime_helpers import get_utc_time
-from letta.helpers.tool_execution_helper import (
-    add_pre_execution_message,
-    enable_strict_mode,
-    execute_external_tool,
-    remove_request_heartbeat,
-)
+from letta.helpers.tool_execution_helper import add_pre_execution_message, enable_strict_mode, remove_request_heartbeat
 from letta.interfaces.openai_chat_completions_streaming_interface import OpenAIChatCompletionsStreamingInterface
 from letta.log import get_logger
-from letta.orm.enums import ToolType
-from letta.schemas.agent import AgentState, AgentType
-from letta.schemas.enums import MessageRole
+from letta.prompts.prompt_generator import PromptGenerator
+from letta.schemas.agent import AgentState
+from letta.schemas.enums import AgentType, MessageRole, ToolType
 from letta.schemas.letta_response import LettaResponse
 from letta.schemas.message import Message, MessageCreate
 from letta.schemas.openai.chat_completion_request import (
@@ -42,11 +36,12 @@ from letta.server.rest_api.utils import (
 )
 from letta.services.agent_manager import AgentManager
 from letta.services.block_manager import BlockManager
-from letta.services.helpers.agent_manager_helper import compile_system_message
 from letta.services.message_manager import MessageManager
 from letta.services.passage_manager import PassageManager
+from letta.services.run_manager import RunManager
 from letta.services.summarizer.enums import SummarizationMode
 from letta.services.summarizer.summarizer import Summarizer
+from letta.services.tool_executor.tool_execution_manager import ToolExecutionManager
 from letta.settings import model_settings
 
 logger = get_logger(__name__)
@@ -68,6 +63,7 @@ class VoiceAgent(BaseAgent):
         message_manager: MessageManager,
         agent_manager: AgentManager,
         block_manager: BlockManager,
+        run_manager: RunManager,
         passage_manager: PassageManager,
         actor: User,
     ):
@@ -77,6 +73,7 @@ class VoiceAgent(BaseAgent):
 
         # Summarizer settings
         self.block_manager = block_manager
+        self.run_manager = run_manager
         self.passage_manager = passage_manager
         # TODO: This is not guaranteed to exist!
         self.summary_block_label = "human"
@@ -102,6 +99,7 @@ class VoiceAgent(BaseAgent):
                 agent_manager=self.agent_manager,
                 actor=self.actor,
                 block_manager=self.block_manager,
+                run_manager=self.run_manager,
                 passage_manager=self.passage_manager,
                 target_block_label=self.summary_block_label,
             ),
@@ -124,7 +122,11 @@ class VoiceAgent(BaseAgent):
 
         user_query = input_messages[0].content[0].text
 
-        agent_state = await self.agent_manager.get_agent_by_id_async(self.agent_id, actor=self.actor)
+        agent_state = await self.agent_manager.get_agent_by_id_async(
+            agent_id=self.agent_id,
+            include_relationships=["tools", "memory", "tool_exec_environment_variables", "multi_agent_group"],
+            actor=self.actor,
+        )
 
         # TODO: Refactor this so it uses our in-house clients
         # TODO: For now, piggyback off of OpenAI client for ease
@@ -142,14 +144,20 @@ class VoiceAgent(BaseAgent):
 
         in_context_messages = await self.message_manager.get_messages_by_ids_async(message_ids=agent_state.message_ids, actor=self.actor)
         memory_edit_timestamp = get_utc_time()
-        in_context_messages[0].content[0].text = compile_system_message(
+        in_context_messages[0].content[0].text = await PromptGenerator.compile_system_message_async(
             system_prompt=agent_state.system,
             in_context_memory=agent_state.memory,
             in_context_memory_last_edit=memory_edit_timestamp,
+            timezone=agent_state.timezone,
             previous_message_count=self.num_messages,
             archival_memory_size=self.num_archival_memories,
+            sources=agent_state.sources,
+            max_files_open=agent_state.max_files_open,
+            llm_config=agent_state.llm_config,
         )
-        letta_message_db_queue = create_input_messages(input_messages=input_messages, agent_id=agent_state.id, actor=self.actor)
+        letta_message_db_queue = create_input_messages(
+            input_messages=input_messages, agent_id=agent_state.id, timezone=agent_state.timezone, actor=self.actor
+        )
         in_memory_message_history = self.pre_process_input_message(input_messages)
 
         # TODO: Define max steps here
@@ -207,7 +215,7 @@ class VoiceAgent(BaseAgent):
                 response_text=content,
                 agent_id=agent_state.id,
                 model=agent_state.llm_config.model,
-                actor=self.actor,
+                timezone=agent_state.timezone,
             )
             letta_message_db_queue.extend(assistant_msgs)
 
@@ -265,11 +273,10 @@ class VoiceAgent(BaseAgent):
                 function_name=tool_call_name,
                 function_arguments=tool_args,
                 tool_call_id=tool_call_id,
-                function_call_success=success_flag,
                 function_response=tool_result,
                 tool_execution_result=tool_execution_result,
-                actor=self.actor,
-                add_heartbeat_request_system_message=True,
+                timezone=agent_state.timezone,
+                continue_stepping=True,
             )
             letta_message_db_queue.extend(tool_call_messages)
 
@@ -285,11 +292,11 @@ class VoiceAgent(BaseAgent):
         new_letta_messages = await self.message_manager.create_many_messages_async(letta_message_db_queue, actor=self.actor)
 
         # TODO: Make this more general and configurable, less brittle
-        new_in_context_messages, updated = summarizer.summarize(
+        new_in_context_messages, updated = await summarizer.summarize(
             in_context_messages=in_context_messages, new_letta_messages=new_letta_messages
         )
 
-        await self.agent_manager.set_in_context_messages_async(
+        await self.agent_manager.update_message_ids_async(
             agent_id=self.agent_id, message_ids=[m.id for m in new_in_context_messages], actor=self.actor
         )
 
@@ -298,18 +305,17 @@ class VoiceAgent(BaseAgent):
         in_context_messages: List[Message],
         agent_state: AgentState,
     ) -> List[Message]:
-        self.num_messages, self.num_archival_memories = await asyncio.gather(
-            (
-                self.message_manager.size_async(actor=self.actor, agent_id=agent_state.id)
-                if self.num_messages is None
-                else asyncio.sleep(0, result=self.num_messages)
-            ),
-            (
-                self.passage_manager.agent_passage_size_async(actor=self.actor, agent_id=agent_state.id)
-                if self.num_archival_memories is None
-                else asyncio.sleep(0, result=self.num_archival_memories)
-            ),
-        )
+        if not self.num_messages:
+            self.num_messages = await self.message_manager.size_async(
+                agent_id=agent_state.id,
+                actor=self.actor,
+            )
+        if not self.num_archival_memories:
+            self.num_archival_memories = await self.passage_manager.agent_passage_size_async(
+                agent_id=agent_state.id,
+                actor=self.actor,
+            )
+
         return await super()._rebuild_memory_async(
             in_context_messages, agent_state, num_messages=self.num_messages, num_archival_memories=self.num_archival_memories
         )
@@ -332,7 +338,11 @@ class VoiceAgent(BaseAgent):
 
     def _build_tool_schemas(self, agent_state: AgentState, external_tools_only=True) -> List[Tool]:
         if external_tools_only:
-            tools = [t for t in agent_state.tools if t.tool_type in {ToolType.EXTERNAL_COMPOSIO, ToolType.CUSTOM}]
+            tools = [
+                t
+                for t in agent_state.tools
+                if t.tool_type in {ToolType.CUSTOM, ToolType.LETTA_FILES_CORE, ToolType.LETTA_BUILTIN, ToolType.EXTERNAL_MCP}
+            ]
         else:
             tools = agent_state.tools
 
@@ -352,7 +362,7 @@ class VoiceAgent(BaseAgent):
                         "description": (
                             "Look in long-term or earlier-conversation memory **only when** the "
                             "user asks about something missing from the visible context. "
-                            "The user’s latest utterance is sent automatically as the main query.\n\n"
+                            "The user's latest utterance is sent automatically as the main query.\n\n"
                             "Optional refinements (set unused fields to *null*):\n"
                             "• `convo_keyword_queries`   – extra names/IDs if the request is vague.\n"
                             "• `start_minutes_ago` / `end_minutes_ago` – limit results to a recent time window."
@@ -364,19 +374,19 @@ class VoiceAgent(BaseAgent):
                                     "type": ["array", "null"],
                                     "items": {"type": "string"},
                                     "description": (
-                                        "Extra keywords (e.g., order ID, place name). " "Use *null* when the utterance is already specific."
+                                        "Extra keywords (e.g., order ID, place name). Use *null* when the utterance is already specific."
                                     ),
                                 },
                                 "start_minutes_ago": {
                                     "type": ["integer", "null"],
                                     "description": (
-                                        "Newer bound of the time window, in minutes ago. " "Use *null* if no lower bound is needed."
+                                        "Newer bound of the time window, in minutes ago. Use *null* if no lower bound is needed."
                                     ),
                                 },
                                 "end_minutes_ago": {
                                     "type": ["integer", "null"],
                                     "description": (
-                                        "Older bound of the time window, in minutes ago. " "Use *null* if no upper bound is needed."
+                                        "Older bound of the time window, in minutes ago. Use *null* if no upper bound is needed."
                                     ),
                                 },
                             },
@@ -401,11 +411,9 @@ class VoiceAgent(BaseAgent):
 
     async def _execute_tool(self, user_query: str, tool_name: str, tool_args: dict, agent_state: AgentState) -> "ToolExecutionResult":
         """
-        Executes a tool and returns (result, success_flag).
+        Executes a tool and returns the ToolExecutionResult.
         """
         from letta.schemas.tool_execution_result import ToolExecutionResult
-
-        print("EXECUTING TOOL")
 
         # Special memory case
         if tool_name == "search_memory":
@@ -420,26 +428,41 @@ class VoiceAgent(BaseAgent):
                 func_return=tool_result,
                 status="success",
             )
-        else:
-            target_tool = next((x for x in agent_state.tools if x.name == tool_name), None)
-            if not target_tool:
-                return ToolExecutionResult(
-                    func_return=f"Tool not found: {tool_name}",
-                    status="error",
-                )
 
-            try:
-                tool_result, _ = execute_external_tool(
-                    agent_state=agent_state,
-                    function_name=tool_name,
-                    function_args=tool_args,
-                    target_letta_tool=target_tool,
-                    actor=self.actor,
-                    allow_agent_state_modifications=False,
-                )
-                return ToolExecutionResult(func_return=tool_result, status="success")
-            except Exception as e:
-                return ToolExecutionResult(func_return=f"Failed to call tool. Error: {e}", status="error")
+        # Find the target tool
+        target_tool = next((x for x in agent_state.tools if x.name == tool_name), None)
+        if not target_tool:
+            return ToolExecutionResult(
+                func_return=f"Tool {tool_name} not found",
+                status="error",
+            )
+
+        # Use ToolExecutionManager for modern tool execution
+        # Decrypt environment variable values
+        sandbox_env_vars = {var.key: var.get_value_secret().get_plaintext() for var in agent_state.secrets}
+        tool_execution_manager = ToolExecutionManager(
+            agent_state=agent_state,
+            message_manager=self.message_manager,
+            agent_manager=self.agent_manager,
+            block_manager=self.block_manager,
+            run_manager=self.run_manager,
+            passage_manager=self.passage_manager,
+            sandbox_env_vars=sandbox_env_vars,
+            actor=self.actor,
+        )
+
+        # Remove request heartbeat / pre_exec_message
+        tool_args.pop(PRE_EXECUTION_MESSAGE_ARG, None)
+        tool_args.pop(REQUEST_HEARTBEAT_PARAM, None)
+
+        tool_execution_result = await tool_execution_manager.execute_tool_async(
+            function_name=tool_name,
+            function_args=tool_args,
+            tool=target_tool,
+            step_id=None,  # VoiceAgent doesn't use step tracking currently
+        )
+
+        return tool_execution_result
 
     async def _search_memory(
         self,
@@ -459,7 +482,7 @@ class VoiceAgent(BaseAgent):
         if start_date and end_date and start_date > end_date:
             start_date, end_date = end_date, start_date
 
-        archival_results = await self.agent_manager.list_passages_async(
+        archival_results = await self.agent_manager.query_agent_passages_async(
             actor=self.actor,
             agent_id=self.agent_id,
             query_text=archival_query,
@@ -469,7 +492,8 @@ class VoiceAgent(BaseAgent):
             start_date=start_date,
             end_date=end_date,
         )
-        formatted_archival_results = [{"timestamp": str(result.created_at), "content": result.text} for result in archival_results]
+        # Extract passages from tuples and format
+        formatted_archival_results = [{"timestamp": str(passage.created_at), "content": passage.text} for passage, _, _ in archival_results]
         response = {
             "archival_search_results": formatted_archival_results,
         }
@@ -478,7 +502,7 @@ class VoiceAgent(BaseAgent):
         keyword_results = {}
         if convo_keyword_queries:
             for keyword in convo_keyword_queries:
-                messages = await self.message_manager.list_messages_for_agent_async(
+                messages = await self.message_manager.list_messages(
                     agent_id=self.agent_id,
                     actor=self.actor,
                     query_text=keyword,

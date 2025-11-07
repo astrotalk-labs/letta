@@ -17,6 +17,34 @@ from letta.schemas.letta_message_content import (
 # ---------------------------
 
 
+class MessageReturnType(str, Enum):
+    approval = "approval"
+    tool = "tool"
+
+
+class MessageReturn(BaseModel):
+    type: MessageReturnType = Field(..., description="The message type to be created.")
+
+
+class ApprovalReturn(MessageReturn):
+    type: Literal[MessageReturnType.approval] = Field(default=MessageReturnType.approval, description="The message type to be created.")
+    tool_call_id: str = Field(..., description="The ID of the tool call that corresponds to this approval")
+    approve: bool = Field(..., description="Whether the tool has been approved")
+    reason: Optional[str] = Field(None, description="An optional explanation for the provided approval status")
+
+
+class ToolReturn(MessageReturn):
+    type: Literal[MessageReturnType.tool] = Field(default=MessageReturnType.tool, description="The message type to be created.")
+    tool_return: str
+    status: Literal["success", "error"]
+    tool_call_id: str
+    stdout: Optional[List[str]] = None
+    stderr: Optional[List[str]] = None
+
+
+LettaMessageReturnUnion = Annotated[Union[ApprovalReturn, ToolReturn], Field(discriminator="type")]
+
+
 class MessageType(str, Enum):
     system_message = "system_message"
     user_message = "user_message"
@@ -25,6 +53,8 @@ class MessageType(str, Enum):
     hidden_reasoning_message = "hidden_reasoning_message"
     tool_call_message = "tool_call_message"
     tool_return_message = "tool_return_message"
+    approval_request_message = "approval_request_message"
+    approval_response_message = "approval_response_message"
 
 
 class LettaMessage(BaseModel):
@@ -40,15 +70,20 @@ class LettaMessage(BaseModel):
         message_type (MessageType): The type of the message
         otid (Optional[str]): The offline threading id associated with this message
         sender_id (Optional[str]): The id of the sender of the message, can be an identity id or agent id
+        step_id (Optional[str]): The step id associated with the message
+        is_err (Optional[bool]): Whether the message is an errored message or not. Used for debugging purposes only.
     """
 
     id: str
     date: datetime
-    name: Optional[str] = None
+    name: str | None = None
     message_type: MessageType = Field(..., description="The type of the message.")
-    otid: Optional[str] = None
-    sender_id: Optional[str] = None
-    step_id: Optional[str] = None
+    otid: str | None = None
+    sender_id: str | None = None
+    step_id: str | None = None
+    is_err: bool | None = None
+    seq_id: int | None = None
+    run_id: str | None = None
 
     @field_serializer("date")
     def serialize_datetime(self, dt: datetime, _info):
@@ -59,6 +94,14 @@ class LettaMessage(BaseModel):
         if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.isoformat(timespec="seconds")
+
+    @field_serializer("is_err", mode="wrap")
+    def serialize_is_err(self, value: bool | None, handler, _info):
+        """
+        Only serialize is_err field when it's True (for debugging purposes).
+        When is_err is None or False, this field will be excluded from the JSON output.
+        """
+        return handler(value) if value is True else None
 
 
 class SystemMessage(LettaMessage):
@@ -72,7 +115,7 @@ class SystemMessage(LettaMessage):
         content (str): The message content sent by the system
     """
 
-    message_type: Literal[MessageType.system_message] = Field(MessageType.system_message, description="The type of the message.")
+    message_type: Literal[MessageType.system_message] = Field(default=MessageType.system_message, description="The type of the message.")
     content: str = Field(..., description="The message content sent by the system")
 
 
@@ -87,7 +130,7 @@ class UserMessage(LettaMessage):
         content (Union[str, List[LettaUserMessageContentUnion]]): The message content sent by the user (can be a string or an array of multi-modal content parts)
     """
 
-    message_type: Literal[MessageType.user_message] = Field(MessageType.user_message, description="The type of the message.")
+    message_type: Literal[MessageType.user_message] = Field(default=MessageType.user_message, description="The type of the message.")
     content: Union[str, List[LettaUserMessageContentUnion]] = Field(
         ...,
         description="The message content sent by the user (can be a string or an array of multi-modal content parts)",
@@ -109,7 +152,9 @@ class ReasoningMessage(LettaMessage):
         signature (Optional[str]): The model-generated signature of the reasoning step
     """
 
-    message_type: Literal[MessageType.reasoning_message] = Field(MessageType.reasoning_message, description="The type of the message.")
+    message_type: Literal[MessageType.reasoning_message] = Field(
+        default=MessageType.reasoning_message, description="The type of the message."
+    )
     source: Literal["reasoner_model", "non_reasoner_model"] = "non_reasoner_model"
     reasoning: str
     signature: Optional[str] = None
@@ -130,7 +175,7 @@ class HiddenReasoningMessage(LettaMessage):
     """
 
     message_type: Literal[MessageType.hidden_reasoning_message] = Field(
-        MessageType.hidden_reasoning_message, description="The type of the message."
+        default=MessageType.hidden_reasoning_message, description="The type of the message."
     )
     state: Literal["redacted", "omitted"]
     hidden_reasoning: Optional[str] = None
@@ -170,8 +215,11 @@ class ToolCallMessage(LettaMessage):
         tool_call (Union[ToolCall, ToolCallDelta]): The tool call
     """
 
-    message_type: Literal[MessageType.tool_call_message] = Field(MessageType.tool_call_message, description="The type of the message.")
-    tool_call: Union[ToolCall, ToolCallDelta]
+    message_type: Literal[MessageType.tool_call_message] = Field(
+        default=MessageType.tool_call_message, description="The type of the message."
+    )
+    tool_call: Union[ToolCall, ToolCallDelta] = Field(..., deprecated=True)
+    tool_calls: Optional[Union[List[ToolCall], ToolCallDelta]] = None
 
     def model_dump(self, *args, **kwargs):
         """
@@ -179,8 +227,14 @@ class ToolCallMessage(LettaMessage):
         """
         kwargs["exclude_none"] = True
         data = super().model_dump(*args, **kwargs)
-        if isinstance(data["tool_call"], dict):
+        if isinstance(data.get("tool_call"), dict):
             data["tool_call"] = {k: v for k, v in data["tool_call"].items() if v is not None}
+        if isinstance(data.get("tool_calls"), dict):
+            data["tool_calls"] = {k: v for k, v in data["tool_calls"].items() if v is not None}
+        elif isinstance(data.get("tool_calls"), list):
+            data["tool_calls"] = [
+                {k: v for k, v in item.items() if v is not None} if isinstance(item, dict) else item for item in data["tool_calls"]
+            ]
         return data
 
     class Config:
@@ -215,19 +269,67 @@ class ToolReturnMessage(LettaMessage):
         id (str): The ID of the message
         date (datetime): The date the message was created in ISO format
         name (Optional[str]): The name of the sender of the message
-        tool_return (str): The return value of the tool
-        status (Literal["success", "error"]): The status of the tool call
-        tool_call_id (str): A unique identifier for the tool call that generated this message
-        stdout (Optional[List(str)]): Captured stdout (e.g. prints, logs) from the tool invocation
-        stderr (Optional[List(str)]): Captured stderr from the tool invocation
+        tool_return (str): The return value of the tool (deprecated, use tool_returns)
+        status (Literal["success", "error"]): The status of the tool call (deprecated, use tool_returns)
+        tool_call_id (str): A unique identifier for the tool call that generated this message (deprecated, use tool_returns)
+        stdout (Optional[List(str)]): Captured stdout (e.g. prints, logs) from the tool invocation (deprecated, use tool_returns)
+        stderr (Optional[List(str)]): Captured stderr from the tool invocation (deprecated, use tool_returns)
+        tool_returns (Optional[List[ToolReturn]]): List of tool returns for multi-tool support
     """
 
-    message_type: Literal[MessageType.tool_return_message] = Field(MessageType.tool_return_message, description="The type of the message.")
-    tool_return: str
-    status: Literal["success", "error"]
-    tool_call_id: str
-    stdout: Optional[List[str]] = None
-    stderr: Optional[List[str]] = None
+    message_type: Literal[MessageType.tool_return_message] = Field(
+        default=MessageType.tool_return_message, description="The type of the message."
+    )
+    tool_return: str = Field(..., deprecated=True)
+    status: Literal["success", "error"] = Field(..., deprecated=True)
+    tool_call_id: str = Field(..., deprecated=True)
+    stdout: Optional[List[str]] = Field(None, deprecated=True)
+    stderr: Optional[List[str]] = Field(None, deprecated=True)
+    tool_returns: Optional[List[ToolReturn]] = None
+
+
+class ApprovalRequestMessage(LettaMessage):
+    """
+    A message representing a request for approval to call a tool (generated by the LLM to trigger tool execution).
+
+    Args:
+        id (str): The ID of the message
+        date (datetime): The date the message was created in ISO format
+        name (Optional[str]): The name of the sender of the message
+        tool_call (ToolCall): The tool call
+    """
+
+    message_type: Literal[MessageType.approval_request_message] = Field(
+        default=MessageType.approval_request_message, description="The type of the message."
+    )
+    tool_call: Union[ToolCall, ToolCallDelta] = Field(
+        ..., description="The tool call that has been requested by the llm to run", deprecated=True
+    )
+    tool_calls: Optional[Union[List[ToolCall], ToolCallDelta]] = Field(
+        None, description="The tool calls that have been requested by the llm to run, which are pending approval"
+    )
+
+
+class ApprovalResponseMessage(LettaMessage):
+    """
+    A message representing a response form the user indicating whether a tool has been approved to run.
+
+    Args:
+        id (str): The ID of the message
+        date (datetime): The date the message was created in ISO format
+        name (Optional[str]): The name of the sender of the message
+        approve: (bool) Whether the tool has been approved
+        approval_request_id: The ID of the approval request
+        reason: (Optional[str]) An optional explanation for the provided approval status
+    """
+
+    message_type: Literal[MessageType.approval_response_message] = Field(
+        default=MessageType.approval_response_message, description="The type of the message."
+    )
+    approvals: Optional[List[LettaMessageReturnUnion]] = Field(default=None, description="The list of approval responses")
+    approve: Optional[bool] = Field(None, description="Whether the tool has been approved", deprecated=True)
+    approval_request_id: Optional[str] = Field(None, description="The message ID of the approval request", deprecated=True)
+    reason: Optional[str] = Field(None, description="An optional explanation for the provided approval status", deprecated=True)
 
 
 class AssistantMessage(LettaMessage):
@@ -241,7 +343,9 @@ class AssistantMessage(LettaMessage):
         content (Union[str, List[LettaAssistantMessageContentUnion]]): The message content sent by the agent (can be a string or an array of content parts)
     """
 
-    message_type: Literal[MessageType.assistant_message] = Field(MessageType.assistant_message, description="The type of the message.")
+    message_type: Literal[MessageType.assistant_message] = Field(
+        default=MessageType.assistant_message, description="The type of the message."
+    )
     content: Union[str, List[LettaAssistantMessageContentUnion]] = Field(
         ...,
         description="The message content sent by the agent (can be a string or an array of content parts)",
@@ -249,9 +353,34 @@ class AssistantMessage(LettaMessage):
     )
 
 
+class LettaPing(LettaMessage):
+    """
+    A ping message used as a keepalive to prevent SSE streams from timing out during long running requests.
+
+    Args:
+        id (str): The ID of the message
+        date (datetime): The date the message was created in ISO format
+    """
+
+    message_type: Literal["ping"] = Field(
+        "ping",
+        description="The type of the message. Ping messages are a keep-alive to prevent SSE streams from timing out during long running requests.",
+    )
+
+
 # NOTE: use Pydantic's discriminated unions feature: https://docs.pydantic.dev/latest/concepts/unions/#discriminated-unions
 LettaMessageUnion = Annotated[
-    Union[SystemMessage, UserMessage, ReasoningMessage, HiddenReasoningMessage, ToolCallMessage, ToolReturnMessage, AssistantMessage],
+    Union[
+        SystemMessage,
+        UserMessage,
+        ReasoningMessage,
+        HiddenReasoningMessage,
+        ToolCallMessage,
+        ToolReturnMessage,
+        AssistantMessage,
+        ApprovalRequestMessage,
+        ApprovalResponseMessage,
+    ],
     Field(discriminator="message_type"),
 ]
 
@@ -266,6 +395,8 @@ def create_letta_message_union_schema():
             {"$ref": "#/components/schemas/ToolCallMessage"},
             {"$ref": "#/components/schemas/ToolReturnMessage"},
             {"$ref": "#/components/schemas/AssistantMessage"},
+            {"$ref": "#/components/schemas/ApprovalRequestMessage"},
+            {"$ref": "#/components/schemas/ApprovalResponseMessage"},
         ],
         "discriminator": {
             "propertyName": "message_type",
@@ -277,8 +408,28 @@ def create_letta_message_union_schema():
                 "tool_call_message": "#/components/schemas/ToolCallMessage",
                 "tool_return_message": "#/components/schemas/ToolReturnMessage",
                 "assistant_message": "#/components/schemas/AssistantMessage",
+                "approval_request_message": "#/components/schemas/ApprovalRequestMessage",
+                "approval_response_message": "#/components/schemas/ApprovalResponseMessage",
             },
         },
+    }
+
+
+def create_letta_ping_schema():
+    return {
+        "properties": {
+            "message_type": {
+                "type": "string",
+                "const": "ping",
+                "title": "Message Type",
+                "description": "The type of the message.",
+                "default": "ping",
+            }
+        },
+        "type": "object",
+        "required": ["message_type"],
+        "title": "LettaPing",
+        "description": "Ping messages are a keep-alive to prevent SSE streams from timing out during long running requests.",
     }
 
 

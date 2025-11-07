@@ -1,5 +1,5 @@
 import uuid
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import ForeignKey, Index, Integer, String, Text, UniqueConstraint, desc
 from sqlalchemy.ext.asyncio import AsyncAttrs
@@ -11,10 +11,7 @@ from letta.schemas.enums import FileProcessingStatus
 from letta.schemas.file import FileMetadata as PydanticFileMetadata
 
 if TYPE_CHECKING:
-    from letta.orm.files_agents import FileAgent
-    from letta.orm.organization import Organization
-    from letta.orm.passage import SourcePassage
-    from letta.orm.source import Source
+    pass
 
 
 # TODO: Note that this is NOT organization scoped, this is potentially dangerous if we misuse this
@@ -49,6 +46,7 @@ class FileMetadata(SqlalchemyBase, OrganizationMixin, SourceMixin, AsyncAttrs):
     )
 
     file_name: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="The name of the file.")
+    original_file_name: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="The original name of the file as uploaded.")
     file_path: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="The file path on the system.")
     file_type: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="The type of the file.")
     file_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, doc="The size of the file in bytes.")
@@ -59,20 +57,10 @@ class FileMetadata(SqlalchemyBase, OrganizationMixin, SourceMixin, AsyncAttrs):
     )
 
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True, doc="Any error message encountered during processing.")
+    total_chunks: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, doc="Total number of chunks for the file.")
+    chunks_embedded: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, doc="Number of chunks that have been embedded.")
 
     # relationships
-    organization: Mapped["Organization"] = relationship("Organization", back_populates="files", lazy="selectin")
-    source: Mapped["Source"] = relationship("Source", back_populates="files", lazy="selectin")
-    source_passages: Mapped[List["SourcePassage"]] = relationship(
-        "SourcePassage", back_populates="file", lazy="selectin", cascade="all, delete-orphan"
-    )
-    file_agents: Mapped[List["FileAgent"]] = relationship(
-        "FileAgent",
-        back_populates="file",
-        lazy="selectin",
-        cascade="all, delete-orphan",
-        passive_deletes=True,  # ← add this
-    )
     content: Mapped[Optional["FileContent"]] = relationship(
         "FileContent",
         uselist=False,
@@ -81,7 +69,7 @@ class FileMetadata(SqlalchemyBase, OrganizationMixin, SourceMixin, AsyncAttrs):
         cascade="all, delete-orphan",
     )
 
-    async def to_pydantic_async(self, include_content: bool = False) -> PydanticFileMetadata:
+    async def to_pydantic_async(self, include_content: bool = False, strip_directory_prefix: bool = False) -> PydanticFileMetadata:
         """
         Async version of `to_pydantic` that supports optional relationship loading
         without requiring `expire_on_commit=False`.
@@ -94,11 +82,16 @@ class FileMetadata(SqlalchemyBase, OrganizationMixin, SourceMixin, AsyncAttrs):
         else:
             content_text = None
 
+        file_name = self.file_name
+        if strip_directory_prefix and "/" in file_name:
+            file_name = "/".join(file_name.split("/")[1:])
+
         return PydanticFileMetadata(
             id=self.id,
             organization_id=self.organization_id,
             source_id=self.source_id,
-            file_name=self.file_name,
+            file_name=file_name,
+            original_file_name=self.original_file_name,
             file_path=self.file_path,
             file_type=self.file_type,
             file_size=self.file_size,
@@ -106,8 +99,9 @@ class FileMetadata(SqlalchemyBase, OrganizationMixin, SourceMixin, AsyncAttrs):
             file_last_modified_date=self.file_last_modified_date,
             processing_status=self.processing_status,
             error_message=self.error_message,
+            total_chunks=self.total_chunks,
+            chunks_embedded=self.chunks_embedded,
             created_at=self.created_at,
             updated_at=self.updated_at,
-            is_deleted=self.is_deleted,
             content=content_text,
         )

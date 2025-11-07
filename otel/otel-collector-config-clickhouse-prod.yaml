@@ -8,13 +8,25 @@ receivers:
   filelog:
     include:
       - /root/.letta/logs/Letta.log
-    multiline:
-      line_start_pattern: ^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}
+    operators:
+      # Parse JSON logs
+      - type: json_parser
+        parse_from: body
+        parse_to: attributes
+      - type: time_parser
+        parse_from: attributes.timestamp
+        layout_type: gotime
+        layout: '2006-01-02T15:04:05.999999Z07:00'
 
 processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 1024
+    spike_limit_mib: 256
   batch:
-    timeout: 1s
-    send_batch_size: 1024
+    timeout: 10s
+    send_batch_size: 8192
+
 
 exporters:
   clickhouse:
@@ -46,13 +58,13 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [batch]
+      processors: [memory_limiter, batch]
       exporters: [clickhouse]
     logs:
       receivers: [filelog]
-      processors: [batch]
+      processors: [memory_limiter, batch]
       exporters: [clickhouse]
     metrics:
       receivers: [otlp]
-      processors: [batch]
+      processors: [memory_limiter, batch]
       exporters: [clickhouse]

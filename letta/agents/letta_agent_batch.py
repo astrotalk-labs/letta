@@ -16,19 +16,18 @@ from letta.jobs.types import RequestStatusUpdateInfo, StepStatusUpdateInfo
 from letta.llm_api.llm_client import LLMClient
 from letta.local_llm.constants import INNER_THOUGHTS_KWARG
 from letta.log import get_logger
-from letta.orm.enums import ToolType
 from letta.otel.tracing import log_event, trace_method
-from letta.schemas.agent import AgentState, AgentStepState
-from letta.schemas.enums import AgentStepStatus, JobStatus, MessageStreamStatus, ProviderType
+from letta.schemas.agent import AgentState
+from letta.schemas.enums import AgentStepStatus, JobStatus, MessageStreamStatus, ProviderType, SandboxType, ToolType
 from letta.schemas.job import JobUpdate
 from letta.schemas.letta_message import LegacyLettaMessage, LettaMessage
 from letta.schemas.letta_message_content import OmittedReasoningContent, ReasoningContent, RedactedReasoningContent, TextContent
 from letta.schemas.letta_request import LettaBatchRequest
 from letta.schemas.letta_response import LettaBatchResponse, LettaResponse
-from letta.schemas.llm_batch_job import LLMBatchItem
+from letta.schemas.llm_batch_job import AgentStepState, LLMBatchItem
 from letta.schemas.message import Message, MessageCreate
 from letta.schemas.openai.chat_completion_response import ToolCall as OpenAIToolCall
-from letta.schemas.sandbox_config import SandboxConfig, SandboxType
+from letta.schemas.sandbox_config import SandboxConfig
 from letta.schemas.tool_execution_result import ToolExecutionResult
 from letta.schemas.user import User
 from letta.server.rest_api.utils import create_heartbeat_system_message, create_letta_messages_from_llm_response
@@ -100,7 +99,6 @@ async def execute_tool_wrapper(params: ToolExecutionParams) -> tuple[str, ToolEx
 # TODO: Limitations ->
 # TODO: Only works with anthropic for now
 class LettaAgentBatch(BaseAgent):
-
     def __init__(
         self,
         message_manager: MessageManager,
@@ -194,6 +192,7 @@ class LettaAgentBatch(BaseAgent):
 
         log_event(name="send_llm_batch_request")
         batch_response = await llm_client.send_llm_batch_request_async(
+            agent_type=agent_states[0].agent_type,
             agent_messages_mapping=agent_messages_mapping,
             agent_tools_mapping=agent_tools_mapping,
             agent_llm_config_mapping=agent_llm_config_mapping,
@@ -492,30 +491,31 @@ class LettaAgentBatch(BaseAgent):
         msg_map: Dict[str, List[Message]],
     ) -> Tuple[List[LettaBatchRequest], Dict[str, AgentStepState]]:
         # who continues?
-        continues = [aid for aid, cont in ctx.should_continue_map.items() if cont]
+        continues = [agent_id for agent_id, cont in ctx.should_continue_map.items() if cont]
 
         success_flag_map = {aid: result.success_flag for aid, result in exec_results}
 
         batch_reqs: List[LettaBatchRequest] = []
-        for aid in continues:
+        for agent_id in continues:
             heartbeat = create_heartbeat_system_message(
-                agent_id=aid,
-                model=ctx.agent_state_map[aid].llm_config.model,
-                function_call_success=success_flag_map[aid],
-                actor=self.actor,
+                agent_id=agent_id,
+                model=ctx.agent_state_map[agent_id].llm_config.model,
+                function_call_success=success_flag_map[agent_id],
+                timezone=ctx.agent_state_map[agent_id].timezone,
             )
             batch_reqs.append(
                 LettaBatchRequest(
-                    agent_id=aid, messages=[MessageCreate.model_validate(heartbeat.model_dump(include={"role", "content", "name", "otid"}))]
+                    agent_id=agent_id,
+                    messages=[MessageCreate.model_validate(heartbeat.model_dump(include={"role", "content", "name", "otid"}))],
                 )
             )
 
         # extend in‑context ids when necessary
-        for aid, new_msgs in msg_map.items():
-            ast = ctx.agent_state_map[aid]
+        for agent_id, new_msgs in msg_map.items():
+            ast = ctx.agent_state_map[agent_id]
             if not ast.message_buffer_autoclear:
-                await self.agent_manager.set_in_context_messages_async(
-                    agent_id=aid,
+                await self.agent_manager.update_message_ids_async(
+                    agent_id=agent_id,
                     message_ids=ast.message_ids + [m.id for m in new_msgs],
                     actor=self.actor,
                 )
@@ -545,11 +545,10 @@ class LettaAgentBatch(BaseAgent):
             function_name=tool_call_name,
             function_arguments=tool_call_args,
             tool_call_id=tool_call_id,
-            function_call_success=success_flag,
             function_response=tool_exec_result,
             tool_execution_result=tool_exec_result_obj,
-            actor=self.actor,
-            add_heartbeat_request_system_message=False,
+            timezone=agent_state.timezone,
+            continue_stepping=False,
             reasoning_content=reasoning_content,
             pre_computed_assistant_message_id=None,
             llm_batch_item_id=llm_batch_item_id,
@@ -604,7 +603,8 @@ class LettaAgentBatch(BaseAgent):
 
         return tool_call_name, tool_args, continue_stepping
 
-    def _prepare_tools_per_agent(self, agent_state: AgentState, tool_rules_solver: ToolRulesSolver) -> List[dict]:
+    @staticmethod
+    def _prepare_tools_per_agent(agent_state: AgentState, tool_rules_solver: ToolRulesSolver) -> List[dict]:
         tools = [t for t in agent_state.tools if t.tool_type in {ToolType.CUSTOM, ToolType.LETTA_CORE, ToolType.LETTA_MEMORY_CORE}]
         valid_tool_names = tool_rules_solver.get_allowed_tool_names(available_tools=set([t.name for t in tools]))
         return [enable_strict_mode(t.json_schema) for t in tools if t.name in set(valid_tool_names)]
@@ -613,14 +613,16 @@ class LettaAgentBatch(BaseAgent):
         self, agent_state: AgentState, input_messages: List[MessageCreate]
     ) -> List[Message]:
         current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_async(
-            input_messages, agent_state, self.message_manager, self.actor
+            input_messages, agent_state, self.message_manager, self.actor, run_id=None
         )
 
         in_context_messages = await self._rebuild_memory_async(current_in_context_messages + new_in_context_messages, agent_state)
         return in_context_messages
 
     # Not used in batch.
-    async def step(self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS) -> LettaResponse:
+    async def step(
+        self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS, run_id: str | None = None
+    ) -> LettaResponse:
         raise NotImplementedError
 
     async def step_stream(

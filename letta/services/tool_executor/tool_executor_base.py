@@ -10,6 +10,7 @@ from letta.services.agent_manager import AgentManager
 from letta.services.block_manager import BlockManager
 from letta.services.message_manager import MessageManager
 from letta.services.passage_manager import PassageManager
+from letta.services.run_manager import RunManager
 
 
 class ToolExecutor(ABC):
@@ -20,12 +21,14 @@ class ToolExecutor(ABC):
         message_manager: MessageManager,
         agent_manager: AgentManager,
         block_manager: BlockManager,
+        run_manager: RunManager,
         passage_manager: PassageManager,
         actor: User,
     ):
         self.message_manager = message_manager
         self.agent_manager = agent_manager
         self.block_manager = block_manager
+        self.run_manager = run_manager
         self.passage_manager = passage_manager
         self.actor = actor
 
