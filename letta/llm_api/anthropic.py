@@ -757,20 +757,6 @@ def _prepare_anthropic_request(
     else:
         data["system"] = system_content
 
-    system_content = data["messages"][0]["content"]
-
-    # Add cache control to system message
-    if isinstance(system_content, str):
-        data["system"] = [
-            {
-                "type": "text",
-                "text": system_content,
-                "cache_control": {"type": "ephemeral"}
-            }
-        ]
-    else:
-        data["system"] = system_content
-
     data["messages"] = data["messages"][1:]
 
     # Process messages
