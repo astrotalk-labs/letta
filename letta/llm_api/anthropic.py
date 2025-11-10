@@ -5,7 +5,7 @@ import warnings
 from typing import Any, Generator, List, Optional, Union
 
 import anthropic
-from anthropic import PermissionDeniedError
+from anthropic import AnthropicVertex, PermissionDeniedError
 from anthropic.types.beta import (
     BetaRawContentBlockDeltaEvent,
     BetaRawContentBlockStartEvent,
