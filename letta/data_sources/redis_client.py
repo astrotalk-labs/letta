@@ -291,7 +291,7 @@ async def get_redis_client() -> AsyncRedisClient:
             from letta.settings import settings
 
             _client_instance = AsyncRedisClient(
-                host=settings.redis_host or "localhost",
+                host=settings.redis_host or "redis",
                 port=settings.redis_port or 6379,
             )
             await _client_instance.wait_for_ready(timeout=5)
