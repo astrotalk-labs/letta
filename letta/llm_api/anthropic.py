@@ -844,22 +844,30 @@ def anthropic_chat_completions_request(
     # ✅ Use provided client or create new one
     if anthropic_client is None:
         if use_vertex_experiment:
-            logger.info(f"[VERTEX_EXPERIMENT] Creating AnthropicVertex client (use_vertex_experiment=True)")
+            log_msg = f"[VERTEX_EXPERIMENT] Creating AnthropicVertex client (use_vertex_experiment=True)"
+            logger.info(log_msg)
+            print(f"DEBUG: {log_msg}")
             from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
             anthropic_client = AnthropicVertexClient()._get_client()
-            logger.info(f"[VERTEX_EXPERIMENT] Successfully created AnthropicVertex client")
+            log_msg = f"[VERTEX_EXPERIMENT] Successfully created AnthropicVertex client"
+            logger.info(log_msg)
+            print(f"DEBUG: {log_msg}")
         elif provider_category == ProviderCategory.byok:
             logger.info(f"[ANTHROPIC] Creating BYOK Anthropic client (provider_category={provider_category})")
             actor = UserManager().get_user_or_default(user_id=user_id)
             api_key = ProviderManager().get_override_key(provider_name, actor=actor)
             anthropic_client = anthropic.Anthropic(api_key=api_key)
         elif model_settings.anthropic_api_key:
-            logger.info(f"[ANTHROPIC] Creating standard Anthropic client (use_vertex_experiment=False)")
+            log_msg = f"[ANTHROPIC] Creating standard Anthropic client (use_vertex_experiment=False)"
+            logger.info(log_msg)
+            print(f"DEBUG: {log_msg}")
             anthropic_client = anthropic.Anthropic()
         else:
             raise ValueError("No available Anthropic API key")
     else:
-        logger.info(f"[ANTHROPIC] Using pre-configured client: {type(anthropic_client).__name__}")
+        log_msg = f"[ANTHROPIC] Using pre-configured client: {type(anthropic_client).__name__}"
+        logger.info(log_msg)
+        print(f"DEBUG: {log_msg}")
 
     data = _prepare_anthropic_request(
         data=data,
@@ -871,15 +879,21 @@ def anthropic_chat_completions_request(
     log_event(name="llm_request_sent", attributes=data)
     is_vertex = isinstance(anthropic_client, AnthropicVertex)
     
-    logger.info(f"[ANTHROPIC] Client type determined: is_vertex={is_vertex}, client_type={type(anthropic_client).__name__}")
+    log_msg = f"[ANTHROPIC] Client type determined: is_vertex={is_vertex}, client_type={type(anthropic_client).__name__}"
+    logger.info(log_msg)
+    print(f"DEBUG: {log_msg}")
 
     if is_vertex:
         # Vertex AI doesn't support beta features like prompt caching
-        logger.info(f"[VERTEX_EXPERIMENT] Making request to Vertex AI (no beta features)")
+        log_msg = f"[VERTEX_EXPERIMENT] Making request to Vertex AI (no beta features)"
+        logger.info(log_msg)
+        print(f"DEBUG: {log_msg}")
         response = anthropic_client.messages.create(**data)
     else:
         # Direct Anthropic API supports beta features
-        logger.info(f"[ANTHROPIC] Making request to direct Anthropic API (with beta features: {betas})")
+        log_msg = f"[ANTHROPIC] Making request to direct Anthropic API (with beta features: {betas})"
+        logger.info(log_msg)
+        print(f"DEBUG: {log_msg}")
         response = anthropic_client.beta.messages.create(
             **data,
             betas=betas,

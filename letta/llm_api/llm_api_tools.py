@@ -157,7 +157,9 @@ def create(
     from letta.log import get_logger
     
     logger = get_logger(__name__)
-    logger.info(f"[CREATE] Starting LLM request: model_endpoint_type={llm_config.model_endpoint_type}, use_vertex_experiment={use_vertex_experiment}, stream={stream}")
+    log_msg = f"[CREATE] Starting LLM request: model_endpoint_type={llm_config.model_endpoint_type}, use_vertex_experiment={use_vertex_experiment}, stream={stream}"
+    logger.info(log_msg)
+    print(f"DEBUG: {log_msg}")
 
     # Count the tokens first, if there's an overflow exit early by throwing an error up the stack
     # NOTE: we want to include a specific substring in the error message to trigger summarization
@@ -362,7 +364,9 @@ def create(
     elif llm_config.model_endpoint_type == "anthropic":
         from letta.log import get_logger
         logger = get_logger(__name__)
-        logger.info(f"[ANTHROPIC] Handling anthropic request with use_vertex_experiment={use_vertex_experiment}")
+        log_msg = f"[ANTHROPIC] Handling anthropic request with use_vertex_experiment={use_vertex_experiment}"
+        logger.info(log_msg)
+        print(f"DEBUG: {log_msg}")
         
         if not use_tool_naming:
             raise NotImplementedError("Only tool calling supported on Anthropic API requests")
@@ -456,7 +460,9 @@ def create(
         """
         from letta.log import get_logger
         logger = get_logger(__name__)
-        logger.info(f"[ANTHROPIC_VERTEX] Handling anthropic_vertex request (explicit Vertex client, use_vertex_experiment={use_vertex_experiment})")
+        log_msg = f"[ANTHROPIC_VERTEX] Handling anthropic_vertex request (explicit Vertex client, use_vertex_experiment={use_vertex_experiment})"
+        logger.info(log_msg)
+        print(f"DEBUG: {log_msg}")
 
         if not use_tool_naming:
             raise NotImplementedError("Only tool calling supported on Anthropic Vertex API requests")
