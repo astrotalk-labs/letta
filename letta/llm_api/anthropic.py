@@ -52,6 +52,29 @@ logger = get_logger(__name__)
 BASE_URL = "https://api.anthropic.com/v1"
 
 
+def ensure_correct_provider(agent_id: str, use_vertex_experiment: bool) -> None:
+    """Ensure agent's llm_config.model_endpoint_type matches the experiment flag.
+    
+    Args:
+        agent_id: The agent ID to check/update
+        use_vertex_experiment: If True, ensure endpoint is "anthropic_vertex", else "anthropic"
+    """
+    from letta.services.agent_manager import AgentManager
+    
+    agent_manager = AgentManager()
+    agent_state = agent_manager.get_agent_by_id(agent_id=agent_id)
+    
+    expected_endpoint_type = "anthropic_vertex" if use_vertex_experiment else "anthropic"
+    current_endpoint_type = agent_state.llm_config.model_endpoint_type
+    
+    if current_endpoint_type != expected_endpoint_type:
+        logger.info(
+            f"Updating agent {agent_id} model_endpoint_type from '{current_endpoint_type}' to '{expected_endpoint_type}'"
+        )
+        agent_state.llm_config.model_endpoint_type = expected_endpoint_type
+        agent_manager.update_agent(agent_state)
+
+
 # https://docs.anthropic.com/claude/docs/models-overview
 # Sadly hardcoded
 MODEL_LIST = [
@@ -807,18 +830,23 @@ def anthropic_chat_completions_request(
         provider_category: Optional[ProviderCategory] = None,
         betas: List[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
         user_id: Optional[str] = None,
-        anthropic_client: Optional[Any] = None,  # ✅ ADD THIS PARAMETER
+        anthropic_client: Optional[Any] = None,
+        use_vertex_experiment: bool = False,
 )  -> ChatCompletionResponse:
     """https://docs.anthropic.com/claude/docs/tool-use
 
     Args:
         data: Chat completion request
         anthropic_client: Optional pre-configured Anthropic or AnthropicVertex client
+        use_vertex_experiment: If True, use Anthropic Vertex AI instead of direct API
         ... other params
     """
     # ✅ Use provided client or create new one
     if anthropic_client is None:
-        if provider_category == ProviderCategory.byok:
+        if use_vertex_experiment:
+            from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
+            anthropic_client = AnthropicVertexClient()._get_client()
+        elif provider_category == ProviderCategory.byok:
             actor = UserManager().get_user_or_default(user_id=user_id)
             api_key = ProviderManager().get_override_key(provider_name, actor=actor)
             anthropic_client = anthropic.Anthropic(api_key=api_key)
@@ -885,12 +913,16 @@ def anthropic_chat_completions_request_stream(
         provider_category: Optional[ProviderCategory] = None,
         betas: List[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
         user_id: Optional[str] = None,
-        anthropic_client: Optional[Any] = None,  # ✅ ADD THIS PARAMETER
+        anthropic_client: Optional[Any] = None,
+        use_vertex_experiment: bool = False,
 ) -> Generator[ChatCompletionChunkResponse, None, None]:
     """Stream chat completions from Anthropic API.
 
     Similar to OpenAI's streaming, but using Anthropic's native streaming support.
     See: https://docs.anthropic.com/claude/reference/messages-streaming
+    
+    Args:
+        use_vertex_experiment: If True, use Anthropic Vertex AI instead of direct API
     """
     data = _prepare_anthropic_request(
         data=data,
@@ -901,7 +933,10 @@ def anthropic_chat_completions_request_stream(
     )
     # ✅ Use provided client or create new one
     if anthropic_client is None:
-        if provider_category == ProviderCategory.byok:
+        if use_vertex_experiment:
+            from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
+            anthropic_client = AnthropicVertexClient()._get_client()
+        elif provider_category == ProviderCategory.byok:
             actor = UserManager().get_user_or_default(user_id=user_id)
             api_key = ProviderManager().get_override_key(provider_name, actor=actor)
             anthropic_client = anthropic.Anthropic(api_key=api_key)
@@ -968,7 +1003,8 @@ def anthropic_chat_completions_process_stream(
         betas: List[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
         name: Optional[str] = None,
         user_id: Optional[str] = None,
-        anthropic_client: Optional[Any] = None,  # ✅ ADD THIS PARAMETER
+        anthropic_client: Optional[Any] = None,
+        use_vertex_experiment: bool = False,
 ) -> ChatCompletionResponse:
     """Process a streaming completion response from Anthropic, similar to OpenAI's streaming.
 
@@ -980,6 +1016,7 @@ def anthropic_chat_completions_process_stream(
         create_message_id: Whether to create a message ID
         create_message_datetime: Whether to create message datetime
         betas: Beta features to enable
+        use_vertex_experiment: If True, use Anthropic Vertex AI instead of direct API
 
     Returns:
         The final ChatCompletionResponse
@@ -1053,7 +1090,8 @@ def anthropic_chat_completions_process_stream(
                     provider_category=provider_category,
                     betas=betas,
                     user_id=user_id,
-                    anthropic_client=anthropic_client,  # ✅ Pass through the client
+                    anthropic_client=anthropic_client,
+                    use_vertex_experiment=use_vertex_experiment,
                 )
         ):
             assert isinstance(chat_completion_chunk, ChatCompletionChunkResponse), type(chat_completion_chunk)
