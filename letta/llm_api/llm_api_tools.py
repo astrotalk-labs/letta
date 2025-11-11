@@ -355,7 +355,7 @@ def create(
 
         return response
 
-    elif llm_config.model_endpoint_type in ["anthropic", "anthropic_vertex"]:
+    elif llm_config.model_endpoint_type == "anthropic":
         if not use_tool_naming:
             raise NotImplementedError("Only tool calling supported on Anthropic API requests")
 
@@ -437,6 +437,99 @@ def create(
                 organization_id=actor.organization_id,
             ),
         )
+
+        return response
+
+    elif llm_config.model_endpoint_type == "anthropic_vertex":
+        """Anthropic Claude models on Google Vertex AI using Anthropic's SDK
+        
+        NOTE: This case is kept for backward compatibility when use_vertex_experiment is not set.
+        When use_vertex_experiment is explicitly set, the consolidated anthropic case above handles it.
+        """
+
+        if not use_tool_naming:
+            raise NotImplementedError("Only tool calling supported on Anthropic Vertex API requests")
+
+        if llm_config.enable_reasoner:
+            llm_config.put_inner_thoughts_in_kwargs = False
+
+        # ✅ CRITICAL: Initialize Vertex client explicitly for backward compatibility
+        from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
+        vertex_client = AnthropicVertexClient()
+        anthropic_client = vertex_client._get_client()
+
+        # Force tool calling
+        tool_call = None
+        if functions is None:
+            # Special case for summarization path
+            tools = None
+            tool_choice = None
+        elif force_tool_call is not None:
+            tool_choice = {"type": "tool", "name": force_tool_call}
+            tools = [{"type": "function", "function": f} for f in functions if f["name"] == force_tool_call]
+            assert functions is not None
+            llm_config.put_inner_thoughts_in_kwargs = True
+        else:
+            if llm_config.put_inner_thoughts_in_kwargs:
+                tool_choice = {"type": "any", "disable_parallel_tool_use": True}
+            else:
+                tool_choice = {"type": "auto", "disable_parallel_tool_use": True}
+            tools = [{"type": "function", "function": f} for f in functions] if functions is not None else None
+
+        chat_completion_request = ChatCompletionRequest(
+            model=llm_config.model,
+            messages=[cast_message_to_subtype(m.to_openai_dict()) for m in messages],
+            tools=tools,
+            tool_choice=tool_choice,
+            max_tokens=llm_config.max_tokens,
+            temperature=llm_config.temperature,
+            stream=stream,
+        )
+
+        # Handle streaming
+        if stream:
+            assert isinstance(stream_interface, (AgentChunkStreamingInterface, AgentRefreshStreamingInterface)), type(stream_interface)
+            stream_interface.inner_thoughts_in_kwargs = True
+            response = anthropic_chat_completions_process_stream(
+                chat_completion_request=chat_completion_request,
+                put_inner_thoughts_in_kwargs=llm_config.put_inner_thoughts_in_kwargs,
+                stream_interface=stream_interface,
+                extended_thinking=llm_config.enable_reasoner,
+                max_reasoning_tokens=llm_config.max_reasoning_tokens,
+                provider_name=llm_config.provider_name,
+                provider_category=llm_config.provider_category,
+                name=name,
+                user_id=user_id,
+                anthropic_client=anthropic_client,  # ✅ CRITICAL: Pass Vertex client
+                use_vertex_experiment=use_vertex_experiment,  # Pass flag for consistency
+            )
+        else:
+            # Client did not request token streaming
+            response = anthropic_chat_completions_request(
+                data=chat_completion_request,
+                put_inner_thoughts_in_kwargs=llm_config.put_inner_thoughts_in_kwargs,
+                extended_thinking=llm_config.enable_reasoner,
+                max_reasoning_tokens=llm_config.max_reasoning_tokens,
+                provider_name=llm_config.provider_name,
+                provider_category=llm_config.provider_category,
+                user_id=user_id,
+                anthropic_client=anthropic_client,  # ✅ CRITICAL: Pass Vertex client
+                use_vertex_experiment=use_vertex_experiment,  # Pass flag for consistency
+            )
+
+        if llm_config.put_inner_thoughts_in_kwargs:
+            response = unpack_all_inner_thoughts_from_kwargs(response=response, inner_thoughts_key=INNER_THOUGHTS_KWARG)
+
+        if telemetry_manager is not None:
+            telemetry_manager.create_provider_trace(
+                actor=actor,
+                provider_trace_create=ProviderTraceCreate(
+                    request_json=chat_completion_request.model_json_schema(),
+                    response_json=response.model_json_schema(),
+                    step_id=step_id,
+                    organization_id=actor.organization_id,
+                ),
+            )
 
         return response
 
