@@ -511,15 +511,16 @@ def create(
         if llm_config.put_inner_thoughts_in_kwargs:
             response = unpack_all_inner_thoughts_from_kwargs(response=response, inner_thoughts_key=INNER_THOUGHTS_KWARG)
 
-        telemetry_manager.create_provider_trace(
-            actor=actor,
-            provider_trace_create=ProviderTraceCreate(
-                request_json=chat_completion_request.model_json_schema(),
-                response_json=response.model_json_schema(),
-                step_id=step_id,
-                organization_id=actor.organization_id,
-            ),
-        )
+        if telemetry_manager is not None:
+            telemetry_manager.create_provider_trace(
+                actor=actor,
+                provider_trace_create=ProviderTraceCreate(
+                    request_json=chat_completion_request.model_json_schema(),
+                    response_json=response.model_json_schema(),
+                    step_id=step_id,
+                    organization_id=actor.organization_id,
+                ),
+            )
 
         return response
 
