@@ -154,6 +154,10 @@ def create(
 ) -> ChatCompletionResponse:
     """Return response to chat completion with backoff"""
     from letta.utils import printd
+    from letta.log import get_logger
+    
+    logger = get_logger(__name__)
+    logger.info(f"[CREATE] Starting LLM request: model_endpoint_type={llm_config.model_endpoint_type}, use_vertex_experiment={use_vertex_experiment}, stream={stream}")
 
     # Count the tokens first, if there's an overflow exit early by throwing an error up the stack
     # NOTE: we want to include a specific substring in the error message to trigger summarization
@@ -356,6 +360,10 @@ def create(
         return response
 
     elif llm_config.model_endpoint_type == "anthropic":
+        from letta.log import get_logger
+        logger = get_logger(__name__)
+        logger.info(f"[ANTHROPIC] Handling anthropic request with use_vertex_experiment={use_vertex_experiment}")
+        
         if not use_tool_naming:
             raise NotImplementedError("Only tool calling supported on Anthropic API requests")
 
@@ -446,6 +454,9 @@ def create(
         NOTE: This case is kept for backward compatibility when use_vertex_experiment is not set.
         When use_vertex_experiment is explicitly set, the consolidated anthropic case above handles it.
         """
+        from letta.log import get_logger
+        logger = get_logger(__name__)
+        logger.info(f"[ANTHROPIC_VERTEX] Handling anthropic_vertex request (explicit Vertex client, use_vertex_experiment={use_vertex_experiment})")
 
         if not use_tool_naming:
             raise NotImplementedError("Only tool calling supported on Anthropic Vertex API requests")
@@ -454,9 +465,11 @@ def create(
             llm_config.put_inner_thoughts_in_kwargs = False
 
         # ✅ CRITICAL: Initialize Vertex client explicitly for backward compatibility
+        logger.info(f"[ANTHROPIC_VERTEX] Creating explicit AnthropicVertex client")
         from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
         vertex_client = AnthropicVertexClient()
         anthropic_client = vertex_client._get_client()
+        logger.info(f"[ANTHROPIC_VERTEX] Successfully created explicit AnthropicVertex client")
 
         # Force tool calling
         tool_call = None
