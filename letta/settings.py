@@ -195,6 +195,8 @@ class Settings(BaseSettings):
 
     redis_host: Optional[str] = None
     redis_port: Optional[int] = None
+    redis_username: Optional[str] = None
+    redis_password: Optional[str] = None
 
     plugin_register: Optional[str] = None
 

@@ -26,6 +26,7 @@ class AsyncRedisClient:
         host: str = "localhost",
         port: int = 6379,
         db: int = 0,
+        username: Optional[str] = None,
         password: Optional[str] = None,
         max_connections: int = 50,
         decode_responses: bool = True,
@@ -41,6 +42,7 @@ class AsyncRedisClient:
             host: Redis server hostname
             port: Redis server port
             db: Database number
+            username: Redis username if required (Redis 6+)
             password: Redis password if required
             max_connections: Maximum number of connections in pool
             decode_responses: Decode byte responses to strings
@@ -53,6 +55,7 @@ class AsyncRedisClient:
             host=host,
             port=port,
             db=db,
+            username=username,
             password=password,
             max_connections=max_connections,
             decode_responses=decode_responses,
@@ -293,6 +296,8 @@ async def get_redis_client() -> AsyncRedisClient:
             _client_instance = AsyncRedisClient(
                 host=settings.redis_host or "redis",
                 port=settings.redis_port or 6379,
+                username=settings.redis_username,
+                password=settings.redis_password,
             )
             await _client_instance.wait_for_ready(timeout=5)
             logger.info("Redis client initialized")
