@@ -54,36 +54,17 @@ class AnthropicClient(LLMClientBase):
 
     @trace_method
     async def request_async(self, request_data: dict, llm_config: LLMConfig, use_vertex_experiment: bool = False) -> dict:
-        # If use_vertex_experiment is True, create a Vertex client instead
-        if use_vertex_experiment:
-            print(f"DEBUG: [AnthropicClient] use_vertex_experiment=True, creating Vertex client")
+        # Check if we should use Vertex AI based on model_endpoint_type
+        # (This happens when use_vertex_experiment changes the endpoint type in _step)
+        if llm_config.model_endpoint_type == "anthropic_vertex":
+            print(f"DEBUG: [AnthropicClient] Using Vertex AI client (model_endpoint_type=anthropic_vertex)")
             from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
             vertex_client_wrapper = AnthropicVertexClient()
             client = vertex_client_wrapper._get_client()
-            
-            # ✅ Convert model name in request_data: dash format -> @ format
-            # Example: claude-sonnet-4-5-20250929 -> claude-sonnet-4-5@20250929
-            original_model = request_data.get('model', '')
-            if '-' in original_model and '@' not in original_model:
-                parts = original_model.rsplit('-', 1)  # Split on LAST dash only
-                if len(parts) == 2 and parts[1].isdigit():  # Ensure it's a date
-                    request_data['model'] = f"{parts[0]}@{parts[1]}"
-                    print(f"DEBUG: [AnthropicClient] Converted model for Vertex: {original_model} -> {request_data['model']}")
-                    logger.info(f"Converted model for Vertex: {original_model} -> {request_data['model']}")
-            
             # Vertex doesn't support beta features
             response = await client.messages.create(**request_data)
         else:
-            print(f"DEBUG: [AnthropicClient] use_vertex_experiment=False, using standard Anthropic client")
-            
-            # ✅ Convert model name in request_data: @ format -> dash format (if needed)
-            # Example: claude-sonnet-4-5@20250929 -> claude-sonnet-4-5-20250929
-            original_model = request_data.get('model', '')
-            if '@' in original_model:
-                request_data['model'] = original_model.replace('@', '-')
-                print(f"DEBUG: [AnthropicClient] Converted model for direct API: {original_model} -> {request_data['model']}")
-                logger.info(f"Converted model for direct API: {original_model} -> {request_data['model']}")
-            
+            print(f"DEBUG: [AnthropicClient] Using standard Anthropic client (model_endpoint_type={llm_config.model_endpoint_type})")
             client = await self._get_anthropic_client_async(llm_config, async_client=True)
             response = await client.beta.messages.create(**request_data, betas=["tools-2024-04-04"])
         logger.info("This is the usage response from claude %s", response.usage)

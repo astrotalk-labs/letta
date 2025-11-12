@@ -310,6 +310,30 @@ class LettaAgent(BaseAgent):
             4. Processes the response
         """
         print(f"DEBUG: [_step] Received use_vertex_experiment={use_vertex_experiment}")
+        
+        # ✅ Handle provider switching based on use_vertex_experiment
+        original_endpoint_type = agent_state.llm_config.model_endpoint_type
+        original_model = agent_state.llm_config.model
+        
+        if use_vertex_experiment and original_endpoint_type == "anthropic":
+            # Switch TO Vertex AI
+            print(f"DEBUG: [_step] Switching from anthropic to anthropic_vertex due to use_vertex_experiment=True")
+            agent_state.llm_config.model_endpoint_type = "anthropic_vertex"
+            # Convert model name: dash -> @
+            if '-' in original_model and '@' not in original_model:
+                parts = original_model.rsplit('-', 1)
+                if len(parts) == 2 and parts[1].isdigit():
+                    agent_state.llm_config.model = f"{parts[0]}@{parts[1]}"
+                    print(f"DEBUG: [_step] Converted model: {original_model} -> {agent_state.llm_config.model}")
+        elif not use_vertex_experiment and original_endpoint_type == "anthropic_vertex":
+            # Switch TO direct Anthropic
+            print(f"DEBUG: [_step] Switching from anthropic_vertex to anthropic due to use_vertex_experiment=False")
+            agent_state.llm_config.model_endpoint_type = "anthropic"
+            # Convert model name: @ -> dash
+            if '@' in original_model:
+                agent_state.llm_config.model = original_model.replace('@', '-')
+                print(f"DEBUG: [_step] Converted model: {original_model} -> {agent_state.llm_config.model}")
+        
         current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
             input_messages, agent_state, self.message_manager, self.actor
         )
