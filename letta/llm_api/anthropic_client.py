@@ -58,9 +58,26 @@ class AnthropicClient(LLMClientBase):
         # (This happens when use_vertex_experiment changes the endpoint type in _step)
         if llm_config.model_endpoint_type == "anthropic_vertex":
             print(f"DEBUG: [AnthropicClient] Using Vertex AI client (model_endpoint_type=anthropic_vertex)")
-            from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
-            vertex_client_wrapper = AnthropicVertexClient()
-            client = vertex_client_wrapper._get_client()
+            print(f"DEBUG: [AnthropicClient] Request data model: {request_data.get('model')}")
+            from anthropic import AsyncAnthropicVertex
+            from letta.settings import model_settings
+            import os
+            
+            # Create async Vertex client with proper configuration
+            project_id = model_settings.google_cloud_project
+            # Use 'global' region for newer Claude models (claude-sonnet-4-5@20250929)
+            # Older models may require specific regions like 'us-east5'
+            region = os.getenv('GOOGLE_CLOUD_LOCATION') or os.getenv('ANTHROPIC_VERTEX_REGION') or 'global'
+            
+            print(f"DEBUG: [AnthropicClient] Creating AsyncAnthropicVertex with project={project_id}, region={region}")
+            
+            if not project_id:
+                raise ValueError("GOOGLE_CLOUD_PROJECT must be set for Vertex AI")
+            
+            client = AsyncAnthropicVertex(
+                project_id=project_id,
+                region=region,
+            )
             # Vertex doesn't support beta features
             response = await client.messages.create(**request_data)
         else:
