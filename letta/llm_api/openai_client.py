@@ -254,7 +254,7 @@ class OpenAIClient(LLMClientBase):
         return response.model_dump()
 
     @trace_method
-    async def request_async(self, request_data: dict, llm_config: LLMConfig) -> dict:
+    async def request_async(self, request_data: dict, llm_config: LLMConfig, use_vertex_experiment: bool = False) -> dict:
         """
         Performs underlying asynchronous request to OpenAI API and returns raw response dict.
         """

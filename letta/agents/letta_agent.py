@@ -122,6 +122,7 @@ class LettaAgent(BaseAgent):
         use_assistant_message: bool = True,
         request_start_timestamp_ns: Optional[int] = None,
         include_return_message_types: Optional[List[MessageType]] = None,
+        use_vertex_experiment: bool = False,
     ) -> LettaResponse:
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
@@ -131,6 +132,7 @@ class LettaAgent(BaseAgent):
             input_messages=input_messages,
             max_steps=max_steps,
             request_start_timestamp_ns=request_start_timestamp_ns,
+            use_vertex_experiment=use_vertex_experiment,
         )
         return _create_letta_response(
             new_in_context_messages=new_in_context_messages,
@@ -148,6 +150,7 @@ class LettaAgent(BaseAgent):
         use_assistant_message: bool = True,
         request_start_timestamp_ns: Optional[int] = None,
         include_return_message_types: Optional[List[MessageType]] = None,
+        use_vertex_experiment: bool = False,
     ):
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
@@ -297,6 +300,7 @@ class LettaAgent(BaseAgent):
         input_messages: List[MessageCreate],
         max_steps: int = DEFAULT_MAX_STEPS,
         request_start_timestamp_ns: Optional[int] = None,
+        use_vertex_experiment: bool = False,
     ) -> Tuple[List[Message], List[Message], Optional[LettaStopReason], LettaUsageStatistics]:
         """
         Carries out an invocation of the agent loop. In each step, the agent
@@ -305,6 +309,7 @@ class LettaAgent(BaseAgent):
             3. Fetches a response from the LLM
             4. Processes the response
         """
+        print(f"DEBUG: [_step] Received use_vertex_experiment={use_vertex_experiment}")
         current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
             input_messages, agent_state, self.message_manager, self.actor
         )
@@ -330,7 +335,7 @@ class LettaAgent(BaseAgent):
 
             request_data, response_data, current_in_context_messages, new_in_context_messages, valid_tool_names = (
                 await self._build_and_request_from_llm(
-                    current_in_context_messages, new_in_context_messages, agent_state, llm_client, tool_rules_solver, agent_step_span
+                    current_in_context_messages, new_in_context_messages, agent_state, llm_client, tool_rules_solver, agent_step_span, use_vertex_experiment
                 )
             )
             in_context_messages = current_in_context_messages + new_in_context_messages
@@ -434,6 +439,7 @@ class LettaAgent(BaseAgent):
         use_assistant_message: bool = True,
         request_start_timestamp_ns: Optional[int] = None,
         include_return_message_types: Optional[List[MessageType]] = None,
+        use_vertex_experiment: bool = False,
     ) -> AsyncGenerator[str, None]:
         """
         Carries out an invocation of the agent loop in a streaming fashion that yields partial tokens.
@@ -647,6 +653,7 @@ class LettaAgent(BaseAgent):
         llm_client: LLMClientBase,
         tool_rules_solver: ToolRulesSolver,
         agent_step_span: "Span",
+        use_vertex_experiment: bool = False,
     ) -> Tuple[Dict, Dict, List[Message], List[Message], List[str]] | None:
         for attempt in range(self.max_summarization_retries + 1):
             try:
@@ -662,7 +669,8 @@ class LettaAgent(BaseAgent):
 
                 async with AsyncTimer() as timer:
                     # Attempt LLM request
-                    response = await llm_client.request_async(request_data, agent_state.llm_config)
+                    print(f"DEBUG: [_build_and_request_from_llm] Calling llm_client.request_async with use_vertex_experiment={use_vertex_experiment}")
+                    response = await llm_client.request_async(request_data, agent_state.llm_config, use_vertex_experiment=use_vertex_experiment)
                 MetricRegistry().llm_execution_time_ms_histogram.record(
                     timer.elapsed_ms,
                     dict(get_ctx_attributes(), **{"model.name": agent_state.llm_config.model}),

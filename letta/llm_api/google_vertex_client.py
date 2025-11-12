@@ -47,7 +47,7 @@ class GoogleVertexClient(LLMClientBase):
         return response.model_dump()
 
     @trace_method
-    async def request_async(self, request_data: dict, llm_config: LLMConfig) -> dict:
+    async def request_async(self, request_data: dict, llm_config: LLMConfig, use_vertex_experiment: bool = False) -> dict:
         """
         Performs underlying request to llm and returns raw response.
         """

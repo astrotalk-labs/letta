@@ -53,10 +53,20 @@ class AnthropicClient(LLMClientBase):
         return response.model_dump()
 
     @trace_method
-    async def request_async(self, request_data: dict, llm_config: LLMConfig) -> dict:
-        client = await self._get_anthropic_client_async(llm_config, async_client=True)
-        response = await client.beta.messages.create(**request_data, betas=["tools-2024-04-04"])
-        logger.info("This is the usage response from calude %s", response.usage)
+    async def request_async(self, request_data: dict, llm_config: LLMConfig, use_vertex_experiment: bool = False) -> dict:
+        # If use_vertex_experiment is True, create a Vertex client instead
+        if use_vertex_experiment:
+            print(f"DEBUG: [AnthropicClient] use_vertex_experiment=True, creating Vertex client")
+            from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
+            vertex_client_wrapper = AnthropicVertexClient()
+            client = vertex_client_wrapper._get_client()
+            # Vertex doesn't support beta features
+            response = await client.messages.create(**request_data)
+        else:
+            print(f"DEBUG: [AnthropicClient] use_vertex_experiment=False, using standard Anthropic client")
+            client = await self._get_anthropic_client_async(llm_config, async_client=True)
+            response = await client.beta.messages.create(**request_data, betas=["tools-2024-04-04"])
+        logger.info("This is the usage response from claude %s", response.usage)
         return response.model_dump()
 
     @trace_method

@@ -134,9 +134,15 @@ class LLMClientBase:
         raise NotImplementedError
 
     @abstractmethod
-    async def request_async(self, request_data: dict, llm_config: LLMConfig) -> dict:
+    async def request_async(self, request_data: dict, llm_config: LLMConfig, use_vertex_experiment: bool = False) -> dict:
         """
         Performs underlying request to llm and returns raw response.
+        
+        Args:
+            request_data: The request data to send to the LLM
+            llm_config: The LLM configuration
+            use_vertex_experiment: If True, use Vertex AI for Anthropic models (experiment flag)
+        
         """
         raise NotImplementedError
 
