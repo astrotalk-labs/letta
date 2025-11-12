@@ -31,6 +31,11 @@ class LettaRequest(BaseModel):
         default=None, description="Only return specified message types in the response. If `None` (default) returns all messages."
     )
 
+    use_vertex_experiment: bool = Field(
+        default=False,
+        description="Flag to dynamically switch between Anthropic direct API and Vertex AI based on experiment configuration.",
+    )
+
 
 class LettaStreamingRequest(LettaRequest):
     stream_tokens: bool = Field(

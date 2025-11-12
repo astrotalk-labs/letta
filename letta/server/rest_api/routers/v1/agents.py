@@ -676,7 +676,10 @@ async def send_message(
     request_start_timestamp_ns = get_utc_timestamp_ns()
     MetricRegistry().user_message_counter.add(1, get_ctx_attributes())
 
-    actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
+    logger.warning(f"[SEND_MESSAGE] use_vertex_experiment={request.use_vertex_experiment}")
+
+
+actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
     # TODO: This is redundant, remove soon
     agent = await server.agent_manager.get_agent_by_id_async(agent_id, actor, include_relationships=["multi_agent_group"])
     agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type in ["sleeptime", "voice_sleeptime"]
@@ -713,6 +716,7 @@ async def send_message(
             use_assistant_message=request.use_assistant_message,
             request_start_timestamp_ns=request_start_timestamp_ns,
             include_return_message_types=request.include_return_message_types,
+            use_vertex_experiment=request.use_vertex_experiment,
         )
     else:
         result = await server.send_message_to_agent(
@@ -726,6 +730,7 @@ async def send_message(
             assistant_message_tool_name=request.assistant_message_tool_name,
             assistant_message_tool_kwarg=request.assistant_message_tool_kwarg,
             include_return_message_types=request.include_return_message_types,
+            use_vertex_experiment=request.use_vertex_experiment,
         )
     return result
 
@@ -757,6 +762,9 @@ async def send_message_streaming(
     """
     request_start_timestamp_ns = get_utc_timestamp_ns()
     MetricRegistry().user_message_counter.add(1, get_ctx_attributes())
+
+    logger.warning(f"[SEND_MESSAGE_STREAMING] use_vertex_experiment={request.use_vertex_experiment}")
+
 
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
     # TODO: This is redundant, remove soon
@@ -802,6 +810,7 @@ async def send_message_streaming(
                     use_assistant_message=request.use_assistant_message,
                     request_start_timestamp_ns=request_start_timestamp_ns,
                     include_return_message_types=request.include_return_message_types,
+                    use_vertex_experiment=request.use_vertex_experiment,
                 ),
                 media_type="text/event-stream",
             )
@@ -813,6 +822,7 @@ async def send_message_streaming(
                     use_assistant_message=request.use_assistant_message,
                     request_start_timestamp_ns=request_start_timestamp_ns,
                     include_return_message_types=request.include_return_message_types,
+                    use_vertex_experiment=request.use_vertex_experiment,
                 ),
                 media_type="text/event-stream",
             )
@@ -829,6 +839,7 @@ async def send_message_streaming(
             assistant_message_tool_kwarg=request.assistant_message_tool_kwarg,
             request_start_timestamp_ns=request_start_timestamp_ns,
             include_return_message_types=request.include_return_message_types,
+            use_vertex_experiment=request.use_vertex_experiment,
         )
 
     return result
