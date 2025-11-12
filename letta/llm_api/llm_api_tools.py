@@ -374,6 +374,25 @@ def create(
         if llm_config.enable_reasoner:
             llm_config.put_inner_thoughts_in_kwargs = False
 
+        # ✅ Create the appropriate client based on use_vertex_experiment flag
+        anthropic_client = None
+        if use_vertex_experiment:
+            log_msg = f"[ANTHROPIC] Creating Vertex AI client due to use_vertex_experiment=True"
+            logger.info(log_msg)
+            print(f"DEBUG: {log_msg}")
+            from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
+            vertex_client = AnthropicVertexClient()
+            anthropic_client = vertex_client._get_client()
+            log_msg = f"[ANTHROPIC] Successfully created Vertex AI client: {type(anthropic_client).__name__}"
+            logger.info(log_msg)
+            print(f"DEBUG: {log_msg}")
+        else:
+            log_msg = f"[ANTHROPIC] Will use standard Anthropic client (use_vertex_experiment=False)"
+            logger.info(log_msg)
+            print(f"DEBUG: {log_msg}")
+            # Let the anthropic functions create the standard client (handles BYOK, etc.)
+            anthropic_client = None
+
         # Force tool calling
         tool_call = None
         if functions is None:
@@ -421,7 +440,7 @@ def create(
                 provider_category=llm_config.provider_category,
                 name=name,
                 user_id=user_id,
-                use_vertex_experiment=use_vertex_experiment,
+                anthropic_client=anthropic_client,  # ✅ Pass pre-created client
             )
 
         else:
@@ -434,7 +453,7 @@ def create(
                 provider_name=llm_config.provider_name,
                 provider_category=llm_config.provider_category,
                 user_id=user_id,
-                use_vertex_experiment=use_vertex_experiment,
+                anthropic_client=anthropic_client,  # ✅ Pass pre-created client
             )
 
         if llm_config.put_inner_thoughts_in_kwargs:
@@ -520,7 +539,6 @@ def create(
                 name=name,
                 user_id=user_id,
                 anthropic_client=anthropic_client,  # ✅ CRITICAL: Pass Vertex client
-                use_vertex_experiment=use_vertex_experiment,  # Pass flag for consistency
             )
         else:
             # Client did not request token streaming
@@ -533,7 +551,6 @@ def create(
                 provider_category=llm_config.provider_category,
                 user_id=user_id,
                 anthropic_client=anthropic_client,  # ✅ CRITICAL: Pass Vertex client
-                use_vertex_experiment=use_vertex_experiment,  # Pass flag for consistency
             )
 
         if llm_config.put_inner_thoughts_in_kwargs:
