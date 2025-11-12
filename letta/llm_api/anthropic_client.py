@@ -78,8 +78,15 @@ class AnthropicClient(LLMClientBase):
                 project_id=project_id,
                 region=region,
             )
+            
+            print(f"DEBUG: [AnthropicClient] AsyncAnthropicVertex client created: {type(client)}")
+            print(f"DEBUG: [AnthropicClient] Client base_url: {getattr(client, 'base_url', 'N/A')}")
+            print(f"DEBUG: [AnthropicClient] Client _base_url: {getattr(client, '_base_url', 'N/A')}")
+            
             # Vertex doesn't support beta features
+            print(f"DEBUG: [AnthropicClient] Calling client.messages.create with model={request_data.get('model')}")
             response = await client.messages.create(**request_data)
+            print(f"DEBUG: [AnthropicClient] Response received successfully")
         else:
             print(f"DEBUG: [AnthropicClient] Using standard Anthropic client (model_endpoint_type={llm_config.model_endpoint_type})")
             client = await self._get_anthropic_client_async(llm_config, async_client=True)
