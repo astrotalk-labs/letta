@@ -65,8 +65,7 @@ class AnthropicClient(LLMClientBase):
             
             # Create async Vertex client with proper configuration
             project_id = model_settings.google_cloud_project
-            # Use 'global' region for newer Claude models (claude-sonnet-4-5@20250929)
-            # Older models may require specific regions like 'us-east5'
+            # Use 'global' region for newer Claude models
             region = os.getenv('GOOGLE_CLOUD_LOCATION') or os.getenv('ANTHROPIC_VERTEX_REGION') or 'global'
             
             print(f"DEBUG: [AnthropicClient] Creating AsyncAnthropicVertex with project={project_id}, region={region}")
@@ -74,9 +73,14 @@ class AnthropicClient(LLMClientBase):
             if not project_id:
                 raise ValueError("GOOGLE_CLOUD_PROJECT must be set for Vertex AI")
             
+            # Override base_url to fix the 'global-aiplatform' issue
+            # The SDK creates 'https://global-aiplatform.googleapis.com' but we need 'https://aiplatform.googleapis.com'
+            base_url = "https://aiplatform.googleapis.com/v1/"
+            
             client = AsyncAnthropicVertex(
                 project_id=project_id,
                 region=region,
+                base_url=base_url,
             )
             
             print(f"DEBUG: [AnthropicClient] AsyncAnthropicVertex client created: {type(client)}")
