@@ -3,6 +3,7 @@ import random
 import time
 from typing import List, Optional, Union
 
+import anthropic
 import requests
 
 from letta.constants import CLI_WARNING_PREFIX, LETTA_MODEL_ENDPOINT
@@ -376,22 +377,35 @@ def create(
 
         # ✅ Create the appropriate client based on use_vertex_experiment flag
         anthropic_client = None
+        original_model = llm_config.model
+        
         if use_vertex_experiment:
+            # Switch TO Vertex AI
             log_msg = f"[ANTHROPIC] Creating Vertex AI client due to use_vertex_experiment=True"
             logger.info(log_msg)
             print(f"DEBUG: {log_msg}")
             from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
             vertex_client = AnthropicVertexClient()
             anthropic_client = vertex_client._get_client()
-            log_msg = f"[ANTHROPIC] Successfully created Vertex AI client: {type(anthropic_client).__name__}"
+            log_msg = f"[ANTHROPIC] Created Vertex client: {type(anthropic_client).__name__}"
             logger.info(log_msg)
             print(f"DEBUG: {log_msg}")
+            
+            # ✅ Convert model name: dash format -> @ format
+            # Example: claude-sonnet-4-5-20250929 -> claude-sonnet-4-5@20250929
+            if '-' in original_model and '@' not in original_model:
+                parts = original_model.rsplit('-', 1)  # Split on the LAST dash only
+                if len(parts) == 2 and parts[1].isdigit():  # Ensure it's a date
+                    llm_config.model = f"{parts[0]}@{parts[1]}"
+                    log_msg = f"[ANTHROPIC] Converted model for Vertex: {original_model} -> {llm_config.model}"
+                    logger.info(log_msg)
+                    print(f"DEBUG: {log_msg}")
         else:
-            log_msg = f"[ANTHROPIC] Will use standard Anthropic client (use_vertex_experiment=False)"
+            # Use direct Anthropic API (original behavior)
+            log_msg = f"[ANTHROPIC] Using direct Anthropic API (use_vertex_experiment=False)"
             logger.info(log_msg)
             print(f"DEBUG: {log_msg}")
-            # Let the anthropic functions create the standard client (handles BYOK, etc.)
-            anthropic_client = None
+            anthropic_client = None  # Will be created by anthropic functions with default logic
 
         # Force tool calling
         tool_call = None
@@ -489,12 +503,50 @@ def create(
         if llm_config.enable_reasoner:
             llm_config.put_inner_thoughts_in_kwargs = False
 
-        # ✅ CRITICAL: Initialize Vertex client explicitly for backward compatibility
-        logger.info(f"[ANTHROPIC_VERTEX] Creating explicit AnthropicVertex client")
-        from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
-        vertex_client = AnthropicVertexClient()
-        anthropic_client = vertex_client._get_client()
-        logger.info(f"[ANTHROPIC_VERTEX] Successfully created explicit AnthropicVertex client")
+        # ✅ Check if we should switch to direct Anthropic
+        anthropic_client = None
+        original_model = llm_config.model
+        
+        if not use_vertex_experiment:
+            # Switch TO direct Anthropic API
+            log_msg = f"[ANTHROPIC_VERTEX] Switching to direct Anthropic API due to use_vertex_experiment=False"
+            logger.info(log_msg)
+            print(f"DEBUG: {log_msg}")
+            
+            # ✅ Convert model name: @ format -> dash format
+            # Example: claude-sonnet-4-5@20250929 -> claude-sonnet-4-5-20250929
+            if '@' in original_model:
+                llm_config.model = original_model.replace('@', '-')
+                log_msg = f"[ANTHROPIC_VERTEX] Converted model for direct API: {original_model} -> {llm_config.model}"
+                logger.info(log_msg)
+                print(f"DEBUG: {log_msg}")
+            
+            # ✅ Create direct Anthropic client
+            if provider_category == ProviderCategory.byok:
+                from letta.services.provider_manager import ProviderManager
+                from letta.services.user_manager import UserManager
+                actor_user = UserManager().get_user_or_default(user_id=user_id)
+                api_key = ProviderManager().get_override_key(provider_name, actor=actor_user)
+                anthropic_client = anthropic.Anthropic(api_key=api_key)
+            elif model_settings.anthropic_api_key:
+                anthropic_client = anthropic.Anthropic()
+            else:
+                raise ValueError("No available Anthropic API key for direct Anthropic")
+            
+            log_msg = f"[ANTHROPIC_VERTEX] Created direct Anthropic client: {type(anthropic_client).__name__}"
+            logger.info(log_msg)
+            print(f"DEBUG: {log_msg}")
+        else:
+            # Use Vertex AI (keep original behavior)
+            log_msg = f"[ANTHROPIC_VERTEX] Using explicit Vertex AI client"
+            logger.info(log_msg)
+            print(f"DEBUG: {log_msg}")
+            from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
+            vertex_client = AnthropicVertexClient()
+            anthropic_client = vertex_client._get_client()
+            log_msg = f"[ANTHROPIC_VERTEX] Created Vertex client: {type(anthropic_client).__name__}"
+            logger.info(log_msg)
+            print(f"DEBUG: {log_msg}")
 
         # Force tool calling
         tool_call = None
