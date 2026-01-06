@@ -152,7 +152,6 @@ async def check_anthropic_health() -> Optional[ServiceHealth]:
             healthy=False,
             error="Anthropic API check failed"
         )
-        )
 
 
 async def check_all_ai_services() -> Dict[str, ServiceHealth]:
