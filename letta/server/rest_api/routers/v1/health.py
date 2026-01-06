@@ -18,25 +18,25 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/health", tags=["health"])
 
 
-# Health check
 @router.get("/", response_model=Health, operation_id="health_check")
-async def health_check(db: AsyncSession = Depends(get_db_async)):
-    # Check database health
+def health_check():
+    return Health(
+        version=__version__,
+        status="ok",
+    )
+
+@router.get("/status", response_model=Health, operation_id="health_status_check")
+async def health_status_check(db: AsyncSession = Depends(get_db_async)):
     db_health = await check_database_health(db)
     
-    # Check all configured AI services
     ai_services = await check_all_ai_services()
     
-    # Determine overall health status
     all_healthy = db_health.healthy
     
-    # Check if any AI service is unhealthy
     if ai_services:
         all_healthy = all_healthy and all(service.healthy for service in ai_services.values())
     
-    # If any service is unhealthy, return 503
     if not all_healthy:
-        # Log which services failed
         if not db_health.healthy:
             logger.error(f"Database unhealthy: {db_health.error}")
         for service_name, service_health in ai_services.items():
@@ -51,7 +51,6 @@ async def health_check(db: AsyncSession = Depends(get_db_async)):
             }
         )
     
-    # Return original format
     return Health(
         version=__version__,
         status="ok",

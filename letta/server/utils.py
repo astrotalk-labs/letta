@@ -92,11 +92,12 @@ async def check_database_health(db: AsyncSession) -> ServiceHealth:
             error=None
         )
     except Exception as e:
-        logger.error(f"Database health check failed: {str(e)}")
+        # Log error type without exposing sensitive connection details
+        logger.error(f"Database health check failed: {type(e).__name__}")
         return ServiceHealth(
             service="postgres",
             healthy=False,
-            error=str(e)
+            error="Database connection failed"
         )
 
 
@@ -130,11 +131,12 @@ async def check_anthropic_health() -> Optional[ServiceHealth]:
                 error=None
             )
         except Exception as e:
-            logger.error(f"Anthropic direct API health check failed: {str(e)}")
+            # Log error type without exposing API key details
+            logger.error(f"Anthropic direct API health check failed: {type(e).__name__}")
             return ServiceHealth(
                 service="anthropic_direct",
                 healthy=False,
-                error=str(e)
+                error="Anthropic API unavailable"
             )
     except ImportError:
         logger.warning("Anthropic library not installed")
@@ -144,11 +146,12 @@ async def check_anthropic_health() -> Optional[ServiceHealth]:
             error="Anthropic library not installed"
         )
     except Exception as e:
-        logger.error(f"Anthropic direct health check failed: {str(e)}")
+        logger.error(f"Anthropic direct health check failed: {type(e).__name__}")
         return ServiceHealth(
             service="anthropic_direct",
             healthy=False,
-            error=str(e)
+            error="Anthropic API check failed"
+        )
         )
 
 
