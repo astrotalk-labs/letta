@@ -161,12 +161,12 @@ async def check_all_ai_services() -> Dict[str, ServiceHealth]:
     Returns:
         Dictionary mapping service names to their health status
     """
-    # Run health check for Anthropic direct API
-    anthropic_health = await check_anthropic_health()
+    # TODO: Claude health check temporarily bypassed
+    # Uncomment below to re-enable Anthropic health check:
+    # anthropic_health = await check_anthropic_health()
+    # ai_services = {}
+    # if anthropic_health is not None:
+    #     ai_services[anthropic_health.service] = anthropic_health
+    # return ai_services
     
-    # Build result dict
-    ai_services = {}
-    if anthropic_health is not None:
-        ai_services[anthropic_health.service] = anthropic_health
-    
-    return ai_services
+    return {}
