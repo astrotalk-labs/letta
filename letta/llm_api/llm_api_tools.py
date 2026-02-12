@@ -152,6 +152,7 @@ def create(
     step_id: Optional[str] = None,
     actor: Optional[User] = None,
     use_vertex_experiment: bool = False,  # Dynamic provider switching for Anthropic
+    use_bedrock_experiment: bool = False,  # Dynamic provider switching for AWS Bedrock
 ) -> ChatCompletionResponse:
     """Return response to chat completion with backoff"""
     from letta.utils import printd

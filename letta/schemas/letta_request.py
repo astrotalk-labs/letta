@@ -36,6 +36,11 @@ class LettaRequest(BaseModel):
         description="Flag to dynamically switch between Anthropic direct API and Vertex AI based on experiment configuration.",
     )
 
+    use_bedrock_experiment: bool = Field(
+        default=False,
+        description="Flag to dynamically switch between Anthropic direct API and AWS Bedrock based on experiment configuration.",
+    )
+
 
 class LettaStreamingRequest(LettaRequest):
     stream_tokens: bool = Field(

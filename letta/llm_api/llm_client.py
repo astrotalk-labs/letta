@@ -60,8 +60,8 @@ class LLMClient:
                 )
             case _:
                 # Handle string-based provider types that aren't in the enum
-                # For example, "anthropic_vertex" which uses AnthropicClient
-                if provider_type == "anthropic_vertex":
+                # For example, "anthropic_vertex" or "anthropic_bedrock" which use AnthropicClient
+                if provider_type in ("anthropic_vertex", "anthropic_bedrock"):
                     from letta.llm_api.anthropic_client import AnthropicClient
 
                     return AnthropicClient(

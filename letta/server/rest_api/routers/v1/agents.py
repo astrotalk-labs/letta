@@ -676,7 +676,7 @@ async def send_message(
     request_start_timestamp_ns = get_utc_timestamp_ns()
     MetricRegistry().user_message_counter.add(1, get_ctx_attributes())
 
-    logger.warning(f"[SEND_MESSAGE] use_vertex_experiment={request.use_vertex_experiment}")
+    logger.warning(f"[SEND_MESSAGE] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}")
 
 
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
@@ -717,6 +717,7 @@ async def send_message(
             request_start_timestamp_ns=request_start_timestamp_ns,
             include_return_message_types=request.include_return_message_types,
             use_vertex_experiment=request.use_vertex_experiment,
+            use_bedrock_experiment=request.use_bedrock_experiment,
         )
     else:
         result = await server.send_message_to_agent(
@@ -731,6 +732,7 @@ async def send_message(
             assistant_message_tool_kwarg=request.assistant_message_tool_kwarg,
             include_return_message_types=request.include_return_message_types,
             use_vertex_experiment=request.use_vertex_experiment,
+            use_bedrock_experiment=request.use_bedrock_experiment,
         )
     return result
 
@@ -763,7 +765,7 @@ async def send_message_streaming(
     request_start_timestamp_ns = get_utc_timestamp_ns()
     MetricRegistry().user_message_counter.add(1, get_ctx_attributes())
 
-    logger.warning(f"[SEND_MESSAGE_STREAMING] use_vertex_experiment={request.use_vertex_experiment}")
+    logger.warning(f"[SEND_MESSAGE_STREAMING] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}")
 
 
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
@@ -811,6 +813,7 @@ async def send_message_streaming(
                     request_start_timestamp_ns=request_start_timestamp_ns,
                     include_return_message_types=request.include_return_message_types,
                     use_vertex_experiment=request.use_vertex_experiment,
+                    use_bedrock_experiment=request.use_bedrock_experiment,
                 ),
                 media_type="text/event-stream",
             )
@@ -823,6 +826,7 @@ async def send_message_streaming(
                     request_start_timestamp_ns=request_start_timestamp_ns,
                     include_return_message_types=request.include_return_message_types,
                     use_vertex_experiment=request.use_vertex_experiment,
+                    use_bedrock_experiment=request.use_bedrock_experiment,
                 ),
                 media_type="text/event-stream",
             )
@@ -840,6 +844,7 @@ async def send_message_streaming(
             request_start_timestamp_ns=request_start_timestamp_ns,
             include_return_message_types=request.include_return_message_types,
             use_vertex_experiment=request.use_vertex_experiment,
+            use_bedrock_experiment=request.use_bedrock_experiment,
         )
 
     return result

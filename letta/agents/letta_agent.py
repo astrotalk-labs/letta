@@ -114,6 +114,32 @@ class LettaAgent(BaseAgent):
             message_buffer_min=message_buffer_min,
         )
 
+    def _apply_provider_switching(self, agent_state: AgentState, use_vertex_experiment: bool, use_bedrock_experiment: bool):
+        """Apply dynamic provider switching based on experiment flags."""
+        original_endpoint_type = agent_state.llm_config.model_endpoint_type
+        original_model = agent_state.llm_config.model
+
+        if use_bedrock_experiment and original_endpoint_type == "anthropic":
+            print(f"DEBUG: [provider_switch] Switching from anthropic to anthropic_bedrock")
+            agent_state.llm_config.model_endpoint_type = "anthropic_bedrock"
+        elif use_vertex_experiment and original_endpoint_type == "anthropic":
+            print(f"DEBUG: [provider_switch] Switching from anthropic to anthropic_vertex")
+            agent_state.llm_config.model_endpoint_type = "anthropic_vertex"
+            if '-' in original_model and '@' not in original_model:
+                parts = original_model.rsplit('-', 1)
+                if len(parts) == 2 and parts[1].isdigit():
+                    agent_state.llm_config.model = f"{parts[0]}@{parts[1]}"
+                    print(f"DEBUG: [provider_switch] Converted model: {original_model} -> {agent_state.llm_config.model}")
+        elif not use_vertex_experiment and original_endpoint_type == "anthropic_vertex":
+            print(f"DEBUG: [provider_switch] Switching from anthropic_vertex to anthropic")
+            agent_state.llm_config.model_endpoint_type = "anthropic"
+            if '@' in original_model:
+                agent_state.llm_config.model = original_model.replace('@', '-')
+                print(f"DEBUG: [provider_switch] Converted model: {original_model} -> {agent_state.llm_config.model}")
+        elif not use_bedrock_experiment and original_endpoint_type == "anthropic_bedrock":
+            print(f"DEBUG: [provider_switch] Switching from anthropic_bedrock to anthropic")
+            agent_state.llm_config.model_endpoint_type = "anthropic"
+
     @trace_method
     async def step(
         self,
@@ -123,6 +149,7 @@ class LettaAgent(BaseAgent):
         request_start_timestamp_ns: Optional[int] = None,
         include_return_message_types: Optional[List[MessageType]] = None,
         use_vertex_experiment: bool = False,
+        use_bedrock_experiment: bool = False,
     ) -> LettaResponse:
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
@@ -133,6 +160,7 @@ class LettaAgent(BaseAgent):
             max_steps=max_steps,
             request_start_timestamp_ns=request_start_timestamp_ns,
             use_vertex_experiment=use_vertex_experiment,
+            use_bedrock_experiment=use_bedrock_experiment,
         )
         return _create_letta_response(
             new_in_context_messages=new_in_context_messages,
@@ -151,10 +179,15 @@ class LettaAgent(BaseAgent):
         request_start_timestamp_ns: Optional[int] = None,
         include_return_message_types: Optional[List[MessageType]] = None,
         use_vertex_experiment: bool = False,
+        use_bedrock_experiment: bool = False,
     ):
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
         )
+
+        # Handle provider switching based on experiment flags
+        self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment)
+
         current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
             input_messages, agent_state, self.message_manager, self.actor
         )
@@ -186,6 +219,8 @@ class LettaAgent(BaseAgent):
                     llm_client,
                     tool_rules_solver,
                     agent_step_span,
+                    use_vertex_experiment=use_vertex_experiment,
+                    use_bedrock_experiment=use_bedrock_experiment,
                 )
             )
             in_context_messages = current_in_context_messages + new_in_context_messages
@@ -301,6 +336,7 @@ class LettaAgent(BaseAgent):
         max_steps: int = DEFAULT_MAX_STEPS,
         request_start_timestamp_ns: Optional[int] = None,
         use_vertex_experiment: bool = False,
+        use_bedrock_experiment: bool = False,
     ) -> Tuple[List[Message], List[Message], Optional[LettaStopReason], LettaUsageStatistics]:
         """
         Carries out an invocation of the agent loop. In each step, the agent
@@ -309,31 +345,11 @@ class LettaAgent(BaseAgent):
             3. Fetches a response from the LLM
             4. Processes the response
         """
-        print(f"DEBUG: [_step] Received use_vertex_experiment={use_vertex_experiment}")
-        
-        # ✅ Handle provider switching based on use_vertex_experiment
-        original_endpoint_type = agent_state.llm_config.model_endpoint_type
-        original_model = agent_state.llm_config.model
-        
-        if use_vertex_experiment and original_endpoint_type == "anthropic":
-            # Switch TO Vertex AI
-            print(f"DEBUG: [_step] Switching from anthropic to anthropic_vertex due to use_vertex_experiment=True")
-            agent_state.llm_config.model_endpoint_type = "anthropic_vertex"
-            # Convert model name: dash -> @
-            if '-' in original_model and '@' not in original_model:
-                parts = original_model.rsplit('-', 1)
-                if len(parts) == 2 and parts[1].isdigit():
-                    agent_state.llm_config.model = f"{parts[0]}@{parts[1]}"
-                    print(f"DEBUG: [_step] Converted model: {original_model} -> {agent_state.llm_config.model}")
-        elif not use_vertex_experiment and original_endpoint_type == "anthropic_vertex":
-            # Switch TO direct Anthropic
-            print(f"DEBUG: [_step] Switching from anthropic_vertex to anthropic due to use_vertex_experiment=False")
-            agent_state.llm_config.model_endpoint_type = "anthropic"
-            # Convert model name: @ -> dash
-            if '@' in original_model:
-                agent_state.llm_config.model = original_model.replace('@', '-')
-                print(f"DEBUG: [_step] Converted model: {original_model} -> {agent_state.llm_config.model}")
-        
+        print(f"DEBUG: [_step] Received use_vertex_experiment={use_vertex_experiment}, use_bedrock_experiment={use_bedrock_experiment}")
+
+        # Handle provider switching based on experiment flags
+        self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment)
+
         current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
             input_messages, agent_state, self.message_manager, self.actor
         )
@@ -359,7 +375,7 @@ class LettaAgent(BaseAgent):
 
             request_data, response_data, current_in_context_messages, new_in_context_messages, valid_tool_names = (
                 await self._build_and_request_from_llm(
-                    current_in_context_messages, new_in_context_messages, agent_state, llm_client, tool_rules_solver, agent_step_span, use_vertex_experiment
+                    current_in_context_messages, new_in_context_messages, agent_state, llm_client, tool_rules_solver, agent_step_span, use_vertex_experiment=use_vertex_experiment, use_bedrock_experiment=use_bedrock_experiment
                 )
             )
             in_context_messages = current_in_context_messages + new_in_context_messages
@@ -464,6 +480,7 @@ class LettaAgent(BaseAgent):
         request_start_timestamp_ns: Optional[int] = None,
         include_return_message_types: Optional[List[MessageType]] = None,
         use_vertex_experiment: bool = False,
+        use_bedrock_experiment: bool = False,
     ) -> AsyncGenerator[str, None]:
         """
         Carries out an invocation of the agent loop in a streaming fashion that yields partial tokens.
@@ -476,6 +493,10 @@ class LettaAgent(BaseAgent):
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
         )
+
+        # Handle provider switching based on experiment flags
+        self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment)
+
         current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
             input_messages, agent_state, self.message_manager, self.actor
         )
@@ -521,7 +542,7 @@ class LettaAgent(BaseAgent):
 
             # TODO: THIS IS INCREDIBLY UGLY
             # TODO: THERE ARE MULTIPLE COPIES OF THE LLM_CONFIG EVERYWHERE THAT ARE GETTING MANIPULATED
-            if agent_state.llm_config.model_endpoint_type == "anthropic":
+            if agent_state.llm_config.model_endpoint_type in ("anthropic", "anthropic_vertex", "anthropic_bedrock"):
                 interface = AnthropicStreamingInterface(
                     use_assistant_message=use_assistant_message,
                     put_inner_thoughts_in_kwarg=agent_state.llm_config.put_inner_thoughts_in_kwargs,
@@ -678,6 +699,7 @@ class LettaAgent(BaseAgent):
         tool_rules_solver: ToolRulesSolver,
         agent_step_span: "Span",
         use_vertex_experiment: bool = False,
+        use_bedrock_experiment: bool = False,
     ) -> Tuple[Dict, Dict, List[Message], List[Message], List[str]] | None:
         for attempt in range(self.max_summarization_retries + 1):
             try:
@@ -693,8 +715,8 @@ class LettaAgent(BaseAgent):
 
                 async with AsyncTimer() as timer:
                     # Attempt LLM request
-                    print(f"DEBUG: [_build_and_request_from_llm] Calling llm_client.request_async with use_vertex_experiment={use_vertex_experiment}")
-                    response = await llm_client.request_async(request_data, agent_state.llm_config, use_vertex_experiment=use_vertex_experiment)
+                    print(f"DEBUG: [_build_and_request_from_llm] Calling llm_client.request_async with use_vertex_experiment={use_vertex_experiment}, use_bedrock_experiment={use_bedrock_experiment}")
+                    response = await llm_client.request_async(request_data, agent_state.llm_config, use_vertex_experiment=use_vertex_experiment, use_bedrock_experiment=use_bedrock_experiment)
                 MetricRegistry().llm_execution_time_ms_histogram.record(
                     timer.elapsed_ms,
                     dict(get_ctx_attributes(), **{"model.name": agent_state.llm_config.model}),

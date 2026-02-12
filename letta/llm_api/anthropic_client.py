@@ -53,7 +53,7 @@ class AnthropicClient(LLMClientBase):
         return response.model_dump()
 
     @trace_method
-    async def request_async(self, request_data: dict, llm_config: LLMConfig, use_vertex_experiment: bool = False) -> dict:
+    async def request_async(self, request_data: dict, llm_config: LLMConfig, use_vertex_experiment: bool = False, use_bedrock_experiment: bool = False) -> dict:
         # Check if we should use Vertex AI based on model_endpoint_type
         # (This happens when use_vertex_experiment changes the endpoint type in _step)
         if llm_config.model_endpoint_type == "anthropic_vertex":
@@ -62,35 +62,118 @@ class AnthropicClient(LLMClientBase):
             from anthropic import AsyncAnthropicVertex
             from letta.settings import model_settings
             import os
-            
+
             # Create async Vertex client with proper configuration
             project_id = model_settings.google_cloud_project
             # Use 'global' region for newer Claude models
             region = os.getenv('GOOGLE_CLOUD_LOCATION') or os.getenv('ANTHROPIC_VERTEX_REGION') or 'global'
-            
+
             print(f"DEBUG: [AnthropicClient] Creating AsyncAnthropicVertex with project={project_id}, region={region}")
-            
+
             if not project_id:
                 raise ValueError("GOOGLE_CLOUD_PROJECT must be set for Vertex AI")
-            
+
             # Override base_url to fix the 'global-aiplatform' issue
             # The SDK creates 'https://global-aiplatform.googleapis.com' but we need 'https://aiplatform.googleapis.com'
             base_url = "https://aiplatform.googleapis.com/v1/"
-            
+
             client = AsyncAnthropicVertex(
                 project_id=project_id,
                 region=region,
                 base_url=base_url,
             )
-            
+
             print(f"DEBUG: [AnthropicClient] AsyncAnthropicVertex client created: {type(client)}")
             print(f"DEBUG: [AnthropicClient] Client base_url: {getattr(client, 'base_url', 'N/A')}")
             print(f"DEBUG: [AnthropicClient] Client _base_url: {getattr(client, '_base_url', 'N/A')}")
-            
+
             # Vertex doesn't support beta features
             print(f"DEBUG: [AnthropicClient] Calling client.messages.create with model={request_data.get('model')}")
             response = await client.messages.create(**request_data)
             print(f"DEBUG: [AnthropicClient] Response received successfully")
+        elif llm_config.model_endpoint_type == "anthropic_bedrock":
+            print(f"DEBUG: [AnthropicClient] Using AWS Bedrock client via boto3 (model_endpoint_type=anthropic_bedrock)")
+            print(f"DEBUG: [AnthropicClient] Request data model: {request_data.get('model')}")
+            import os
+            import json
+            import asyncio
+            import boto3
+            from letta.settings import model_settings
+
+            aws_region = os.getenv('AWS_REGION') or os.getenv('AWS_DEFAULT_REGION') or model_settings.aws_region or 'ap-south-1'
+            aws_access_key = os.getenv('AWS_ACCESS_KEY_ID') or model_settings.aws_access_key
+            aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY') or model_settings.aws_secret_access_key
+            aws_session_token = os.getenv('AWS_SESSION_TOKEN')
+
+            # Determine model ID: use inference profile ARN if set, otherwise use the model from request
+            bedrock_inference_profile = os.getenv('BEDROCK_INFERENCE_PROFILE_ARN')
+            model_id = bedrock_inference_profile if bedrock_inference_profile else request_data.get('model')
+
+            print(f"DEBUG: [AnthropicClient] Creating boto3 bedrock-runtime client with region={aws_region}")
+            print(f"DEBUG: [AnthropicClient] Using model_id={model_id}")
+
+            client_kwargs = {
+                "service_name": "bedrock-runtime",
+                "region_name": aws_region,
+            }
+            if aws_access_key and aws_secret_key:
+                client_kwargs["aws_access_key_id"] = aws_access_key
+                client_kwargs["aws_secret_access_key"] = aws_secret_key
+            if aws_session_token:
+                client_kwargs["aws_session_token"] = aws_session_token
+
+            bedrock_client = boto3.client(**client_kwargs)
+
+            # Build the Bedrock request body in Anthropic Messages API format
+            bedrock_body = {
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": request_data.get("max_tokens", 4096),
+                "messages": request_data.get("messages", []),
+            }
+            if "system" in request_data:
+                bedrock_body["system"] = request_data["system"]
+            if "tools" in request_data:
+                bedrock_body["tools"] = request_data["tools"]
+            if "tool_choice" in request_data:
+                bedrock_body["tool_choice"] = request_data["tool_choice"]
+            if "temperature" in request_data:
+                bedrock_body["temperature"] = request_data["temperature"]
+            if "top_p" in request_data:
+                bedrock_body["top_p"] = request_data["top_p"]
+            if "top_k" in request_data:
+                bedrock_body["top_k"] = request_data["top_k"]
+            if "stop_sequences" in request_data:
+                bedrock_body["stop_sequences"] = request_data["stop_sequences"]
+
+            print(f"DEBUG: [AnthropicClient] Calling bedrock invoke_model with modelId={model_id}")
+
+            # Run synchronous boto3 call in a thread to avoid blocking the event loop
+            def _invoke():
+                resp = bedrock_client.invoke_model(
+                    modelId=model_id,
+                    contentType="application/json",
+                    accept="application/json",
+                    body=json.dumps(bedrock_body),
+                )
+                return json.loads(resp["body"].read())
+
+            result = await asyncio.to_thread(_invoke)
+            print(f"DEBUG: [AnthropicClient] Bedrock response received successfully")
+
+            # Convert Bedrock response to match Anthropic SDK response format
+            # Bedrock returns the same format as Anthropic Messages API
+            response_dict = {
+                "id": result.get("id", "msg_bedrock"),
+                "type": "message",
+                "role": result.get("role", "assistant"),
+                "content": result.get("content", []),
+                "model": result.get("model", model_id),
+                "stop_reason": result.get("stop_reason", "end_turn"),
+                "stop_sequence": result.get("stop_sequence"),
+                "usage": result.get("usage", {"input_tokens": 0, "output_tokens": 0}),
+            }
+            logger.info("This is the usage response from claude (bedrock) %s", response_dict.get("usage"))
+            return response_dict
         else:
             print(f"DEBUG: [AnthropicClient] Using standard Anthropic client (model_endpoint_type={llm_config.model_endpoint_type})")
             client = await self._get_anthropic_client_async(llm_config, async_client=True)
