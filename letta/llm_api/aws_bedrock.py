@@ -1,4 +1,3 @@
-import os
 from typing import Any, Dict, List
 
 from anthropic import AnthropicBedrock
@@ -13,10 +12,11 @@ def has_valid_aws_credentials() -> bool:
     """
     Check if AWS credentials are properly configured.
     """
-    valid_aws_credentials = (
-        os.getenv("AWS_ACCESS_KEY") is not None and os.getenv("AWS_SECRET_ACCESS_KEY") is not None and os.getenv("AWS_REGION") is not None
+    return (
+        model_settings.aws_access_key is not None
+        and model_settings.aws_secret_access_key is not None
+        and model_settings.aws_region is not None
     )
-    return valid_aws_credentials
 
 
 def get_bedrock_client():
@@ -59,7 +59,12 @@ def bedrock_get_model_list(region_name: str) -> List[dict]:
 
     logger.debug(f"Getting model list for {region_name}")
     try:
-        bedrock = boto3.client("bedrock", region_name=region_name)
+        bedrock = boto3.client(
+            "bedrock",
+            region_name=region_name,
+            aws_access_key_id=model_settings.aws_access_key,
+            aws_secret_access_key=model_settings.aws_secret_access_key,
+        )
         response = bedrock.list_inference_profiles()
         return response["inferenceProfileSummaries"]
     except Exception as e:
@@ -76,7 +81,12 @@ def bedrock_get_model_details(region_name: str, model_id: str) -> Dict[str, Any]
 
     logger.debug(f"Getting model details for {model_id}")
     try:
-        bedrock = boto3.client("bedrock", region_name=region_name)
+        bedrock = boto3.client(
+            "bedrock",
+            region_name=region_name,
+            aws_access_key_id=model_settings.aws_access_key,
+            aws_secret_access_key=model_settings.aws_secret_access_key,
+        )
         response = bedrock.get_foundation_model(modelIdentifier=model_id)
         return response["modelDetails"]
     except ClientError as e:
