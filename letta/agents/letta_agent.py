@@ -542,7 +542,7 @@ class LettaAgent(BaseAgent):
 
             # TODO: THIS IS INCREDIBLY UGLY
             # TODO: THERE ARE MULTIPLE COPIES OF THE LLM_CONFIG EVERYWHERE THAT ARE GETTING MANIPULATED
-            if agent_state.llm_config.model_endpoint_type in ("anthropic", "anthropic_vertex", "anthropic_bedrock"):
+            if agent_state.llm_config.model_endpoint_type in ("anthropic", "anthropic_vertex", "anthropic_bedrock", "bedrock"):
                 interface = AnthropicStreamingInterface(
                     use_assistant_message=use_assistant_message,
                     put_inner_thoughts_in_kwarg=agent_state.llm_config.put_inner_thoughts_in_kwargs,

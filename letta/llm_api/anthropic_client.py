@@ -91,7 +91,7 @@ class AnthropicClient(LLMClientBase):
             print(f"DEBUG: [AnthropicClient] Calling client.messages.create with model={request_data.get('model')}")
             response = await client.messages.create(**request_data)
             print(f"DEBUG: [AnthropicClient] Response received successfully")
-        elif llm_config.model_endpoint_type == "anthropic_bedrock":
+        elif llm_config.model_endpoint_type in ("bedrock", "anthropic_bedrock"):
             print(f"DEBUG: [AnthropicClient] Using AWS Bedrock client via boto3 (model_endpoint_type=anthropic_bedrock)")
             print(f"DEBUG: [AnthropicClient] Request data model: {request_data.get('model')}")
             import os
