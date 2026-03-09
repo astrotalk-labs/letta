@@ -76,7 +76,7 @@ class EphemeralSummaryAgent(BaseAgent):
             client = anthropic.Anthropic(api_key=model_settings.anthropic_api_key)
             return client.messages.create(
                 model=SUMMARIZER_MODEL,
-                max_tokens=4096,
+                max_tokens=1500,
                 system=system,
                 messages=messages,
             )
