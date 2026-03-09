@@ -118,7 +118,7 @@ class OpenAIClient(LLMClientBase):
             api_key = model_settings.openai_api_key or os.environ.get("OPENAI_API_KEY")
         # supposedly the openai python client requires a dummy API key
         api_key = api_key or "DUMMY_API_KEY"
-        kwargs = {"api_key": api_key, "base_url": "https://api.anthropic.com"}
+        kwargs = {"api_key": api_key, "base_url": llm_config.model_endpoint}
 
         return kwargs
 
@@ -147,7 +147,7 @@ class OpenAIClient(LLMClientBase):
             api_key = model_settings.openai_api_key or os.environ.get("OPENAI_API_KEY")
         # supposedly the openai python client requires a dummy API key
         api_key = api_key or "DUMMY_API_KEY"
-        kwargs = {"api_key": api_key, "base_url": "https://api.anthropic.com"}
+        kwargs = {"api_key": api_key, "base_url": llm_config.model_endpoint}
 
         return kwargs
 
