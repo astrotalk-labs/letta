@@ -1,8 +1,7 @@
-import os
 from pathlib import Path
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, List
 
-from openai import AsyncOpenAI
+import anthropic
 
 from letta.agents.base_agent import BaseAgent
 from letta.constants import DEFAULT_MAX_STEPS
@@ -11,18 +10,18 @@ from letta.schemas.block import Block, BlockUpdate
 from letta.schemas.enums import MessageRole
 from letta.schemas.letta_message_content import TextContent
 from letta.schemas.message import Message, MessageCreate
-from letta.schemas.openai.chat_completion_request import ChatCompletionRequest
 from letta.schemas.user import User
 from letta.services.agent_manager import AgentManager
 from letta.services.block_manager import BlockManager
 from letta.services.message_manager import MessageManager
+from letta.settings import model_settings
+
+SUMMARIZER_MODEL = "claude-haiku-4-5"
 
 
 class EphemeralSummaryAgent(BaseAgent):
     """
-    A stateless summarization agent (thin wrapper around OpenAI)
-
-    # TODO: Extend to more clients
+    A stateless summarization agent using Anthropic client directly.
     """
 
     def __init__(
@@ -36,13 +35,14 @@ class EphemeralSummaryAgent(BaseAgent):
     ):
         super().__init__(
             agent_id=agent_id,
-            openai_client=AsyncOpenAI(base_url="https://api.anthropic.com/v1/", api_key=os.environ.get("ANTHROPIC_API_KEY")),
+            openai_client=None,
             message_manager=message_manager,
             agent_manager=agent_manager,
             actor=actor,
         )
         self.target_block_label = target_block_label
         self.block_manager = block_manager
+        self.anthropic_client = anthropic.AsyncAnthropic(api_key=model_settings.anthropic_api_key)
 
     async def step(self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS) -> List[Message]:
         if len(input_messages) > 1:
@@ -66,12 +66,19 @@ class EphemeralSummaryAgent(BaseAgent):
             input_message = input_messages[0]
             input_message.content[0].text += f"\n\n--- Previous Summary ---\n{block.value}\n"
 
-        openai_messages = self.pre_process_input_message(input_messages=input_messages)
-        request = self._build_openai_request(openai_messages)
+        messages = self.pre_process_input_message(input_messages=input_messages)
 
-        # TODO: Extend to generic client
-        chat_completion = await self.openai_client.chat.completions.create(**request.model_dump(exclude_unset=True))
-        summary = chat_completion.choices[0].message.content.strip()
+        current_dir = Path(__file__).parent
+        with open(current_dir / "prompts" / "summary_system_prompt.txt", "r") as f:
+            system = f.read()
+
+        response = await self.anthropic_client.messages.create(
+            model=SUMMARIZER_MODEL,
+            max_tokens=4096,
+            system=system,
+            messages=messages,
+        )
+        summary = response.content[0].text.strip()
 
         await self.block_manager.update_block_async(block_id=block.id, block_update=BlockUpdate(value=summary), actor=self.actor)
 
@@ -84,23 +91,6 @@ class EphemeralSummaryAgent(BaseAgent):
                 content=[TextContent(text=summary)],
             )
         ]
-
-    def _build_openai_request(self, openai_messages: List[Dict]) -> ChatCompletionRequest:
-        current_dir = Path(__file__).parent
-        file_path = current_dir / "prompts" / "summary_system_prompt.txt"
-        with open(file_path, "r") as file:
-            system = file.read()
-
-        system_message = [{"role": "system", "content": system}]
-
-        openai_request = ChatCompletionRequest(
-            model="claude-haiku-4-5",
-            messages=system_message + openai_messages,
-            user=self.actor.id,
-            max_completion_tokens=4096,
-            temperature=0.7,
-        )
-        return openai_request
 
     async def step_stream(self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS) -> AsyncGenerator[str, None]:
         raise NotImplementedError("EphemeralAgent does not support async step.")
