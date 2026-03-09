@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import AsyncGenerator, List
 
+import httpx
 import anthropic
 
 from letta.agents.base_agent import BaseAgent
@@ -42,7 +43,10 @@ class EphemeralSummaryAgent(BaseAgent):
         )
         self.target_block_label = target_block_label
         self.block_manager = block_manager
-        self.anthropic_client = anthropic.AsyncAnthropic(api_key=model_settings.anthropic_api_key)
+        self.anthropic_client = anthropic.AsyncAnthropic(
+            api_key=model_settings.anthropic_api_key,
+            timeout=httpx.Timeout(timeout=60.0, connect=30.0),
+        )
 
     async def step(self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS) -> List[Message]:
         if len(input_messages) > 1:
