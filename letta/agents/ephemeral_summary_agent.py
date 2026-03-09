@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import AsyncGenerator, Dict, List
 
@@ -35,7 +36,7 @@ class EphemeralSummaryAgent(BaseAgent):
     ):
         super().__init__(
             agent_id=agent_id,
-            openai_client=AsyncOpenAI(),
+            openai_client=AsyncOpenAI(api_key=os.environ.get("ANTHROPIC_API_KEY")),
             message_manager=message_manager,
             agent_manager=agent_manager,
             actor=actor,
