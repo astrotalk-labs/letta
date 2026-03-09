@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from typing import AsyncGenerator, Dict, List
 
@@ -37,8 +36,8 @@ class EphemeralSummaryAgent(BaseAgent):
         super().__init__(
             agent_id=agent_id,
             openai_client=AsyncOpenAI(
-                base_url=os.environ.get("LETTA_SUMMARIZER_BASE_URL"),
-                api_key=os.environ.get("LETTA_SUMMARIZER_API_KEY") or os.environ.get("OPENAI_API_KEY"),
+                base_url="https://api.anthropic.com",
+                api_key=os.environ.get("OPENAI_API_KEY"),
             ),
             message_manager=message_manager,
             agent_manager=agent_manager,
@@ -97,7 +96,7 @@ class EphemeralSummaryAgent(BaseAgent):
         system_message = [{"role": "system", "content": system}]
 
         openai_request = ChatCompletionRequest(
-            model=os.environ.get("LETTA_SUMMARIZER_MODEL", "gpt-4o"),
+            model="claude-haiku-4-5",
             messages=system_message + openai_messages,
             user=self.actor.id,
             max_completion_tokens=4096,
