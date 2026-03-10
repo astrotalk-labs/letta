@@ -93,7 +93,7 @@ class EphemeralSummaryAgent(BaseAgent):
         system_message = [{"role": "system", "content": system}]
 
         openai_request = ChatCompletionRequest(
-            model="gpt-5.1",
+            model="gpt-4o",
             messages=system_message + openai_messages,
             user=self.actor.id,
             max_completion_tokens=4096,
