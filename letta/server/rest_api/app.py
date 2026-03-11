@@ -256,6 +256,7 @@ def create_application() -> "FastAPI":
         print(f"▶ Using OTLP tracing with endpoint: {otlp_endpoint}")
         env_name_suffix = os.getenv("ENV_NAME")
         service_name = f"letta-server-{env_name_suffix.lower()}" if env_name_suffix else "letta-server"
+        from letta.otel.logging import setup_logging
         from letta.otel.metrics import setup_metrics
         from letta.otel.tracing import setup_tracing
 
@@ -265,6 +266,7 @@ def create_application() -> "FastAPI":
             service_name=service_name,
         )
         setup_metrics(endpoint=otlp_endpoint, app=app, service_name=service_name)
+        setup_logging(endpoint=otlp_endpoint, service_name=service_name)
 
     for route in v1_routes:
         app.include_router(route, prefix=API_PREFIX)
