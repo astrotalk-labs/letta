@@ -44,7 +44,7 @@ class LLMClient:
                     put_inner_thoughts_first=put_inner_thoughts_first,
                     actor=actor,
                 )
-            case ProviderType.anthropic:
+            case ProviderType.anthropic | ProviderType.anthropic_bedrock:
                 from letta.llm_api.anthropic_client import AnthropicClient
 
                 return AnthropicClient(

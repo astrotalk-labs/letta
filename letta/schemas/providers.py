@@ -1553,6 +1553,11 @@ class AnthropicBedrockProvider(Provider):
             )
         return configs
 
+    async def list_llm_models_async(self):
+        import asyncio
+
+        return await asyncio.to_thread(self.list_llm_models)
+
     def list_embedding_models(self):
         return []
 
@@ -1563,6 +1568,5 @@ class AnthropicBedrockProvider(Provider):
         return bedrock_get_model_context_window(model_name)
 
     def get_handle(self, model_name: str) -> str:
-        print(model_name)
         model = model_name.split(".")[-1]
         return f"bedrock/{model}"
