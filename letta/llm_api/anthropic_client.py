@@ -172,13 +172,29 @@ class AnthropicClient(LLMClientBase):
                 "stop_sequence": result.get("stop_sequence"),
                 "usage": result.get("usage", {"input_tokens": 0, "output_tokens": 0}),
             }
-            logger.info("This is the usage response from claude (bedrock) %s", response_dict.get("usage"))
+            usage = response_dict.get("usage", {})
+            logger.info("This is the usage response from claude (bedrock) %s", usage)
+            logger.info(
+                "Bedrock prompt caching stats - input_tokens: %s, output_tokens: %s, cache_creation_input_tokens: %s, cache_read_input_tokens: %s",
+                usage.get("input_tokens", "N/A"),
+                usage.get("output_tokens", "N/A"),
+                usage.get("cache_creation_input_tokens", "N/A"),
+                usage.get("cache_read_input_tokens", "N/A"),
+            )
             return response_dict
         else:
             print(f"DEBUG: [AnthropicClient] Using standard Anthropic client (model_endpoint_type={llm_config.model_endpoint_type})")
             client = await self._get_anthropic_client_async(llm_config, async_client=True)
             response = await client.beta.messages.create(**request_data, betas=["tools-2024-04-04"])
-        logger.info("This is the usage response from claude %s", response.usage)
+        usage = response.usage
+        logger.info("This is the usage response from claude %s", usage)
+        logger.info(
+            "Anthropic direct prompt caching stats - input_tokens: %s, output_tokens: %s, cache_creation_input_tokens: %s, cache_read_input_tokens: %s",
+            getattr(usage, "input_tokens", "N/A"),
+            getattr(usage, "output_tokens", "N/A"),
+            getattr(usage, "cache_creation_input_tokens", "N/A"),
+            getattr(usage, "cache_read_input_tokens", "N/A"),
+        )
         return response.model_dump()
 
     @trace_method
