@@ -340,6 +340,7 @@ async def load_file_to_source_cloud(
 ):
     file_processor = MistralFileParser()
     text_chunker = LlamaIndexChunker()
-    embedder = OpenAIEmbedder()
+    embedding_config = agent_states[0].embedding_config if agent_states else None
+    embedder = OpenAIEmbedder(embedding_config=embedding_config)
     file_processor = FileProcessor(file_parser=file_processor, text_chunker=text_chunker, embedder=embedder, actor=actor)
     await file_processor.process(server=server, agent_states=agent_states, source_id=source_id, content=content, file=file, job=job)
