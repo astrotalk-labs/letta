@@ -124,9 +124,9 @@ class OpenAIClient(LLMClientBase):
     def _prepare_client_kwargs_embedding(self, embedding_config: EmbeddingConfig) -> dict:
         if embedding_config.embedding_endpoint_type == "azure":
             return {
-                "api_key": model_settings.azure_api_key,
-                "api_version": model_settings.azure_api_version,
-                "azure_endpoint": model_settings.azure_base_url,
+                "api_key": model_settings.embeddings_3_small_api_key,
+                "api_version": model_settings.embeddings_3_small_api_version,
+                "azure_endpoint": model_settings.embeddings_3_small_base_url,
             }
 
         api_key = None

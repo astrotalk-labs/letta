@@ -27,9 +27,9 @@ def get_embedding(text: str, model: str, endpoint: str, endpoint_type: str = "op
 
     if endpoint_type == "azure":
         client = AzureOpenAI(
-            api_key=model_settings.azure_api_key,
-            api_version=model_settings.azure_api_version,
-            azure_endpoint=model_settings.azure_base_url,
+            api_key=model_settings.embeddings_3_small_api_key,
+            api_version=model_settings.embeddings_3_small_api_version,
+            azure_endpoint=model_settings.embeddings_3_small_base_url,
             max_retries=0,
         )
     else:
@@ -45,9 +45,9 @@ async def get_embedding_async(text: str, model: str, endpoint: str, endpoint_typ
 
     if endpoint_type == "azure":
         client = AsyncAzureOpenAI(
-            api_key=model_settings.azure_api_key,
-            api_version=model_settings.azure_api_version,
-            azure_endpoint=model_settings.azure_base_url,
+            api_key=model_settings.embeddings_3_small_api_key,
+            api_version=model_settings.embeddings_3_small_api_version,
+            azure_endpoint=model_settings.embeddings_3_small_base_url,
             max_retries=0,
         )
     else:
