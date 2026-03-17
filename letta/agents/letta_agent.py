@@ -139,7 +139,6 @@ class LettaAgent(BaseAgent):
         elif not use_bedrock_experiment and original_endpoint_type == "anthropic_bedrock":
             print(f"DEBUG: [provider_switch] Switching from anthropic_bedrock to anthropic")
             agent_state.llm_config.model_endpoint_type = "anthropic"
-            agent_state.llm_config.model_endpoint_type = "anthropic"
 
     @trace_method
     async def step(
