@@ -43,13 +43,6 @@ def init_growthbook() -> Optional[ExperimentsService]:
     features_path = settings.growthbook_features_json_path
     refresh_interval = settings.growthbook_refresh_interval
 
-    if not client_key and not features_path:
-        logger.info(
-            "GrowthBook is not configured (no LETTA_GROWTHBOOK_CLIENT_KEY or "
-            "LETTA_GROWTHBOOK_FEATURES_JSON_PATH). Feature flags will be disabled."
-        )
-        return None
-
     logger.info("Initializing GrowthBook...")
     _gb_features_service = GBFeaturesService(
         client_key=client_key,

@@ -230,9 +230,8 @@ class Settings(BaseSettings):
     use_vertex_structured_outputs_experimental: bool = False
 
     # GrowthBook feature flags
-    # Set via LETTA_GROWTHBOOK_CLIENT_KEY, LETTA_GROWTHBOOK_API_HOST, etc.
-    growthbook_client_key: Optional[str] = None
-    growthbook_api_host: str = "https://cdn.growthbook.io"
+    growthbook_client_key: str = "sdk-02dNuHwCGxZ6lzVG"
+    growthbook_api_host: str = "https://cdn-exp-api.astrotalk.in"
     growthbook_features_json_path: Optional[str] = None
     growthbook_refresh_interval: int = 60  # seconds between feature definition refreshes
 
