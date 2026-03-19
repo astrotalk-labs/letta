@@ -234,6 +234,12 @@ class Settings(BaseSettings):
     use_experimental: bool = False
     use_vertex_structured_outputs_experimental: bool = False
 
+    # GrowthBook feature flags
+    growthbook_client_key: str = "sdk-02dNuHwCGxZ6lzVG"
+    growthbook_api_host: str = "https://cdn-exp-api.astrotalk.in"
+    growthbook_features_json_path: Optional[str] = None
+    growthbook_refresh_interval: int = 60  # seconds between feature definition refreshes
+
     # LLM provider client settings
     httpx_max_retries: int = 5
     httpx_timeout_connect: float = 10.0
