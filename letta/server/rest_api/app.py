@@ -37,6 +37,7 @@ from letta.server.rest_api.routers.v1.organizations import router as organizatio
 from letta.server.rest_api.routers.v1.users import router as users_router  # TODO: decide on admin
 from letta.server.rest_api.static_files import mount_static_files
 from letta.server.server import SyncServer
+from letta.growthbook.setup import init_growthbook, shutdown_growthbook
 from letta.settings import settings
 
 # TODO(ethan)
@@ -290,6 +291,15 @@ def create_application() -> "FastAPI":
 
     # / static files
     mount_static_files(app)
+
+    # Initialize GrowthBook feature flags
+    gb_service = init_growthbook()
+    if gb_service:
+        print("▶ GrowthBook feature flags initialized")
+
+    @app.on_event("shutdown")
+    async def _shutdown_growthbook():
+        shutdown_growthbook()
 
     # Generate OpenAPI schema after all routes are mounted
     generate_openapi_schema(app)
