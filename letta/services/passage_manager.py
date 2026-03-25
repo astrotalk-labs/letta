@@ -10,9 +10,9 @@ from sqlalchemy import select
 from letta.constants import MAX_EMBEDDING_DIM
 from letta.embeddings import embedding_model, parse_and_chunk_text
 from letta.growthbook.constants import GrowthBookFeatureKeys
-from letta.log import get_logger
 from letta.growthbook.experiments_service import ExperimentsService
 from letta.growthbook.setup import get_experiments_service
+from letta.log import get_logger
 from letta.orm.errors import NoResultFound
 from letta.orm.passage import AgentPassage, SourcePassage
 from letta.otel.tracing import trace_method
@@ -489,13 +489,21 @@ class PassageManager:
 
         embedding_chunk_size = agent_state.embedding_config.embedding_chunk_size
 
-        # GrowthBook: override embedding provider based on feature flag
+        # Route to Azure embeddings via GrowthBook flag or userId % 10 == 0 (10% rollout)
         embedding_config = agent_state.embedding_config
+        uid = gb_user_id or str(actor.id)
+        use_azure = False
         experiments_service = get_experiments_service()
         if experiments_service:
-            attrs = ExperimentsService.build_attributes(user_id=gb_user_id or str(actor.id))
-            if experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs):
-                embedding_config = embedding_config.model_copy(update={"embedding_endpoint_type": "azure"})
+            attrs = ExperimentsService.build_attributes(user_id=uid)
+            use_azure = experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs)
+        if not use_azure:
+            try:
+                use_azure = int(uid) % 10 == 0
+            except (ValueError, TypeError):
+                pass
+        if use_azure:
+            embedding_config = embedding_config.model_copy(update={"embedding_endpoint_type": "azure"})
 
         # TODO eventually migrate off of llama-index for embeddings?
         # Already causing pain for OpenAI proxy endpoints like LM Studio...
@@ -564,13 +572,21 @@ class PassageManager:
         if not text_chunks:
             return []
 
-        # GrowthBook: override embedding provider based on feature flag
+        # Route to Azure embeddings via GrowthBook flag or userId % 10 == 0 (10% rollout)
         embedding_config = agent_state.embedding_config
+        uid = gb_user_id or str(actor.id)
+        use_azure = False
         experiments_service = get_experiments_service()
         if experiments_service:
-            attrs = ExperimentsService.build_attributes(user_id=gb_user_id or str(actor.id))
-            if experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs):
-                embedding_config = embedding_config.model_copy(update={"embedding_endpoint_type": "azure"})
+            attrs = ExperimentsService.build_attributes(user_id=uid)
+            use_azure = experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs)
+        if not use_azure:
+            try:
+                use_azure = int(uid) % 10 == 0
+            except (ValueError, TypeError):
+                pass
+        if use_azure:
+            embedding_config = embedding_config.model_copy(update={"embedding_endpoint_type": "azure"})
 
         try:
             embeddings = await self._generate_embeddings_concurrent(text_chunks, embedding_config)

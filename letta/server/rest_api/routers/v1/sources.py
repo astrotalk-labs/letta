@@ -23,9 +23,6 @@ from letta.services.file_processor.embedder.openai_embedder import OpenAIEmbedde
 from letta.services.file_processor.file_processor import FileProcessor
 from letta.services.file_processor.file_types import get_allowed_media_types, get_extension_to_mime_type_map, register_mime_types
 from letta.services.file_processor.parser.mistral_parser import MistralFileParser
-from letta.growthbook.constants import GrowthBookFeatureKeys
-from letta.growthbook.experiments_service import ExperimentsService
-from letta.growthbook.setup import get_experiments_service
 from letta.settings import model_settings, settings
 from letta.utils import safe_create_task, sanitize_filename
 
@@ -345,11 +342,19 @@ async def load_file_to_source_cloud(
     file_processor = MistralFileParser()
     text_chunker = LlamaIndexChunker()
     embedding_config = agent_states[0].embedding_config if agent_states else None
+    uid = gb_user_id or str(actor.id)
+    use_azure = False
     experiments_service = get_experiments_service()
     if experiments_service and embedding_config:
-        attrs = ExperimentsService.build_attributes(user_id=gb_user_id or str(actor.id))
-        if experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs):
-            embedding_config = embedding_config.model_copy(update={"embedding_endpoint_type": "azure"})
+        attrs = ExperimentsService.build_attributes(user_id=uid)
+        use_azure = experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs)
+    if not use_azure and embedding_config:
+        try:
+            use_azure = int(uid) % 10 == 0
+        except (ValueError, TypeError):
+            pass
+    if use_azure and embedding_config:
+        embedding_config = embedding_config.model_copy(update={"embedding_endpoint_type": "azure"})
     embedder = OpenAIEmbedder(embedding_config=embedding_config)
     file_processor = FileProcessor(file_parser=file_processor, text_chunker=text_chunker, embedder=embedder, actor=actor)
     await file_processor.process(server=server, agent_states=agent_states, source_id=source_id, content=content, file=file, job=job)
