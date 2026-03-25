@@ -25,4 +25,4 @@ class GrowthBookFeatureKeys:
         MY_FEATURE = "my-feature-key"
     """
 
-    USE_AZURE_EMBEDDINGS = "use_azure_embeddings"
+    pass
