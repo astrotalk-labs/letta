@@ -177,6 +177,7 @@ async def upload_file_to_source(
     source_id: str,
     server: "SyncServer" = Depends(get_letta_server),
     actor_id: Optional[str] = Header(None, alias="user_id"),
+    gb_user_id: Optional[str] = Header(None, alias="x_gb_user_id"),
 ):
     """
     Upload a file to a data source.
@@ -234,7 +235,7 @@ async def upload_file_to_source(
     if settings.mistral_api_key and model_settings.openai_api_key:
         logger.info("Running experimental cloud based file processing...")
         safe_create_task(
-            load_file_to_source_cloud(server, agent_states, content, file, job, source_id, actor),
+            load_file_to_source_cloud(server, agent_states, content, file, job, source_id, actor, gb_user_id),
             logger=logger,
             label="file_processor.process",
         )
@@ -339,14 +340,14 @@ async def sleeptime_document_ingest_async(server: SyncServer, source_id: str, ac
 
 
 async def load_file_to_source_cloud(
-    server: SyncServer, agent_states: List[AgentState], content: bytes, file: UploadFile, job: Job, source_id: str, actor: User
+    server: SyncServer, agent_states: List[AgentState], content: bytes, file: UploadFile, job: Job, source_id: str, actor: User, gb_user_id: Optional[str] = None
 ):
     file_processor = MistralFileParser()
     text_chunker = LlamaIndexChunker()
     embedding_config = agent_states[0].embedding_config if agent_states else None
     experiments_service = get_experiments_service()
     if experiments_service and embedding_config:
-        attrs = ExperimentsService.build_attributes(user_id=str(actor.id))
+        attrs = ExperimentsService.build_attributes(user_id=gb_user_id or str(actor.id))
         if experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs):
             embedding_config = embedding_config.model_copy(update={"embedding_endpoint_type": "azure"})
     embedder = OpenAIEmbedder(embedding_config=embedding_config)

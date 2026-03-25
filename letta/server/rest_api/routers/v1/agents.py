@@ -560,13 +560,14 @@ async def create_passage(
     request: CreateArchivalMemory = Body(...),
     server: "SyncServer" = Depends(get_letta_server),
     actor_id: Optional[str] = Header(None, alias="user_id"),
+    gb_user_id: Optional[str] = Header(None, alias="x_gb_user_id"),
 ):
     """
     Insert a memory into an agent's archival memory store.
     """
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
 
-    return await server.insert_archival_memory_async(agent_id=agent_id, memory_contents=request.text, actor=actor)
+    return await server.insert_archival_memory_async(agent_id=agent_id, memory_contents=request.text, actor=actor, gb_user_id=gb_user_id)
 
 
 @router.patch("/{agent_id}/archival-memory/{memory_id}", response_model=List[Passage], operation_id="modify_passage")

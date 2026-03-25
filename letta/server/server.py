@@ -1126,25 +1126,25 @@ class SyncServer(Server):
         )
         return records
 
-    def insert_archival_memory(self, agent_id: str, memory_contents: str, actor: User) -> List[Passage]:
+    def insert_archival_memory(self, agent_id: str, memory_contents: str, actor: User, gb_user_id: Optional[str] = None) -> List[Passage]:
         # Get the agent object (loaded in memory)
         agent_state = self.agent_manager.get_agent_by_id(agent_id=agent_id, actor=actor)
         # Insert into archival memory
         # TODO: @mindy look at moving this to agent_manager to avoid above extra call
-        passages = self.passage_manager.insert_passage(agent_state=agent_state, agent_id=agent_id, text=memory_contents, actor=actor)
+        passages = self.passage_manager.insert_passage(agent_state=agent_state, agent_id=agent_id, text=memory_contents, actor=actor, gb_user_id=gb_user_id)
 
         # rebuild agent system prompt - force since no archival change
         self.agent_manager.rebuild_system_prompt(agent_id=agent_id, actor=actor, force=True)
 
         return passages
 
-    async def insert_archival_memory_async(self, agent_id: str, memory_contents: str, actor: User) -> List[Passage]:
+    async def insert_archival_memory_async(self, agent_id: str, memory_contents: str, actor: User, gb_user_id: Optional[str] = None) -> List[Passage]:
         # Get the agent object (loaded in memory)
         agent_state = await self.agent_manager.get_agent_by_id_async(agent_id=agent_id, actor=actor)
         # Insert into archival memory
         # TODO: @mindy look at moving this to agent_manager to avoid above extra call
         passages = await self.passage_manager.insert_passage_async(
-            agent_state=agent_state, agent_id=agent_id, text=memory_contents, actor=actor
+            agent_state=agent_state, agent_id=agent_id, text=memory_contents, actor=actor, gb_user_id=gb_user_id
         )
 
         # rebuild agent system prompt - force since no archival change

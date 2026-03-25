@@ -10,6 +10,7 @@ from sqlalchemy import select
 from letta.constants import MAX_EMBEDDING_DIM
 from letta.embeddings import embedding_model, parse_and_chunk_text
 from letta.growthbook.constants import GrowthBookFeatureKeys
+from letta.log import get_logger
 from letta.growthbook.experiments_service import ExperimentsService
 from letta.growthbook.setup import get_experiments_service
 from letta.orm.errors import NoResultFound
@@ -22,6 +23,7 @@ from letta.schemas.user import User as PydanticUser
 from letta.server.db import db_registry
 from letta.utils import enforce_types
 
+logger = get_logger(__name__)
 
 # TODO: Add redis-backed caching for backend
 @lru_cache(maxsize=8192)
@@ -481,6 +483,7 @@ class PassageManager:
         agent_id: str,
         text: str,
         actor: PydanticUser,
+        gb_user_id: Optional[str] = None,
     ) -> List[PydanticPassage]:
         """Insert passage(s) into archival memory"""
 
@@ -490,7 +493,7 @@ class PassageManager:
         embedding_config = agent_state.embedding_config
         experiments_service = get_experiments_service()
         if experiments_service:
-            attrs = ExperimentsService.build_attributes(user_id=str(actor.id))
+            attrs = ExperimentsService.build_attributes(user_id=gb_user_id or str(actor.id))
             if experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs):
                 embedding_config = embedding_config.model_copy(update={"embedding_endpoint_type": "azure"})
 
@@ -536,6 +539,7 @@ class PassageManager:
                 )
                 passages.append(passage)
 
+            logger.info(f"[Embeddings] Successfully stored {len(passages)} passage(s) via {endpoint_type} embeddings for user_id={actor.id}")
             return passages
 
         except Exception as e:
@@ -550,6 +554,7 @@ class PassageManager:
         text: str,
         actor: PydanticUser,
         image_ids: Optional[List[str]] = None,
+        gb_user_id: Optional[str] = None,
     ) -> List[PydanticPassage]:
         """Insert passage(s) into archival memory"""
 
@@ -563,7 +568,7 @@ class PassageManager:
         embedding_config = agent_state.embedding_config
         experiments_service = get_experiments_service()
         if experiments_service:
-            attrs = ExperimentsService.build_attributes(user_id=str(actor.id))
+            attrs = ExperimentsService.build_attributes(user_id=gb_user_id or str(actor.id))
             if experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs):
                 embedding_config = embedding_config.model_copy(update={"embedding_endpoint_type": "azure"})
 
@@ -583,6 +588,7 @@ class PassageManager:
 
             passages = await self.create_many_agent_passages_async(passages=passages, actor=actor)
 
+            logger.info(f"[Embeddings] Successfully stored {len(passages)} passage(s) via {embedding_config.embedding_endpoint_type} embeddings for user_id={actor.id}")
             return passages
 
         except Exception as e:
