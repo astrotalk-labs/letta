@@ -112,6 +112,11 @@ class ModelSettings(BaseSettings):
         "2024-09-01-preview"  # https://learn.microsoft.com/en-us/azure/ai-services/openai/api-version-deprecation
     )
 
+    # azure embeddings (dedicated resource for text-embedding-3-small)
+    embeddings_3_small_api_key: Optional[str] = None
+    embeddings_3_small_base_url: Optional[str] = None
+    embeddings_3_small_api_version: Optional[str] = "2023-05-15"
+
     # google ai
     gemini_api_key: Optional[str] = None
     gemini_base_url: str = "https://generativelanguage.googleapis.com/"

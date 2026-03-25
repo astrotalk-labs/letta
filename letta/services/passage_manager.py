@@ -4,11 +4,14 @@ from functools import lru_cache
 from typing import List, Optional
 
 from async_lru import alru_cache
-from openai import AsyncOpenAI, OpenAI
+from openai import AsyncAzureOpenAI, AsyncOpenAI, AzureOpenAI, OpenAI
 from sqlalchemy import select
 
 from letta.constants import MAX_EMBEDDING_DIM
 from letta.embeddings import embedding_model, parse_and_chunk_text
+from letta.growthbook.constants import GrowthBookFeatureKeys
+from letta.growthbook.experiments_service import ExperimentsService
+from letta.growthbook.setup import get_experiments_service
 from letta.orm.errors import NoResultFound
 from letta.orm.passage import AgentPassage, SourcePassage
 from letta.otel.tracing import trace_method
@@ -22,20 +25,36 @@ from letta.utils import enforce_types
 
 # TODO: Add redis-backed caching for backend
 @lru_cache(maxsize=8192)
-def get_openai_embedding(text: str, model: str, endpoint: str) -> List[float]:
+def get_embedding(text: str, model: str, endpoint: str, endpoint_type: str = "openai") -> List[float]:
     from letta.settings import model_settings
 
-    client = OpenAI(api_key=model_settings.openai_api_key, base_url=endpoint, max_retries=0)
+    if endpoint_type == "azure":
+        client = AzureOpenAI(
+            api_key=model_settings.embeddings_3_small_api_key,
+            api_version=model_settings.embeddings_3_small_api_version,
+            azure_endpoint=model_settings.embeddings_3_small_base_url,
+            max_retries=0,
+        )
+    else:
+        client = OpenAI(api_key=model_settings.openai_api_key, base_url=endpoint, max_retries=0)
     response = client.embeddings.create(input=text, model=model)
     return response.data[0].embedding
 
 
 # TODO: Add redis-backed caching for backend
 @alru_cache(maxsize=8192)
-async def get_openai_embedding_async(text: str, model: str, endpoint: str) -> List[float]:
+async def get_embedding_async(text: str, model: str, endpoint: str, endpoint_type: str = "openai") -> List[float]:
     from letta.settings import model_settings
 
-    client = AsyncOpenAI(api_key=model_settings.openai_api_key, base_url=endpoint, max_retries=0)
+    if endpoint_type == "azure":
+        client = AsyncAzureOpenAI(
+            api_key=model_settings.embeddings_3_small_api_key,
+            api_version=model_settings.embeddings_3_small_api_version,
+            azure_endpoint=model_settings.embeddings_3_small_base_url,
+            max_retries=0,
+        )
+    else:
+        client = AsyncOpenAI(api_key=model_settings.openai_api_key, base_url=endpoint, max_retries=0)
     response = await client.embeddings.create(input=text, model=model)
     return response.data[0].embedding
 
@@ -467,9 +486,18 @@ class PassageManager:
 
         embedding_chunk_size = agent_state.embedding_config.embedding_chunk_size
 
+        # GrowthBook: override embedding provider based on feature flag
+        embedding_config = agent_state.embedding_config
+        experiments_service = get_experiments_service()
+        if experiments_service:
+            attrs = ExperimentsService.build_attributes(user_id=str(actor.id))
+            if experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs):
+                embedding_config = embedding_config.model_copy(update={"embedding_endpoint_type": "azure"})
+
         # TODO eventually migrate off of llama-index for embeddings?
         # Already causing pain for OpenAI proxy endpoints like LM Studio...
-        if agent_state.embedding_config.embedding_endpoint_type != "openai":
+        endpoint_type = embedding_config.embedding_endpoint_type
+        if endpoint_type not in ("openai", "azure"):
             embed_model = embedding_model(agent_state.embedding_config)
 
         passages = []
@@ -478,14 +506,14 @@ class PassageManager:
             # breakup string into passages
             for text in parse_and_chunk_text(text, embedding_chunk_size):
 
-                if agent_state.embedding_config.embedding_endpoint_type != "openai":
+                if endpoint_type not in ("openai", "azure"):
                     embedding = embed_model.get_text_embedding(text)
                 else:
-                    # TODO should have the settings passed in via the server call
-                    embedding = get_openai_embedding(
+                    embedding = get_embedding(
                         text,
-                        agent_state.embedding_config.embedding_model,
-                        agent_state.embedding_config.embedding_endpoint,
+                        embedding_config.embedding_model,
+                        embedding_config.embedding_endpoint,
+                        endpoint_type,
                     )
 
                 if isinstance(embedding, dict):
@@ -502,7 +530,7 @@ class PassageManager:
                         agent_id=agent_id,
                         text=text,
                         embedding=embedding,
-                        embedding_config=agent_state.embedding_config,
+                        embedding_config=embedding_config,
                     ),
                     actor=actor,
                 )
@@ -531,8 +559,16 @@ class PassageManager:
         if not text_chunks:
             return []
 
+        # GrowthBook: override embedding provider based on feature flag
+        embedding_config = agent_state.embedding_config
+        experiments_service = get_experiments_service()
+        if experiments_service:
+            attrs = ExperimentsService.build_attributes(user_id=str(actor.id))
+            if experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs):
+                embedding_config = embedding_config.model_copy(update={"embedding_endpoint_type": "azure"})
+
         try:
-            embeddings = await self._generate_embeddings_concurrent(text_chunks, agent_state.embedding_config)
+            embeddings = await self._generate_embeddings_concurrent(text_chunks, embedding_config)
 
             passages = [
                 PydanticPassage(
@@ -540,7 +576,7 @@ class PassageManager:
                     agent_id=agent_id,
                     text=chunk_text,
                     embedding=embedding,
-                    embedding_config=agent_state.embedding_config,
+                    embedding_config=embedding_config,
                 )
                 for chunk_text, embedding in zip(text_chunks, embeddings)
             ]
@@ -555,7 +591,8 @@ class PassageManager:
     async def _generate_embeddings_concurrent(self, text_chunks: List[str], embedding_config) -> List[List[float]]:
         """Generate embeddings for all text chunks concurrently"""
 
-        if embedding_config.embedding_endpoint_type != "openai":
+        endpoint_type = embedding_config.embedding_endpoint_type
+        if endpoint_type not in ("openai", "azure"):
             embed_model = embedding_model(embedding_config)
             loop = asyncio.get_event_loop()
 
@@ -563,10 +600,11 @@ class PassageManager:
             embeddings = await asyncio.gather(*tasks)
         else:
             tasks = [
-                get_openai_embedding_async(
+                get_embedding_async(
                     text,
                     embedding_config.embedding_model,
                     embedding_config.embedding_endpoint,
+                    endpoint_type,
                 )
                 for text in text_chunks
             ]
