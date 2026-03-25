@@ -2,7 +2,7 @@ import os
 from typing import List, Optional
 
 import openai
-from openai import AsyncAzureOpenAI, AsyncOpenAI, AsyncStream, OpenAI
+from openai import AsyncOpenAI, AsyncStream, OpenAI
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 
@@ -122,13 +122,6 @@ class OpenAIClient(LLMClientBase):
         return kwargs
 
     def _prepare_client_kwargs_embedding(self, embedding_config: EmbeddingConfig) -> dict:
-        if embedding_config.embedding_endpoint_type == "azure":
-            return {
-                "api_key": model_settings.embeddings_3_small_api_key,
-                "api_version": model_settings.embeddings_3_small_api_version,
-                "azure_endpoint": model_settings.embeddings_3_small_base_url,
-            }
-
         api_key = None
         if embedding_config.embedding_endpoint_type == ProviderType.together:
             api_key = model_settings.together_api_key or os.environ.get("TOGETHER_API_KEY")
@@ -313,10 +306,7 @@ class OpenAIClient(LLMClientBase):
     async def request_embeddings(self, inputs: List[str], embedding_config: EmbeddingConfig) -> List[dict]:
         """Request embeddings given texts and embedding config"""
         kwargs = self._prepare_client_kwargs_embedding(embedding_config)
-        if embedding_config.embedding_endpoint_type == "azure":
-            client = AsyncAzureOpenAI(**kwargs)
-        else:
-            client = AsyncOpenAI(**kwargs)
+        client = AsyncOpenAI(**kwargs)
         response = await client.embeddings.create(model=embedding_config.embedding_model, input=inputs)
 
         # TODO: add total usage

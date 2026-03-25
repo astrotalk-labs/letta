@@ -13,20 +13,13 @@ logger = get_logger(__name__)
 
 
 class OpenAIEmbedder:
-    """OpenAI/Azure OpenAI-based embedding generation"""
+    """OpenAI-based embedding generation"""
 
     def __init__(self, embedding_config: Optional[EmbeddingConfig] = None):
         self.embedding_config = embedding_config or EmbeddingConfig.default_config(provider="openai")
 
-        # Create the appropriate client based on the embedding endpoint type
-        if self.embedding_config.embedding_endpoint_type == "azure":
-            self.client = openai.AsyncAzureOpenAI(
-                api_key=model_settings.embeddings_3_small_api_key,
-                api_version=model_settings.embeddings_3_small_api_version,
-                azure_endpoint=model_settings.embeddings_3_small_base_url,
-            )
-        else:
-            self.client = openai.AsyncOpenAI(api_key=model_settings.openai_api_key)
+        # TODO: Unify to global OpenAI client
+        self.client = openai.AsyncOpenAI(api_key=model_settings.openai_api_key)
         self.max_batch = 1024
         self.max_concurrent_requests = 20
 
