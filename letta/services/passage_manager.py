@@ -9,6 +9,9 @@ from sqlalchemy import select
 
 from letta.constants import MAX_EMBEDDING_DIM
 from letta.embeddings import embedding_model, parse_and_chunk_text
+from letta.growthbook.constants import GrowthBookFeatureKeys
+from letta.growthbook.experiments_service import ExperimentsService
+from letta.growthbook.setup import get_experiments_service
 from letta.orm.errors import NoResultFound
 from letta.orm.passage import AgentPassage, SourcePassage
 from letta.otel.tracing import trace_method
@@ -483,9 +486,17 @@ class PassageManager:
 
         embedding_chunk_size = agent_state.embedding_config.embedding_chunk_size
 
+        # GrowthBook: override embedding provider based on feature flag
+        embedding_config = agent_state.embedding_config
+        experiments_service = get_experiments_service()
+        if experiments_service:
+            attrs = ExperimentsService.build_attributes(user_id=str(actor.id))
+            if experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs):
+                embedding_config = embedding_config.model_copy(update={"embedding_endpoint_type": "azure"})
+
         # TODO eventually migrate off of llama-index for embeddings?
         # Already causing pain for OpenAI proxy endpoints like LM Studio...
-        endpoint_type = agent_state.embedding_config.embedding_endpoint_type
+        endpoint_type = embedding_config.embedding_endpoint_type
         if endpoint_type not in ("openai", "azure"):
             embed_model = embedding_model(agent_state.embedding_config)
 
@@ -500,8 +511,8 @@ class PassageManager:
                 else:
                     embedding = get_embedding(
                         text,
-                        agent_state.embedding_config.embedding_model,
-                        agent_state.embedding_config.embedding_endpoint,
+                        embedding_config.embedding_model,
+                        embedding_config.embedding_endpoint,
                         endpoint_type,
                     )
 
@@ -519,7 +530,7 @@ class PassageManager:
                         agent_id=agent_id,
                         text=text,
                         embedding=embedding,
-                        embedding_config=agent_state.embedding_config,
+                        embedding_config=embedding_config,
                     ),
                     actor=actor,
                 )
@@ -548,8 +559,16 @@ class PassageManager:
         if not text_chunks:
             return []
 
+        # GrowthBook: override embedding provider based on feature flag
+        embedding_config = agent_state.embedding_config
+        experiments_service = get_experiments_service()
+        if experiments_service:
+            attrs = ExperimentsService.build_attributes(user_id=str(actor.id))
+            if experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs):
+                embedding_config = embedding_config.model_copy(update={"embedding_endpoint_type": "azure"})
+
         try:
-            embeddings = await self._generate_embeddings_concurrent(text_chunks, agent_state.embedding_config)
+            embeddings = await self._generate_embeddings_concurrent(text_chunks, embedding_config)
 
             passages = [
                 PydanticPassage(
@@ -557,7 +576,7 @@ class PassageManager:
                     agent_id=agent_id,
                     text=chunk_text,
                     embedding=embedding,
-                    embedding_config=agent_state.embedding_config,
+                    embedding_config=embedding_config,
                 )
                 for chunk_text, embedding in zip(text_chunks, embeddings)
             ]
