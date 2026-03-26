@@ -566,6 +566,7 @@ async def create_passage(
     Insert a memory into an agent's archival memory store.
     """
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
+
     return await server.insert_archival_memory_async(agent_id=agent_id, memory_contents=request.text, actor=actor, gb_user_id=gb_user_id)
 
 
