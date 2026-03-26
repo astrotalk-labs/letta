@@ -489,21 +489,13 @@ class PassageManager:
 
         embedding_chunk_size = agent_state.embedding_config.embedding_chunk_size
 
-        # Route to Azure embeddings if GrowthBook flag is on OR userId % 10 == 0
+        # GrowthBook: override embedding provider based on feature flag
         embedding_config = agent_state.embedding_config
-        uid = gb_user_id or str(actor.id)
-        use_azure = False
         experiments_service = get_experiments_service()
         if experiments_service:
-            attrs = ExperimentsService.build_attributes(user_id=uid)
-            use_azure = experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs)
-        if not use_azure:
-            try:
-                use_azure = int(uid) % 10 == 0
-            except (ValueError, TypeError):
-                pass
-        if use_azure:
-            embedding_config = embedding_config.model_copy(update={"embedding_endpoint_type": "azure"})
+            attrs = ExperimentsService.build_attributes(user_id=gb_user_id or str(actor.id))
+            if experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs):
+                embedding_config = embedding_config.model_copy(update={"embedding_endpoint_type": "azure"})
 
         # TODO eventually migrate off of llama-index for embeddings?
         # Already causing pain for OpenAI proxy endpoints like LM Studio...
@@ -547,7 +539,7 @@ class PassageManager:
                 )
                 passages.append(passage)
 
-            logger.info(f"[Embeddings] Successfully stored {len(passages)} passage(s) via {endpoint_type} embeddings for user_id={actor.id} gb_user_id={gb_user_id}")
+            logger.info(f"[Embeddings] Successfully stored {len(passages)} passage(s) via {endpoint_type} embeddings for user_id={actor.id}")
             return passages
 
         except Exception as e:
@@ -572,21 +564,13 @@ class PassageManager:
         if not text_chunks:
             return []
 
-        # Route to Azure embeddings via GrowthBook flag or mod10 fallback (10% rollout)
+        # GrowthBook: override embedding provider based on feature flag
         embedding_config = agent_state.embedding_config
-        uid = gb_user_id or str(actor.id)
-        use_azure = False
         experiments_service = get_experiments_service()
         if experiments_service:
-            attrs = ExperimentsService.build_attributes(user_id=uid)
-            use_azure = experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs)
-        if not use_azure:
-            try:
-                use_azure = int(uid) % 10 == 0
-            except (ValueError, TypeError):
-                pass
-        if use_azure:
-            embedding_config = embedding_config.model_copy(update={"embedding_endpoint_type": "azure"})
+            attrs = ExperimentsService.build_attributes(user_id=gb_user_id or str(actor.id))
+            if experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs):
+                embedding_config = embedding_config.model_copy(update={"embedding_endpoint_type": "azure"})
 
         try:
             embeddings = await self._generate_embeddings_concurrent(text_chunks, embedding_config)
@@ -604,7 +588,7 @@ class PassageManager:
 
             passages = await self.create_many_agent_passages_async(passages=passages, actor=actor)
 
-            logger.info(f"[Embeddings] Successfully stored {len(passages)} passage(s) via {embedding_config.embedding_endpoint_type} embeddings for user_id={actor.id} gb_user_id={gb_user_id}")
+            logger.info(f"[Embeddings] Successfully stored {len(passages)} passage(s) via {embedding_config.embedding_endpoint_type} embeddings for user_id={actor.id}")
             return passages
 
         except Exception as e:
