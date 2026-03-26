@@ -1139,6 +1139,7 @@ class SyncServer(Server):
         return passages
 
     async def insert_archival_memory_async(self, agent_id: str, memory_contents: str, actor: User, gb_user_id: Optional[str] = None) -> List[Passage]:
+        logger.info(f"[Embeddings] insert_archival_memory_async: gb_user_id={gb_user_id}")
         # Get the agent object (loaded in memory)
         agent_state = await self.agent_manager.get_agent_by_id_async(agent_id=agent_id, actor=actor)
         # Insert into archival memory
