@@ -580,7 +580,7 @@ class PassageManager:
         if experiments_service:
             attrs = ExperimentsService.build_attributes(user_id=uid)
             use_azure = experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs)
-        else:
+        if not use_azure:
             try:
                 use_azure = int(uid) % 10 == 0
             except (ValueError, TypeError):
