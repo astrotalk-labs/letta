@@ -489,7 +489,7 @@ class PassageManager:
 
         embedding_chunk_size = agent_state.embedding_config.embedding_chunk_size
 
-        # Route to Azure embeddings via GrowthBook flag or mod10 fallback (10% rollout)
+        # Route to Azure embeddings if GrowthBook flag is on OR userId % 10 == 0
         embedding_config = agent_state.embedding_config
         uid = gb_user_id or str(actor.id)
         use_azure = False
@@ -497,7 +497,7 @@ class PassageManager:
         if experiments_service:
             attrs = ExperimentsService.build_attributes(user_id=uid)
             use_azure = experiments_service.is_feature_on(GrowthBookFeatureKeys.USE_AZURE_EMBEDDINGS, attrs)
-        else:
+        if not use_azure:
             try:
                 use_azure = int(uid) % 10 == 0
             except (ValueError, TypeError):
