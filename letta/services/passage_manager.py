@@ -585,7 +585,6 @@ class PassageManager:
                 use_azure = int(uid) % 10 == 0
             except (ValueError, TypeError):
                 pass
-        logger.info(f"[Embeddings] insert_passage_async: gb_user_id={gb_user_id} uid={uid} use_azure={use_azure} experiments_service={experiments_service is not None}")
         if use_azure:
             embedding_config = embedding_config.model_copy(update={"embedding_endpoint_type": "azure"})
 
