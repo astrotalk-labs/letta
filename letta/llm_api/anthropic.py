@@ -799,11 +799,13 @@ def _prepare_anthropic_request(
     # Handle alternating messages
     data["messages"] = merge_tool_results_into_user_messages(data["messages"])
 
-    # Handle prefix fill (not compatible with inner-thouguhts-in-kwargs)
+    # Handle prefix fill (not compatible with inner-thoughts-in-kwargs)
     # https://docs.anthropic.com/en/api/messages#body-messages
-    # NOTE: cannot prefill with tools for opus:
-    # Your API request included an `assistant` message in the final position, which would pre-fill the `assistant` response. When using tools with "claude-3-opus-20240229"
-    if prefix_fill and not put_inner_thoughts_in_kwargs and "opus" not in data["model"]:
+    # NOTE: cannot prefill with tools for opus or Claude 4.6+:
+    # Prefilling assistant messages is NOT supported on Claude 4.6 models (returns 400 error)
+    model_name = data["model"]
+    prefill_blocked = "opus" in model_name or "claude-sonnet-4-6" in model_name or "claude-opus-4-6" in model_name
+    if prefix_fill and not put_inner_thoughts_in_kwargs and not prefill_blocked:
         if not bedrock:  # not support for bedrock
             data["messages"].append(
                 # Start the thinking process for the assistant

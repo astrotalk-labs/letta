@@ -49,7 +49,7 @@ class AnthropicClient(LLMClientBase):
     @trace_method
     def request(self, request_data: dict, llm_config: LLMConfig) -> dict:
         client = self._get_anthropic_client(llm_config, async_client=False)
-        response = client.beta.messages.create(**request_data, betas=["tools-2024-04-04"])
+        response = client.beta.messages.create(**request_data, betas=["tools-2024-04-04", "prompt-caching-2024-07-31"])
         return response.model_dump()
 
     @trace_method
@@ -177,7 +177,7 @@ class AnthropicClient(LLMClientBase):
         else:
             print(f"DEBUG: [AnthropicClient] Using standard Anthropic client (model_endpoint_type={llm_config.model_endpoint_type})")
             client = await self._get_anthropic_client_async(llm_config, async_client=True)
-            response = await client.beta.messages.create(**request_data, betas=["tools-2024-04-04"])
+            response = await client.beta.messages.create(**request_data, betas=["tools-2024-04-04", "prompt-caching-2024-07-31"])
         logger.info("This is the usage response from claude %s", response.usage)
         return response.model_dump()
 
@@ -185,7 +185,7 @@ class AnthropicClient(LLMClientBase):
     async def stream_async(self, request_data: dict, llm_config: LLMConfig) -> AsyncStream[BetaRawMessageStreamEvent]:
         client = await self._get_anthropic_client_async(llm_config, async_client=True)
         request_data["stream"] = True
-        return await client.beta.messages.create(**request_data, betas=["tools-2024-04-04"])
+        return await client.beta.messages.create(**request_data, betas=["tools-2024-04-04", "prompt-caching-2024-07-31"])
 
     @trace_method
     async def send_llm_batch_request_async(
@@ -386,9 +386,11 @@ class AnthropicClient(LLMClientBase):
 
         # Prefix fill
         # https://docs.anthropic.com/en/api/messages#body-messages
-        # NOTE: cannot prefill with tools for opus:
-        # Your API request included an `assistant` message in the final position, which would pre-fill the `assistant` response. When using tools with "claude-3-opus-20240229"
-        if prefix_fill and not llm_config.put_inner_thoughts_in_kwargs and "opus" not in data["model"]:
+        # NOTE: cannot prefill with tools for opus or Claude 4.6+:
+        # Prefilling assistant messages is NOT supported on Claude 4.6 models (returns 400 error)
+        model_name = data["model"]
+        prefill_blocked = "opus" in model_name or "claude-sonnet-4-6" in model_name or "claude-opus-4-6" in model_name
+        if prefix_fill and not llm_config.put_inner_thoughts_in_kwargs and not prefill_blocked:
             data["messages"].append(
                 # Start the thinking process for the assistant
                 {"role": "assistant", "content": f"<{inner_thoughts_xml_tag}>"},

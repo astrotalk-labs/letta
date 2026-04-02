@@ -124,8 +124,8 @@ class LLMConfig(BaseModel):
     def issue_warning_for_reasoning_constraints(self) -> "LLMConfig":
         if self.enable_reasoner:
             if self.max_reasoning_tokens is None or self.max_reasoning_tokens < 1024:
-                logger.warning("max_reasoning_tokens must be >= 1024 when enable_reasoner is True, setting to 1024")
-                self.max_reasoning_tokens = 1024
+                logger.warning("max_reasoning_tokens must be >= 1024 when enable_reasoner is True, setting to 10240")
+                self.max_reasoning_tokens = 10240
             if self.max_tokens is not None and self.max_reasoning_tokens >= self.max_tokens:
                 new_max_tokens = self.max_reasoning_tokens + 1024
                 logger.warning(
