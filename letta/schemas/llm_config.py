@@ -127,7 +127,12 @@ class LLMConfig(BaseModel):
                 logger.warning("max_reasoning_tokens must be >= 1024 when enable_reasoner is True, setting to 1024")
                 self.max_reasoning_tokens = 1024
             if self.max_tokens is not None and self.max_reasoning_tokens >= self.max_tokens:
-                logger.warning("max_tokens must be greater than max_reasoning_tokens (thinking budget)")
+                new_max_tokens = self.max_reasoning_tokens + 1024
+                logger.warning(
+                    f"max_tokens ({self.max_tokens}) must be greater than max_reasoning_tokens ({self.max_reasoning_tokens}), "
+                    f"setting max_tokens to {new_max_tokens}"
+                )
+                self.max_tokens = new_max_tokens
             if self.put_inner_thoughts_in_kwargs:
                 logger.debug("Extended thinking is not compatible with put_inner_thoughts_in_kwargs")
         elif self.max_reasoning_tokens and not self.enable_reasoner:
