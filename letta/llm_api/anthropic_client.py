@@ -105,8 +105,17 @@ class AnthropicClient(LLMClientBase):
             aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY') or model_settings.aws_secret_access_key
             aws_session_token = os.getenv('AWS_SESSION_TOKEN')
 
-            # Determine model ID: use inference profile ARN if set, otherwise use the model from request
-            bedrock_inference_profile = os.getenv('BEDROCK_INFERENCE_PROFILE_ARN')
+            # Determine model ID: pick inference profile ARN based on the requested model,
+            # falling back to the generic BEDROCK_INFERENCE_PROFILE_ARN, then the raw model name.
+            requested_model = (request_data.get('model') or llm_config.model or "").lower()
+            default_arn = os.getenv('BEDROCK_INFERENCE_PROFILE_ARN')
+            if "haiku" in requested_model:
+                bedrock_inference_profile = os.getenv('BEDROCK_HAIKU_INFERENCE_PROFILE_ARN') or default_arn
+            elif "sonnet-4-6" in requested_model or "sonnet-4.6" in requested_model:
+                bedrock_inference_profile = os.getenv('BEDROCK_SONNET_4_6_INFERENCE_PROFILE_ARN') or default_arn
+            else:
+                bedrock_inference_profile = default_arn
+            print(f"DEBUG: [AnthropicClient] Selected inference profile for model='{requested_model}': {bedrock_inference_profile}")
             model_id = bedrock_inference_profile if bedrock_inference_profile else request_data.get('model')
 
             print(f"DEBUG: [AnthropicClient] Creating boto3 bedrock-runtime client with region={aws_region}")
