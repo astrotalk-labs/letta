@@ -676,7 +676,7 @@ async def send_message(
     request_start_timestamp_ns = get_utc_timestamp_ns()
     MetricRegistry().user_message_counter.add(1, get_ctx_attributes())
 
-    logger.warning(f"[SEND_MESSAGE] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}")
+    logger.warning(f"[SEND_MESSAGE] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}, model_override={request.model_override}")
 
 
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
@@ -718,6 +718,7 @@ async def send_message(
             include_return_message_types=request.include_return_message_types,
             use_vertex_experiment=request.use_vertex_experiment,
             use_bedrock_experiment=request.use_bedrock_experiment,
+            model_override=request.model_override,
         )
     else:
         result = await server.send_message_to_agent(
@@ -733,6 +734,7 @@ async def send_message(
             include_return_message_types=request.include_return_message_types,
             use_vertex_experiment=request.use_vertex_experiment,
             use_bedrock_experiment=request.use_bedrock_experiment,
+            model_override=request.model_override,
         )
     return result
 
@@ -765,7 +767,7 @@ async def send_message_streaming(
     request_start_timestamp_ns = get_utc_timestamp_ns()
     MetricRegistry().user_message_counter.add(1, get_ctx_attributes())
 
-    logger.warning(f"[SEND_MESSAGE_STREAMING] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}")
+    logger.warning(f"[SEND_MESSAGE_STREAMING] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}, model_override={request.model_override}")
 
 
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
@@ -814,6 +816,7 @@ async def send_message_streaming(
                     include_return_message_types=request.include_return_message_types,
                     use_vertex_experiment=request.use_vertex_experiment,
                     use_bedrock_experiment=request.use_bedrock_experiment,
+                    model_override=request.model_override,
                 ),
                 media_type="text/event-stream",
             )
@@ -827,6 +830,7 @@ async def send_message_streaming(
                     include_return_message_types=request.include_return_message_types,
                     use_vertex_experiment=request.use_vertex_experiment,
                     use_bedrock_experiment=request.use_bedrock_experiment,
+                    model_override=request.model_override,
                 ),
                 media_type="text/event-stream",
             )
@@ -845,6 +849,7 @@ async def send_message_streaming(
             include_return_message_types=request.include_return_message_types,
             use_vertex_experiment=request.use_vertex_experiment,
             use_bedrock_experiment=request.use_bedrock_experiment,
+            model_override=request.model_override,
         )
 
     return result

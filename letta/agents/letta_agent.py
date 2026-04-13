@@ -114,8 +114,21 @@ class LettaAgent(BaseAgent):
             message_buffer_min=message_buffer_min,
         )
 
-    def _apply_provider_switching(self, agent_state: AgentState, use_vertex_experiment: bool, use_bedrock_experiment: bool):
+    def _apply_provider_switching(
+        self,
+        agent_state: AgentState,
+        use_vertex_experiment: bool,
+        use_bedrock_experiment: bool,
+        model_override: Optional[str] = None,
+    ):
         """Apply dynamic provider switching based on experiment flags."""
+        # Runtime model override: swap the model name before any endpoint-type remapping
+        # so that downstream (e.g. Bedrock ARN selection based on model substring) sees the
+        # overridden model.
+        if model_override:
+            print(f"DEBUG: [provider_switch] Overriding model: {agent_state.llm_config.model} -> {model_override}")
+            agent_state.llm_config.model = model_override
+
         original_endpoint_type = agent_state.llm_config.model_endpoint_type
         original_model = agent_state.llm_config.model
 
@@ -150,6 +163,7 @@ class LettaAgent(BaseAgent):
         include_return_message_types: Optional[List[MessageType]] = None,
         use_vertex_experiment: bool = False,
         use_bedrock_experiment: bool = False,
+        model_override: Optional[str] = None,
     ) -> LettaResponse:
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
@@ -161,6 +175,7 @@ class LettaAgent(BaseAgent):
             request_start_timestamp_ns=request_start_timestamp_ns,
             use_vertex_experiment=use_vertex_experiment,
             use_bedrock_experiment=use_bedrock_experiment,
+            model_override=model_override,
         )
         return _create_letta_response(
             new_in_context_messages=new_in_context_messages,
@@ -180,13 +195,14 @@ class LettaAgent(BaseAgent):
         include_return_message_types: Optional[List[MessageType]] = None,
         use_vertex_experiment: bool = False,
         use_bedrock_experiment: bool = False,
+        model_override: Optional[str] = None,
     ):
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
         )
 
         # Handle provider switching based on experiment flags
-        self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment)
+        self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override)
 
         current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
             input_messages, agent_state, self.message_manager, self.actor
@@ -337,6 +353,7 @@ class LettaAgent(BaseAgent):
         request_start_timestamp_ns: Optional[int] = None,
         use_vertex_experiment: bool = False,
         use_bedrock_experiment: bool = False,
+        model_override: Optional[str] = None,
     ) -> Tuple[List[Message], List[Message], Optional[LettaStopReason], LettaUsageStatistics]:
         """
         Carries out an invocation of the agent loop. In each step, the agent
@@ -345,10 +362,10 @@ class LettaAgent(BaseAgent):
             3. Fetches a response from the LLM
             4. Processes the response
         """
-        print(f"DEBUG: [_step] Received use_vertex_experiment={use_vertex_experiment}, use_bedrock_experiment={use_bedrock_experiment}")
+        print(f"DEBUG: [_step] Received use_vertex_experiment={use_vertex_experiment}, use_bedrock_experiment={use_bedrock_experiment}, model_override={model_override}")
 
         # Handle provider switching based on experiment flags
-        self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment)
+        self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override)
 
         current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
             input_messages, agent_state, self.message_manager, self.actor
@@ -481,6 +498,7 @@ class LettaAgent(BaseAgent):
         include_return_message_types: Optional[List[MessageType]] = None,
         use_vertex_experiment: bool = False,
         use_bedrock_experiment: bool = False,
+        model_override: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Carries out an invocation of the agent loop in a streaming fashion that yields partial tokens.
@@ -495,7 +513,7 @@ class LettaAgent(BaseAgent):
         )
 
         # Handle provider switching based on experiment flags
-        self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment)
+        self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override)
 
         current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
             input_messages, agent_state, self.message_manager, self.actor

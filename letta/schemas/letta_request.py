@@ -41,6 +41,11 @@ class LettaRequest(BaseModel):
         description="Flag to dynamically switch between Anthropic direct API and AWS Bedrock based on experiment configuration.",
     )
 
+    model_override: Optional[str] = Field(
+        default=None,
+        description="Optional model name to use for this request only, overriding the agent's configured llm_config.model. Useful for runtime A/B testing (e.g. shifting an agent from Sonnet 4.5 to Sonnet 4.6 without modifying the stored agent config).",
+    )
+
 
 class LettaStreamingRequest(LettaRequest):
     stream_tokens: bool = Field(

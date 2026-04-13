@@ -2246,6 +2246,7 @@ class SyncServer(Server):
         include_return_message_types: Optional[List[MessageType]] = None,
         use_vertex_experiment: bool = False,
         use_bedrock_experiment: bool = False,
+        model_override: Optional[str] = None,
     ) -> Union[StreamingResponse, LettaResponse]:
         """Split off into a separate function so that it can be imported in the /chat/completion proxy."""
         # TODO: @charles is this the correct way to handle?
