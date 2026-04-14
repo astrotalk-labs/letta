@@ -95,7 +95,7 @@ class EphemeralSummaryAgent(BaseAgent):
                 )
                 return client.chat.completions.create(
                     model=model_settings.letta_embedding_5_4_mini_deployment,
-                    max_tokens=1500,
+                    max_completion_tokens=1500,
                     messages=[{"role": "system", "content": system}] + messages,
                 )
 
