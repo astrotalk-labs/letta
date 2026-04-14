@@ -117,6 +117,12 @@ class ModelSettings(BaseSettings):
     embeddings_3_small_base_url: Optional[str] = None
     embeddings_3_small_api_version: Optional[str] = "2023-05-15"
 
+    # azure summarizer (gpt-4o-mini via letta-embeddings-resource)
+    letta_embedding_5_4_mini_api_key: Optional[str] = None
+    letta_embedding_5_4_mini_base_url: Optional[str] = None
+    letta_embedding_5_4_mini_api_version: Optional[str] = "2025-04-01-preview"
+    letta_embedding_5_4_mini_deployment: Optional[str] = "gpt-4o-mini"
+
     # google ai
     gemini_api_key: Optional[str] = None
     gemini_base_url: str = "https://generativelanguage.googleapis.com/"

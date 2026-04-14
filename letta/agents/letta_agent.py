@@ -74,6 +74,7 @@ class LettaAgent(BaseAgent):
         message_buffer_min: int = 15,  # TODO: Make this configurable
         enable_summarization: bool = True,  # TODO: Make this configurable
         max_summarization_retries: int = 3,  # TODO: Make this configurable
+        at_user_id: Optional[str] = None,
     ):
         super().__init__(agent_id=agent_id, openai_client=None, message_manager=message_manager, agent_manager=agent_manager, actor=actor)
 
@@ -94,9 +95,10 @@ class LettaAgent(BaseAgent):
         self.summarization_agent = None
         self.summary_block_label = summary_block_label
         self.max_summarization_retries = max_summarization_retries
+        self.at_user_id = at_user_id
 
         # TODO: Expand to more
-        if enable_summarization and model_settings.openai_api_key:
+        if enable_summarization and (model_settings.letta_embedding_5_4_mini_api_key or model_settings.anthropic_api_key):
             self.summarization_agent = EphemeralSummaryAgent(
                 target_block_label=self.summary_block_label,
                 agent_id=agent_id,
@@ -104,6 +106,7 @@ class LettaAgent(BaseAgent):
                 message_manager=self.message_manager,
                 agent_manager=self.agent_manager,
                 actor=self.actor,
+                at_user_id=at_user_id,
             )
 
         self.summarizer = Summarizer(

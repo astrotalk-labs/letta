@@ -668,6 +668,7 @@ async def send_message(
     server: SyncServer = Depends(get_letta_server),
     request: LettaRequest = Body(...),
     actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    at_user_id: Optional[str] = Header(None, alias="x_gb_user_id"),
 ):
     """
     Process a user message and return the agent's response.
@@ -708,6 +709,7 @@ async def send_message(
                 actor=actor,
                 step_manager=server.step_manager,
                 telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
+                at_user_id=at_user_id,
             )
 
         result = await agent_loop.step(
@@ -758,6 +760,7 @@ async def send_message_streaming(
     server: SyncServer = Depends(get_letta_server),
     request: LettaStreamingRequest = Body(...),
     actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    at_user_id: Optional[str] = Header(None, alias="x_gb_user_id"),
 ) -> StreamingResponse | LettaResponse:
     """
     Process a user message and return the agent's response.
@@ -803,6 +806,7 @@ async def send_message_streaming(
                 actor=actor,
                 step_manager=server.step_manager,
                 telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
+                at_user_id=at_user_id,
             )
         from letta.server.rest_api.streaming_response import StreamingResponseWithStatusCode
 
