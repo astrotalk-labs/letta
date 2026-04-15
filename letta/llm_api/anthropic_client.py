@@ -318,7 +318,6 @@ class AnthropicClient(LLMClientBase):
             supports_adaptive = (
                 "claude-sonnet-4-6" in model_name
                 or "claude-opus-4-6" in model_name
-                or "claude-mythos" in model_name
             )
             if supports_adaptive:
                 effort = llm_config.reasoning_effort or "low"
