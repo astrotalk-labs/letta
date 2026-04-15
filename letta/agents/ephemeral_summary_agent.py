@@ -82,7 +82,7 @@ class EphemeralSummaryAgent(BaseAgent):
 
         if use_azure:
             logger.warning(
-                    f"[SUMMARIZER] Using Azure OpenAI for summarization | at_user_id={self.at_user_id} | "
+                f"[SUMMARIZER] Using Azure OpenAI for summarization | at_user_id={self.at_user_id} | "
                 f"agent_id={self.agent_id} | deployment={model_settings.letta_embedding_5_4_mini_deployment} | "
                 f"endpoint={model_settings.letta_embedding_5_4_mini_base_url}"
             )
