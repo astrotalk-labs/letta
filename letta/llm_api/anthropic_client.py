@@ -153,6 +153,8 @@ class AnthropicClient(LLMClientBase):
                 bedrock_body["top_k"] = request_data["top_k"]
             if "stop_sequences" in request_data:
                 bedrock_body["stop_sequences"] = request_data["stop_sequences"]
+            if "thinking" in request_data:
+                bedrock_body["thinking"] = request_data["thinking"]
 
             print(f"DEBUG: [AnthropicClient] Calling bedrock invoke_model with modelId={model_id}")
 
@@ -312,10 +314,28 @@ class AnthropicClient(LLMClientBase):
 
         # Extended Thinking
         if llm_config.enable_reasoner:
-            data["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": llm_config.max_reasoning_tokens,
-            }
+            model_name = llm_config.model or ""
+            supports_adaptive = (
+                "claude-sonnet-4-6" in model_name
+                or "claude-opus-4-6" in model_name
+            )
+            if supports_adaptive:
+                effort = llm_config.reasoning_effort or "low"
+                data["thinking"] = {
+                    "type": "adaptive",
+                    "effort": effort,
+                }
+                logger.warning(
+                    f"[THINKING] model={model_name} mode=adaptive effort={effort}"
+                )
+            else:
+                data["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": llm_config.max_reasoning_tokens,
+                }
+                logger.warning(
+                    f"[THINKING] model={model_name} mode=enabled budget_tokens={llm_config.max_reasoning_tokens}"
+                )
             # `temperature` may only be set to 1 when thinking is enabled. Please consult our documentation at https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking'
             data["temperature"] = 1.0
 
