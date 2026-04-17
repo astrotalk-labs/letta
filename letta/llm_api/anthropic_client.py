@@ -315,18 +315,18 @@ class AnthropicClient(LLMClientBase):
         # Extended Thinking
         if llm_config.enable_reasoner:
             model_name = llm_config.model or ""
-            supports_adaptive = (
+            endpoint_type = llm_config.model_endpoint_type or ""
+            # Bedrock supports adaptive thinking on Sonnet/Opus 4.6 (no `effort` field accepted)
+            is_bedrock = endpoint_type == "anthropic_bedrock"
+            supports_adaptive_model = (
                 "claude-sonnet-4-6" in model_name
                 or "claude-opus-4-6" in model_name
             )
-            if supports_adaptive:
-                effort = llm_config.reasoning_effort or "low"
-                data["thinking"] = {
-                    "type": "adaptive",
-                    "effort": effort,
-                }
+            if is_bedrock and supports_adaptive_model:
+                # Bedrock does not support the `effort` field yet — adaptive only
+                data["thinking"] = {"type": "adaptive"}
                 logger.warning(
-                    f"[THINKING] model={model_name} mode=adaptive effort={effort}"
+                    f"[THINKING] model={model_name} endpoint={endpoint_type} mode=adaptive (effort not supported on Bedrock)"
                 )
             else:
                 data["thinking"] = {
@@ -334,7 +334,7 @@ class AnthropicClient(LLMClientBase):
                     "budget_tokens": llm_config.max_reasoning_tokens,
                 }
                 logger.warning(
-                    f"[THINKING] model={model_name} mode=enabled budget_tokens={llm_config.max_reasoning_tokens}"
+                    f"[THINKING] model={model_name} endpoint={endpoint_type} mode=enabled budget_tokens={llm_config.max_reasoning_tokens}"
                 )
             # `temperature` may only be set to 1 when thinking is enabled. Please consult our documentation at https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking'
             data["temperature"] = 1.0
