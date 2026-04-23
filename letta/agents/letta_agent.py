@@ -33,7 +33,7 @@ from letta.schemas.letta_response import LettaResponse
 from letta.schemas.letta_stop_reason import LettaStopReason, StopReasonType
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.message import Message, MessageCreate
-from letta.schemas.openai.chat_completion_response import ToolCall, UsageStatistics
+from letta.schemas.openai.chat_completion_response import FunctionCall, ToolCall, UsageStatistics
 from letta.schemas.provider_trace import ProviderTraceCreate
 from letta.schemas.tool_execution_result import ToolExecutionResult
 from letta.schemas.usage import LettaUsageStatistics
@@ -259,8 +259,19 @@ class LettaAgent(BaseAgent):
             )
 
             if not response.choices[0].message.tool_calls:
-                # TODO: make into a real error
-                raise ValueError("No tool calls found in response, model must make a tool call")
+                text = response.choices[0].message.content
+                if text:
+                    synthetic = ToolCall(
+                        id=f"synthetic_{uuid.uuid4().hex[:8]}",
+                        function=FunctionCall(
+                            name="send_message",
+                            arguments=json.dumps({"message": text}),
+                        ),
+                    )
+                    response.choices[0].message.tool_calls = [synthetic]
+                    logger.warning("Model returned text without a tool call; wrapping as synthetic send_message.")
+                else:
+                    raise ValueError("No tool calls found in response, model must make a tool call")
             tool_call = response.choices[0].message.tool_calls[0]
             if response.choices[0].message.reasoning_content:
                 reasoning = [
@@ -414,8 +425,19 @@ class LettaAgent(BaseAgent):
             )
 
             if not response.choices[0].message.tool_calls:
-                # TODO: make into a real error
-                raise ValueError("No tool calls found in response, model must make a tool call")
+                text = response.choices[0].message.content
+                if text:
+                    synthetic = ToolCall(
+                        id=f"synthetic_{uuid.uuid4().hex[:8]}",
+                        function=FunctionCall(
+                            name="send_message",
+                            arguments=json.dumps({"message": text}),
+                        ),
+                    )
+                    response.choices[0].message.tool_calls = [synthetic]
+                    logger.warning("Model returned text without a tool call; wrapping as synthetic send_message.")
+                else:
+                    raise ValueError("No tool calls found in response, model must make a tool call")
             tool_call = response.choices[0].message.tool_calls[0]
             if response.choices[0].message.reasoning_content:
                 reasoning = [
