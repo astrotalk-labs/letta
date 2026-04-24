@@ -21,7 +21,7 @@ from letta.settings import model_settings
 
 logger = get_logger(__name__)
 
-AZURE_SUMMARIZER_ROLLOUT_PERCENT = 10  # % of users routed to Azure
+AZURE_SUMMARIZER_ROLLOUT_PERCENT = 0  # % of users routed to Azure
 
 
 class EphemeralSummaryAgent(BaseAgent):
@@ -78,7 +78,7 @@ class EphemeralSummaryAgent(BaseAgent):
         with open(current_dir / "prompts" / "summary_system_prompt.txt", "r") as f:
             system = f.read()
 
-        use_azure = self.at_user_id and self.at_user_id.isdigit() and int(self.at_user_id) % 10 == 0
+        use_azure = False
 
         if use_azure:
             logger.warning(
