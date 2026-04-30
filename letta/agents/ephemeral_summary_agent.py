@@ -120,10 +120,16 @@ class EphemeralSummaryAgent(BaseAgent):
 
         logger.warning(f"[SUMMARIZER] Summarization completed | at_user_id={self.at_user_id} | agent_id={self.agent_id} | provider={'azure' if use_azure else 'anthropic'} | summary_length={len(summary)}")
 
-        await self.block_manager.update_block_async(block_id=block.id, block_update=BlockUpdate(value=summary), actor=self.actor)
+        if block.limit and len(summary) > block.limit:
+            truncated = summary[: block.limit]
+            last_newline = truncated.rfind("\n")
+            summary = truncated[:last_newline] if last_newline != -1 else truncated
+            logger.warning(
+                f"[SUMMARIZER] Summary truncated to {len(summary)} chars (limit={block.limit}) | "
+                f"at_user_id={self.at_user_id} | agent_id={self.agent_id}"
+            )
 
-        print(block)
-        print(summary)
+        await self.block_manager.update_block_async(block_id=block.id, block_update=BlockUpdate(value=summary), actor=self.actor)
 
         return [
             Message(
