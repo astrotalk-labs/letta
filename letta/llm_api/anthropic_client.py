@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import re
 from typing import Dict, List, Optional, Union
 
@@ -296,6 +297,7 @@ class AnthropicClient(LLMClientBase):
         llm_config: LLMConfig,
         tools: Optional[List[dict]] = None,
         force_tool_call: Optional[str] = None,
+        at_user_id: Optional[str] = None,
     ) -> dict:
         # TODO: This needs to get cleaned up. The logic here is pretty confusing.
         # TODO: I really want to get rid of prefixing, it's a recipe for disaster code maintenance wise
@@ -405,6 +407,41 @@ class AnthropicClient(LLMClientBase):
             )
             for m in messages[1:]
         ]
+
+        # Cost optimisation: move static system messages injected by go-ai-chat
+        # (sanity/safety rules, ~1200 tokens) from the messages array into a
+        # cached system block. They are identical per consultant so caching them
+        # saves ~90% on those tokens. Works for both Anthropic and Bedrock paths.
+        # Rollout: set CACHE_SANITY_ROLLOUT_PCT env var (0-100) to ramp gradually.
+        _rollout_pct = int(os.getenv("CACHE_SANITY_ROLLOUT_PCT", "0"))
+        _user_id_int = int(at_user_id) if at_user_id and at_user_id.isdigit() else 0
+        if _rollout_pct > 0 and (_user_id_int % 100) < _rollout_pct:
+            _sanity_texts = []
+            _filtered_messages = []
+            for msg in data["messages"]:
+                if msg.get("role") == "system":
+                    content = msg.get("content", "")
+                    if isinstance(content, str) and content.strip():
+                        _sanity_texts.append(content)
+                    elif isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                text = block.get("text", "").strip()
+                                if text:
+                                    _sanity_texts.append(text)
+                else:
+                    _filtered_messages.append(msg)
+            if _sanity_texts:
+                data["system"].append({
+                    "type": "text",
+                    "text": "\n\n".join(_sanity_texts),
+                    "cache_control": {"type": "ephemeral"},
+                })
+                data["messages"] = _filtered_messages
+                logger.info(
+                    f"[CACHE_SANITY] user_id={at_user_id} moved {len(_sanity_texts)} "
+                    f"system msgs to cached block"
+                )
 
         # Ensure first message is user
         if data["messages"][0]["role"] != "user":
