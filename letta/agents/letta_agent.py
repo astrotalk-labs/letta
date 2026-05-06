@@ -115,6 +115,7 @@ class LettaAgent(BaseAgent):
             # TODO: Make this configurable
             message_buffer_limit=message_buffer_limit,
             message_buffer_min=message_buffer_min,
+            user_id=at_user_id,
         )
 
     def _apply_provider_switching(
@@ -875,11 +876,19 @@ class LettaAgent(BaseAgent):
                 f"Total tokens {total_tokens} exceeds configured max tokens {llm_config.context_window}, forcefully clearing message history."
             )
             new_in_context_messages, updated = self.summarizer.summarize(
-                in_context_messages=in_context_messages, new_letta_messages=new_letta_messages, force=True, clear=True
+                in_context_messages=in_context_messages,
+                new_letta_messages=new_letta_messages,
+                force=True,
+                clear=True,
+                total_tokens=total_tokens,
+                context_window=llm_config.context_window,
             )
         else:
             new_in_context_messages, updated = self.summarizer.summarize(
-                in_context_messages=in_context_messages, new_letta_messages=new_letta_messages
+                in_context_messages=in_context_messages,
+                new_letta_messages=new_letta_messages,
+                total_tokens=total_tokens,
+                context_window=llm_config.context_window,
             )
         await self.agent_manager.set_in_context_messages_async(
             agent_id=self.agent_id, message_ids=[m.id for m in new_in_context_messages], actor=self.actor
