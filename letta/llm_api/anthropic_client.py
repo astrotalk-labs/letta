@@ -432,10 +432,19 @@ class AnthropicClient(LLMClientBase):
                 else:
                     _filtered_messages.append(msg)
             if _sanity_texts:
+                # Insert AFTER the last cached block (static_part_2), BEFORE the trailing
+                # dynamic block (dynamic_part_2 = memory_metadata). Appending at the end
+                # places the cache checkpoint after dynamic content that changes every call,
+                # causing a ~45k token cache write every request at premium write cost with
+                # zero reads. Inserting before the dynamic tail keeps the cache key stable.
+                insert_pos = len(data["system"])  # fallback: append
+                for i, block in enumerate(data["system"]):
+                    if block.get("cache_control"):
+                        insert_pos = i + 1
                 logger.warning(
-                    f"[sanity-cache] moved {len(_sanity_texts)} SYSTEM ALERT messages to cached system block"
+                    f"[sanity-cache] moved {len(_sanity_texts)} SYSTEM ALERT messages to cached system block at pos {insert_pos}"
                 )
-                data["system"].append({
+                data["system"].insert(insert_pos, {
                     "type": "text",
                     "text": "\n\n".join(_sanity_texts),
                     "cache_control": {"type": "ephemeral"},
