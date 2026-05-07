@@ -406,31 +406,35 @@ class AnthropicClient(LLMClientBase):
             for m in messages[1:]
         ]
 
-        # Move static system messages injected by go-ai-chat (sanity/safety rules,
-        # ~1200 tokens per call) from the messages array into a cached system block.
-        # They are identical per consultant so caching them saves ~90% on those tokens.
-        # Works for both Anthropic and Bedrock paths.
+        # Move go-ai-chat sanity/safety messages from the messages array into a cached
+        # system block. Letta's to_anthropic_dict() converts incoming role:system messages
+        # to role:user with content wrapped as "<event>SYSTEM ALERT: ...</event" (the
+        # closing > is missing due to a bug in Letta's add_xml_tag helper). So we identify
+        # them by the SYSTEM ALERT prefix, not by role.
         # Currently gated to userId=92744418 for safe rollout.
         if self.at_user_id == "92744418":
-            logger.warning(
-                f"[sanity-cache] roles in data['messages']: {[m.get('role', 'unknown') for m in data['messages']][:10]}"
-            )
             _sanity_texts = []
             _filtered_messages = []
             for msg in data["messages"]:
-                if msg.get("role") == "system":
-                    content = msg.get("content", "")
-                    if isinstance(content, str) and content.strip():
-                        _sanity_texts.append(content)
-                    elif isinstance(content, list):
-                        for block in content:
-                            if isinstance(block, dict) and block.get("type") == "text":
-                                text = block.get("text", "").strip()
-                                if text:
-                                    _sanity_texts.append(text)
+                content = msg.get("content", "")
+                if (
+                    msg.get("role") == "user"
+                    and isinstance(content, str)
+                    and content.startswith("<event>SYSTEM ALERT:")
+                ):
+                    inner = content[len("<event>SYSTEM ALERT:"):].strip()
+                    for suffix in ("</event>", "</event"):
+                        if inner.endswith(suffix):
+                            inner = inner[: -len(suffix)].strip()
+                            break
+                    if inner:
+                        _sanity_texts.append(inner)
                 else:
                     _filtered_messages.append(msg)
             if _sanity_texts:
+                logger.warning(
+                    f"[sanity-cache] moved {len(_sanity_texts)} SYSTEM ALERT messages to cached system block"
+                )
                 data["system"].append({
                     "type": "text",
                     "text": "\n\n".join(_sanity_texts),
