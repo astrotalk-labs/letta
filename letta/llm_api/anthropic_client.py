@@ -439,6 +439,9 @@ class AnthropicClient(LLMClientBase):
                 else:
                     _filtered_messages.append(msg)
             if _sanity_texts:
+                logger.warning(
+                    f"[sanity-cache] moved {len(_sanity_texts)} SYSTEM ALERT messages to cached system block"
+                )
                 data["system"].append({
                     "type": "text",
                     "text": "\n\n".join(_sanity_texts),
