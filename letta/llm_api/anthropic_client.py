@@ -412,8 +412,9 @@ class AnthropicClient(LLMClientBase):
         # Works for both Anthropic and Bedrock paths.
         # Move go-ai-chat sanity/safety messages from the messages array into a cached
         # system block. Letta converts incoming role:system messages to role:user with
-        # content wrapped as "<event>SYSTEM ALERT: ...</event>", so we identify them
-        # by that prefix rather than by role.
+        # content wrapped as "<event>SYSTEM ALERT: ...</event" (note: Letta's add_xml_tag
+        # has a bug — closing tag omits the final ">"), so we identify them by the prefix
+        # and strip the closing tag defensively.
         # Currently gated to userId=92744418 for safe rollout.
         if self.at_user_id == "92744418":
             _sanity_texts = []
@@ -426,10 +427,13 @@ class AnthropicClient(LLMClientBase):
                     and isinstance(content, str)
                     and content.startswith("<event>SYSTEM ALERT:")
                 ):
-                    # Strip Letta's event wrapper to recover the original system text
+                    # Strip Letta's event wrapper to recover the original system text.
+                    # Handle both "</event>" and "</event" (Letta bug: closing > is missing).
                     inner = content[len("<event>SYSTEM ALERT:"):].strip()
-                    if inner.endswith("</event>"):
-                        inner = inner[: -len("</event>")].strip()
+                    for suffix in ("</event>", "</event"):
+                        if inner.endswith(suffix):
+                            inner = inner[: -len(suffix)].strip()
+                            break
                     if inner:
                         _sanity_texts.append(inner)
                 else:
