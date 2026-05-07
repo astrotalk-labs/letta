@@ -410,27 +410,28 @@ class AnthropicClient(LLMClientBase):
         # ~1200 tokens per call) from the messages array into a cached system block.
         # They are identical per consultant so caching them saves ~90% on those tokens.
         # Works for both Anthropic and Bedrock paths.
+        # Move go-ai-chat sanity/safety messages from the messages array into a cached
+        # system block. Letta converts incoming role:system messages to role:user with
+        # content wrapped as "<event>SYSTEM ALERT: ...</event>", so we identify them
+        # by that prefix rather than by role.
         # Currently gated to userId=92744418 for safe rollout.
         if self.at_user_id == "92744418":
-            logger.warning(
-                f"[sanity-cache] roles in data['messages']: {[m.get('role', 'unknown') for m in data['messages']][:10]}"
-            )
-            logger.warning(
-                f"[sanity-cache] system block len={len(data.get('system', []))}, types={[b.get('type') for b in data.get('system', [])]}"
-            )
             _sanity_texts = []
             _filtered_messages = []
             for msg in data["messages"]:
-                if msg.get("role") == "system":
-                    content = msg.get("content", "")
-                    if isinstance(content, str) and content.strip():
-                        _sanity_texts.append(content)
-                    elif isinstance(content, list):
-                        for block in content:
-                            if isinstance(block, dict) and block.get("type") == "text":
-                                text = block.get("text", "").strip()
-                                if text:
-                                    _sanity_texts.append(text)
+                content = msg.get("content", "")
+                # Letta converts role:system → role:user with "<event>SYSTEM ALERT:" prefix
+                if (
+                    msg.get("role") == "user"
+                    and isinstance(content, str)
+                    and content.startswith("<event>SYSTEM ALERT:")
+                ):
+                    # Strip Letta's event wrapper to recover the original system text
+                    inner = content[len("<event>SYSTEM ALERT:"):].strip()
+                    if inner.endswith("</event>"):
+                        inner = inner[: -len("</event>")].strip()
+                    if inner:
+                        _sanity_texts.append(inner)
                 else:
                     _filtered_messages.append(msg)
             if _sanity_texts:
