@@ -1130,7 +1130,11 @@ class LettaAgent(BaseAgent):
         # They are re-sent fresh on every call, so historical copies accumulate in DB and
         # grow input tokens O(N) per turn. Filtering them here stops the accumulation
         # without any behaviour change — the LLM still receives them for the current call.
-        _persistable_initial = [m for m in (initial_messages or []) if m.role != MessageRole.system]
+        # Gated to userId=92744418 for safe rollout.
+        if self.at_user_id == "92744418":
+            _persistable_initial = [m for m in (initial_messages or []) if m.role != MessageRole.system]
+        else:
+            _persistable_initial = initial_messages or []
         persisted_messages = await self.message_manager.create_many_messages_async(
             _persistable_initial + tool_call_messages, actor=self.actor
         )
