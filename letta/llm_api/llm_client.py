@@ -15,6 +15,7 @@ class LLMClient:
         provider_type: ProviderType,
         put_inner_thoughts_first: bool = True,
         actor: Optional["User"] = None,
+        at_user_id: Optional[str] = None,
     ) -> Optional[LLMClientBase]:
         """
         Create an LLM client based on the model endpoint type.
@@ -36,6 +37,7 @@ class LLMClient:
                 return GoogleAIClient(
                     put_inner_thoughts_first=put_inner_thoughts_first,
                     actor=actor,
+                    at_user_id=at_user_id,
                 )
             case ProviderType.google_vertex:
                 from letta.llm_api.google_vertex_client import GoogleVertexClient
@@ -43,6 +45,7 @@ class LLMClient:
                 return GoogleVertexClient(
                     put_inner_thoughts_first=put_inner_thoughts_first,
                     actor=actor,
+                    at_user_id=at_user_id,
                 )
             case ProviderType.anthropic:
                 from letta.llm_api.anthropic_client import AnthropicClient
@@ -50,6 +53,7 @@ class LLMClient:
                 return AnthropicClient(
                     put_inner_thoughts_first=put_inner_thoughts_first,
                     actor=actor,
+                    at_user_id=at_user_id,
                 )
             case ProviderType.openai | ProviderType.together:
                 from letta.llm_api.openai_client import OpenAIClient
@@ -57,6 +61,7 @@ class LLMClient:
                 return OpenAIClient(
                     put_inner_thoughts_first=put_inner_thoughts_first,
                     actor=actor,
+                    at_user_id=at_user_id,
                 )
             case _:
                 # Handle string-based provider types that aren't in the enum
@@ -67,5 +72,6 @@ class LLMClient:
                     return AnthropicClient(
                         put_inner_thoughts_first=put_inner_thoughts_first,
                         actor=actor,
+                        at_user_id=at_user_id,
                     )
                 return None
