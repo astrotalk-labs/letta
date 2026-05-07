@@ -414,7 +414,7 @@ class AnthropicClient(LLMClientBase):
         # saves ~90% on those tokens. Works for both Anthropic and Bedrock paths.
         # Rollout: set CACHE_SANITY_ROLLOUT_PCT env var (0-100) to ramp gradually.
         _rollout_pct = int(os.getenv("CACHE_SANITY_ROLLOUT_PCT", "0"))
-        _user_id_int = int(at_user_id) if at_user_id and at_user_id.isdigit() else 0
+        _user_id_int = int(at_user_id) if (at_user_id and at_user_id.isdigit()) else 0
         if _rollout_pct > 0 and (_user_id_int % 100) < _rollout_pct:
             _sanity_texts = []
             _filtered_messages = []
@@ -444,7 +444,7 @@ class AnthropicClient(LLMClientBase):
                 )
 
         # Ensure first message is user
-        if data["messages"][0]["role"] != "user":
+        if not data["messages"] or data["messages"][0]["role"] != "user":
             data["messages"] = [{"role": "user", "content": DUMMY_FIRST_USER_MESSAGE}] + data["messages"]
 
         # Handle alternating messages
