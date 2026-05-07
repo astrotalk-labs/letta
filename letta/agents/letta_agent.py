@@ -969,7 +969,6 @@ class LettaAgent(BaseAgent):
                 agent_state.llm_config,
                 allowed_tools,
                 force_tool_call,
-                at_user_id=self.at_user_id,
             ),
             valid_tool_names,
         )
