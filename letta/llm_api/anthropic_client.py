@@ -413,7 +413,7 @@ class AnthropicClient(LLMClientBase):
         # Currently gated to userId=92744418 for safe rollout.
         if self.at_user_id == "92744418":
             logger.warning(
-                f"[sanity-cache] roles in data['messages']: {[m.get('role') for m in data['messages']][:10]}"
+                f"[sanity-cache] roles in data['messages']: {[m.get('role', 'unknown') for m in data['messages']][:10]}"
             )
             _sanity_texts = []
             _filtered_messages = []
