@@ -406,8 +406,37 @@ class AnthropicClient(LLMClientBase):
             for m in messages[1:]
         ]
 
+        # Move static system messages injected by go-ai-chat (sanity/safety rules,
+        # ~1200 tokens per call) from the messages array into a cached system block.
+        # They are identical per consultant so caching them saves ~90% on those tokens.
+        # Works for both Anthropic and Bedrock paths.
+        # Currently gated to userId=92744418 for safe rollout.
+        if self.at_user_id == "92744418":
+            _sanity_texts = []
+            _filtered_messages = []
+            for msg in data["messages"]:
+                if msg.get("role") == "system":
+                    content = msg.get("content", "")
+                    if isinstance(content, str) and content.strip():
+                        _sanity_texts.append(content)
+                    elif isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                text = block.get("text", "").strip()
+                                if text:
+                                    _sanity_texts.append(text)
+                else:
+                    _filtered_messages.append(msg)
+            if _sanity_texts:
+                data["system"].append({
+                    "type": "text",
+                    "text": "\n\n".join(_sanity_texts),
+                    "cache_control": {"type": "ephemeral"},
+                })
+                data["messages"] = _filtered_messages
+
         # Ensure first message is user
-        if data["messages"][0]["role"] != "user":
+        if not data["messages"] or data["messages"][0]["role"] != "user":
             data["messages"] = [{"role": "user", "content": DUMMY_FIRST_USER_MESSAGE}] + data["messages"]
 
         # Handle alternating messages

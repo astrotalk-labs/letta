@@ -30,8 +30,10 @@ class LLMClientBase:
         put_inner_thoughts_first: Optional[bool] = True,
         use_tool_naming: bool = True,
         actor: Optional["User"] = None,
+        at_user_id: Optional[str] = None,
     ):
         self.actor = actor
+        self.at_user_id = at_user_id
         self.put_inner_thoughts_first = put_inner_thoughts_first
         self.use_tool_naming = use_tool_naming
 

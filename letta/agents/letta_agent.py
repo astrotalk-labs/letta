@@ -216,6 +216,7 @@ class LettaAgent(BaseAgent):
             provider_type=agent_state.llm_config.model_endpoint_type,
             put_inner_thoughts_first=True,
             actor=self.actor,
+            at_user_id=self.at_user_id,
         )
         stop_reason = None
         usage = LettaUsageStatistics()
@@ -390,6 +391,7 @@ class LettaAgent(BaseAgent):
             provider_type=agent_state.llm_config.model_endpoint_type,
             put_inner_thoughts_first=True,
             actor=self.actor,
+            at_user_id=self.at_user_id,
         )
 
         # span for request
@@ -550,6 +552,7 @@ class LettaAgent(BaseAgent):
             provider_type=agent_state.llm_config.model_endpoint_type,
             put_inner_thoughts_first=True,
             actor=self.actor,
+            at_user_id=self.at_user_id,
         )
         stop_reason = None
         usage = LettaUsageStatistics()
