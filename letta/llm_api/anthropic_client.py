@@ -415,6 +415,9 @@ class AnthropicClient(LLMClientBase):
             logger.warning(
                 f"[sanity-cache] roles in data['messages']: {[m.get('role', 'unknown') for m in data['messages']][:10]}"
             )
+            logger.warning(
+                f"[sanity-cache] system block len={len(data.get('system', []))}, types={[b.get('type') for b in data.get('system', [])]}"
+            )
             _sanity_texts = []
             _filtered_messages = []
             for msg in data["messages"]:
