@@ -431,6 +431,16 @@ class AnthropicClient(LLMClientBase):
                         _sanity_texts.append(inner)
                 else:
                     _filtered_messages.append(msg)
+            # Deduplicate: Letta persists go-ai-chat system messages into conversation
+            # history, so they accumulate (4 per turn). All copies are identical text,
+            # so deduplication gives a stable set regardless of conversation length.
+            _seen: set = set()
+            _unique_sanity_texts = []
+            for t in _sanity_texts:
+                if t not in _seen:
+                    _seen.add(t)
+                    _unique_sanity_texts.append(t)
+            _sanity_texts = _unique_sanity_texts
             if _sanity_texts:
                 # Insert AFTER the last cached block (static_part_2), BEFORE the trailing
                 # dynamic block (dynamic_part_2 = memory_metadata). Appending at the end
