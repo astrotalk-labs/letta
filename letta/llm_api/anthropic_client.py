@@ -406,50 +406,6 @@ class AnthropicClient(LLMClientBase):
             for m in messages[1:]
         ]
 
-        # Move go-ai-chat sanity/safety messages from the messages array into a cached
-        # system block. Letta's to_anthropic_dict() converts incoming role:system messages
-        # to role:user with content wrapped as "<event>SYSTEM ALERT: ...</event" (the
-        # closing > is missing due to a bug in Letta's add_xml_tag helper). So we identify
-        # them by the SYSTEM ALERT prefix, not by role.
-        # Currently gated to userId=92744418 for safe rollout.
-        if self.at_user_id == "92744418":
-            _sanity_texts = []
-            _filtered_messages = []
-            for msg in data["messages"]:
-                content = msg.get("content", "")
-                if (
-                    msg.get("role") == "user"
-                    and isinstance(content, str)
-                    and content.startswith("<event>SYSTEM ALERT:")
-                ):
-                    inner = content[len("<event>SYSTEM ALERT:"):].strip()
-                    for suffix in ("</event>", "</event"):
-                        if inner.endswith(suffix):
-                            inner = inner[: -len(suffix)].strip()
-                            break
-                    if inner:
-                        _sanity_texts.append(inner)
-                else:
-                    _filtered_messages.append(msg)
-            if _sanity_texts:
-                # Insert AFTER the last cached block (static_part_2), BEFORE the trailing
-                # dynamic block (dynamic_part_2 = memory_metadata). Appending at the end
-                # places the cache checkpoint after dynamic content that changes every call,
-                # causing a ~45k token cache write every request at premium write cost with
-                # zero reads. Inserting before the dynamic tail keeps the cache key stable.
-                insert_pos = len(data["system"])  # fallback: append
-                for i, block in enumerate(data["system"]):
-                    if block.get("cache_control"):
-                        insert_pos = i + 1
-                logger.warning(
-                    f"[sanity-cache] moved {len(_sanity_texts)} SYSTEM ALERT messages to cached system block at pos {insert_pos}"
-                )
-                data["system"].insert(insert_pos, {
-                    "type": "text",
-                    "text": "\n\n".join(_sanity_texts),
-                    "cache_control": {"type": "ephemeral"},
-                })
-                data["messages"] = _filtered_messages
 
         # Ensure first message is user
         if not data["messages"] or data["messages"][0]["role"] != "user":

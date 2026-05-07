@@ -1126,8 +1126,17 @@ class LettaAgent(BaseAgent):
             step_id=logged_step.id if logged_step else None,  # TODO (cliandy): eventually move over other agent loops
         )
 
+        # Do not persist system-role input messages (go-ai-chat sanity/date/reasoning rules).
+        # They are re-sent fresh on every call, so historical copies accumulate in DB and
+        # grow input tokens O(N) per turn. Filtering them here stops the accumulation
+        # without any behaviour change — the LLM still receives them for the current call.
+        # Gated to userId=92744418 for safe rollout.
+        if self.at_user_id == "92744418":
+            _persistable_initial = [m for m in (initial_messages or []) if m.role != MessageRole.system]
+        else:
+            _persistable_initial = initial_messages or []
         persisted_messages = await self.message_manager.create_many_messages_async(
-            (initial_messages or []) + tool_call_messages, actor=self.actor
+            _persistable_initial + tool_call_messages, actor=self.actor
         )
         self.last_function_response = function_response
 
