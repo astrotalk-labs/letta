@@ -522,7 +522,10 @@ class AnthropicClient(LLMClientBase):
         # Emits a structured log line describing the request prefix structure
         # so we can correlate it with the cache_read/cache_creation token counts
         # in the response. Gated to one user_id to keep volume bounded.
-        if getattr(self, "at_user_id", None) != CACHE_OBS_USER_ID or not CACHE_OBS_USER_ID:
+        # `at_user_id` is set by LLMClientBase.__init__; use getattr so a code
+        # path that instantiates without going through the base init still no-ops.
+        at_user_id = getattr(self, "at_user_id", None)
+        if not CACHE_OBS_USER_ID or at_user_id != CACHE_OBS_USER_ID:
             return
         try:
             def _hash_short(text: str) -> str:
@@ -584,7 +587,7 @@ class AnthropicClient(LLMClientBase):
                 })
 
             payload = {
-                "at_user_id": self.at_user_id,
+                "at_user_id": at_user_id,
                 "model": data.get("model"),
                 "input_message_count": num_input_messages,
                 "system_block_count": len(system_blocks),
@@ -604,7 +607,8 @@ class AnthropicClient(LLMClientBase):
     def _log_cache_observation_usage(self, usage, endpoint_type: Optional[str], model: Optional[str]) -> None:
         # Emits Anthropic usage with cache_read / cache_creation tokens so we can
         # measure the effect of caching changes against a fixed conversation.
-        if getattr(self, "at_user_id", None) != CACHE_OBS_USER_ID or not CACHE_OBS_USER_ID:
+        at_user_id = getattr(self, "at_user_id", None)
+        if not CACHE_OBS_USER_ID or at_user_id != CACHE_OBS_USER_ID:
             return
         try:
             if hasattr(usage, "model_dump"):
@@ -614,7 +618,7 @@ class AnthropicClient(LLMClientBase):
             else:
                 usage_dict = {"raw": str(usage)}
             payload = {
-                "at_user_id": self.at_user_id,
+                "at_user_id": at_user_id,
                 "model": model,
                 "endpoint_type": endpoint_type,
                 "input_tokens": usage_dict.get("input_tokens"),
