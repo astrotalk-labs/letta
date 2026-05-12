@@ -1,4 +1,3 @@
-import hashlib
 import json
 import logging
 import re
@@ -41,10 +40,6 @@ from letta.services.provider_manager import ProviderManager
 from letta.settings import model_settings
 
 DUMMY_FIRST_USER_MESSAGE = "User initializing bootup sequence."
-
-# Gate for cache-observability logs. Set to a user_id to capture per-request
-# structure + Anthropic usage breakdown for that user only. Empty string disables.
-CACHE_OBS_USER_ID = "117607352"
 
 logger = get_logger(__name__)
 
@@ -189,22 +184,12 @@ class AnthropicClient(LLMClientBase):
                 "usage": result.get("usage", {"input_tokens": 0, "output_tokens": 0}),
             }
             logger.info("This is the usage response from claude (bedrock) %s", response_dict.get("usage"))
-            self._log_cache_observation_usage(
-                response_dict.get("usage"),
-                endpoint_type=llm_config.model_endpoint_type,
-                model=request_data.get("model"),
-            )
             return response_dict
         else:
             print(f"DEBUG: [AnthropicClient] Using standard Anthropic client (model_endpoint_type={llm_config.model_endpoint_type})")
             client = await self._get_anthropic_client_async(llm_config, async_client=True)
             response = await client.beta.messages.create(**request_data, betas=["tools-2024-04-04", "prompt-caching-2024-07-31"])
         logger.info("This is the usage response from claude %s", response.usage)
-        self._log_cache_observation_usage(
-            response.usage,
-            endpoint_type=llm_config.model_endpoint_type,
-            model=request_data.get("model"),
-        )
         return response.model_dump()
 
     @trace_method
@@ -441,8 +426,6 @@ class AnthropicClient(LLMClientBase):
                 {"role": "assistant", "content": f"<{inner_thoughts_xml_tag}>"},
             )
 
-        self._log_cache_observation_request(data, num_input_messages=len(messages))
-
         return data
 
     def _split_system_message_for_caching(self, system_content: str) -> tuple:
@@ -517,118 +500,6 @@ class AnthropicClient(LLMClientBase):
             })
 
         return system_parts
-
-    def _log_cache_observation_request(self, data: dict, num_input_messages: int) -> None:
-        # Emits a structured log line describing the request prefix structure
-        # so we can correlate it with the cache_read/cache_creation token counts
-        # in the response. Gated to one user_id to keep volume bounded.
-        # `at_user_id` is set by LLMClientBase.__init__; use getattr so a code
-        # path that instantiates without going through the base init still no-ops.
-        at_user_id = getattr(self, "at_user_id", None)
-        if not CACHE_OBS_USER_ID or at_user_id != CACHE_OBS_USER_ID:
-            return
-        try:
-            def _hash_short(text: str) -> str:
-                return hashlib.sha1(text.encode("utf-8", errors="replace")).hexdigest()[:8]
-
-            system_blocks = data.get("system", []) or []
-            sys_summary = []
-            dyn_tail_preview = ""
-            for i, blk in enumerate(system_blocks):
-                if isinstance(blk, dict):
-                    text = blk.get("text", "") or ""
-                    cached = bool(blk.get("cache_control"))
-                else:
-                    text = str(blk)
-                    cached = False
-                sys_summary.append({
-                    "idx": i,
-                    "chars": len(text),
-                    "approx_tokens": len(text) // 4,
-                    "cache_control": cached,
-                    "prefix": text[:80].replace("\n", " "),
-                    "hash": _hash_short(text),
-                })
-            # Log the trailing block in full when uncached - this is the prime suspect
-            # for invalidating downstream cache lookups (memory_metadata).
-            if system_blocks:
-                last = system_blocks[-1]
-                if isinstance(last, dict) and not last.get("cache_control"):
-                    dyn_tail_preview = (last.get("text", "") or "")[:2000]
-
-            tools = data.get("tools", []) or []
-            tools_json = json.dumps(tools, sort_keys=True, default=str) if tools else ""
-            tools_info = {
-                "count": len(tools),
-                "approx_tokens": len(tools_json) // 4,
-                "hash": _hash_short(tools_json) if tools_json else "",
-            }
-
-            messages = data.get("messages", []) or []
-            msg_summary = []
-            role_counts: Dict[str, int] = {}
-            total_msg_chars = 0
-            for i, msg in enumerate(messages):
-                role = msg.get("role", "?")
-                role_counts[role] = role_counts.get(role, 0) + 1
-                content = msg.get("content", "")
-                if isinstance(content, list):
-                    ctext = json.dumps(content, sort_keys=True, default=str)
-                else:
-                    ctext = str(content)
-                total_msg_chars += len(ctext)
-                preview = ctext[:80].replace("\n", " ")
-                msg_summary.append({
-                    "idx": i,
-                    "role": role,
-                    "chars": len(ctext),
-                    "hash": _hash_short(ctext),
-                    "prefix": preview,
-                })
-
-            payload = {
-                "at_user_id": at_user_id,
-                "model": data.get("model"),
-                "input_message_count": num_input_messages,
-                "system_block_count": len(system_blocks),
-                "system_blocks": sys_summary,
-                "dynamic_tail_preview": dyn_tail_preview,
-                "tools": tools_info,
-                "messages_count": len(messages),
-                "messages_role_counts": role_counts,
-                "messages_total_chars": total_msg_chars,
-                "messages_total_approx_tokens": total_msg_chars // 4,
-                "messages": msg_summary,
-            }
-            logger.info("[CACHE_OBS_REQ] %s", json.dumps(payload, default=str))
-        except Exception as e:
-            logger.warning("[CACHE_OBS_REQ] logging failed: %s", e)
-
-    def _log_cache_observation_usage(self, usage, endpoint_type: Optional[str], model: Optional[str]) -> None:
-        # Emits Anthropic usage with cache_read / cache_creation tokens so we can
-        # measure the effect of caching changes against a fixed conversation.
-        at_user_id = getattr(self, "at_user_id", None)
-        if not CACHE_OBS_USER_ID or at_user_id != CACHE_OBS_USER_ID:
-            return
-        try:
-            if hasattr(usage, "model_dump"):
-                usage_dict = usage.model_dump()
-            elif isinstance(usage, dict):
-                usage_dict = usage
-            else:
-                usage_dict = {"raw": str(usage)}
-            payload = {
-                "at_user_id": at_user_id,
-                "model": model,
-                "endpoint_type": endpoint_type,
-                "input_tokens": usage_dict.get("input_tokens"),
-                "output_tokens": usage_dict.get("output_tokens"),
-                "cache_creation_input_tokens": usage_dict.get("cache_creation_input_tokens"),
-                "cache_read_input_tokens": usage_dict.get("cache_read_input_tokens"),
-            }
-            logger.info("[CACHE_OBS_USAGE] %s", json.dumps(payload, default=str))
-        except Exception as e:
-            logger.warning("[CACHE_OBS_USAGE] logging failed: %s", e)
 
     async def count_tokens(self, messages: List[dict] = None, model: str = None, tools: List[OpenAITool] = None) -> int:
         logging.getLogger("httpx").setLevel(logging.WARNING)
