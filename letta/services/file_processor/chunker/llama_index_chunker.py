@@ -1,6 +1,7 @@
-from typing import List
+from typing import TYPE_CHECKING, List
 
-from mistralai import OCRPageObject
+if TYPE_CHECKING:
+    from mistralai import OCRPageObject
 
 from letta.log import get_logger
 
@@ -19,7 +20,7 @@ class LlamaIndexChunker:
         self.parser = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
     # TODO: Make this more general beyond Mistral
-    def chunk_text(self, page: OCRPageObject) -> List[str]:
+    def chunk_text(self, page: "OCRPageObject") -> List[str]:
         """Chunk text using LlamaIndex splitter"""
         try:
             return self.parser.split_text(page.markdown)
