@@ -1,6 +1,14 @@
 import base64
 
-from mistralai import Mistral, OCRPageObject, OCRResponse, OCRUsageInfo
+try:
+    from mistralai import Mistral, OCRPageObject, OCRResponse, OCRUsageInfo
+    _MISTRAL_AVAILABLE = True
+except ImportError:
+    _MISTRAL_AVAILABLE = False
+    Mistral = None  # type: ignore[assignment]
+    OCRPageObject = None  # type: ignore[assignment]
+    OCRResponse = None  # type: ignore[assignment]
+    OCRUsageInfo = None  # type: ignore[assignment]
 
 from letta.log import get_logger
 from letta.services.file_processor.file_types import is_simple_text_mime_type
@@ -14,6 +22,11 @@ class MistralFileParser(FileParser):
     """Mistral-based OCR extraction"""
 
     def __init__(self, model: str = "mistral-ocr-latest"):
+        if not _MISTRAL_AVAILABLE:
+            raise ImportError(
+                "MistralFileParser requires the 'mistralai' package, which is not installed in this build. "
+                "Install it via `pip install mistralai` (or a working source) to enable OCR file processing."
+            )
         self.model = model
 
     # TODO: Make this return something general if we add more file parsers
