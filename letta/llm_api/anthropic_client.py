@@ -42,10 +42,38 @@ from letta.settings import model_settings
 
 DUMMY_FIRST_USER_MESSAGE = "User initializing bootup sequence."
 
-# Gate for cache-observability logs + v2 cache-optimization path. Set to a
-# single user_id to capture per-request structure + Anthropic usage breakdown
-# AND apply the v2 cache layout for that user only. Empty string disables both.
+# Gate for cache-observability logs. Set to a single user_id to capture
+# per-request structure + Anthropic usage breakdown for that user only. Empty
+# string disables. The v2 cache-optimization path is now controlled by the
+# V2_CACHE_ROLLOUT_* knobs below, not by this constant.
 CACHE_OBS_USER_ID = "92744418"
+
+# v2 cache-layout rollout: deterministic 50/50 split by at_user_id % MOD.
+# Users whose (int(at_user_id) % V2_CACHE_ROLLOUT_MOD) < V2_CACHE_ROLLOUT_BUCKET_MAX
+# get the v2 system-block layout + memory_metadata stabilization + messages-tail
+# cache_control. The other half stays on the v1 path.
+# Test user CACHE_OBS_USER_ID is always force-included so observability logs
+# remain comparable to the PR #54 baseline.
+V2_CACHE_ROLLOUT_MOD = 10
+V2_CACHE_ROLLOUT_BUCKET_MAX = 5
+
+
+def _is_user_in_v2_cache_bucket(at_user_id):
+    # Returns True if the user_id falls in the v2 rollout bucket. False for
+    # missing/non-numeric ids so unknown traffic defaults to the v1 path (fail-closed).
+    if not at_user_id:
+        return False
+    if CACHE_OBS_USER_ID and at_user_id == CACHE_OBS_USER_ID:
+        return True
+    if V2_CACHE_ROLLOUT_BUCKET_MAX <= 0:
+        return False
+    if V2_CACHE_ROLLOUT_BUCKET_MAX >= V2_CACHE_ROLLOUT_MOD:
+        return True
+    try:
+        return (int(at_user_id) % V2_CACHE_ROLLOUT_MOD) < V2_CACHE_ROLLOUT_BUCKET_MAX
+    except (ValueError, TypeError):
+        return False
+
 
 logger = get_logger(__name__)
 
@@ -413,12 +441,14 @@ class AnthropicClient(LLMClientBase):
             raise RuntimeError(f"First message is not a system message, instead has role {messages[0].role}")
         system_content = messages[0].content if isinstance(messages[0].content, str) else messages[0].content[0].text
 
-        # Gated cache-optimization path: for at_user_id == CACHE_OBS_USER_ID, use the v2 splitter
-        # that keeps base instructions and tool_usage_rules cached even when the persona block
-        # mutates between turns. Also stabilizes <memory_metadata> so it stops invalidating
-        # downstream cache lookups. All other users get the existing v1 path unchanged.
+        # Cache-optimization rollout: 50/50 split by user_id % 10. Users in the v2
+        # bucket get the v2 splitter (keeps base instructions and tool_usage_rules
+        # cached even when persona mutates), stabilized <memory_metadata>, and
+        # cache_control on the last assistant message. The other 50% stay on v1.
+        # Test user CACHE_OBS_USER_ID is always in the v2 bucket so observability
+        # logs remain comparable to the PR #54 baseline.
         at_user_id_for_opt = getattr(self, "at_user_id", None)
-        use_v2_caching = bool(CACHE_OBS_USER_ID and at_user_id_for_opt == CACHE_OBS_USER_ID)
+        use_v2_caching = _is_user_in_v2_cache_bucket(at_user_id_for_opt)
         v2_split = self._split_system_message_v2_for_caching(system_content) if use_v2_caching else None
         if v2_split is not None:
             static_base, dynamic_persona, dynamic_user_memory, static_rules, dynamic_metadata = v2_split
