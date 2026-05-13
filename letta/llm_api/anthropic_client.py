@@ -42,9 +42,10 @@ from letta.settings import model_settings
 
 DUMMY_FIRST_USER_MESSAGE = "User initializing bootup sequence."
 
-# Gate for cache-observability logs. Set to a user_id to capture per-request
-# structure + Anthropic usage breakdown for that user only. Empty string disables.
-CACHE_OBS_USER_ID = "117607352"
+# Gate for cache-observability logs + v2 cache-optimization path. Set to a
+# single user_id to capture per-request structure + Anthropic usage breakdown
+# AND apply the v2 cache layout for that user only. Empty string disables both.
+CACHE_OBS_USER_ID = "92744418"
 
 logger = get_logger(__name__)
 
