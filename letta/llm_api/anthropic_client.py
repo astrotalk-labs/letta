@@ -42,9 +42,10 @@ from letta.settings import model_settings
 
 DUMMY_FIRST_USER_MESSAGE = "User initializing bootup sequence."
 
-# Gate for cache-observability logs. Set to a user_id to capture per-request
-# structure + Anthropic usage breakdown for that user only. Empty string disables.
-CACHE_OBS_USER_ID = "117607352"
+# Gate for cache-observability logs + v2 cache-optimization path. Set to a
+# single user_id to capture per-request structure + Anthropic usage breakdown
+# AND apply the v2 cache layout for that user only. Empty string disables both.
+CACHE_OBS_USER_ID = "92744418"
 
 logger = get_logger(__name__)
 
@@ -411,8 +412,24 @@ class AnthropicClient(LLMClientBase):
         if messages[0].role != "system":
             raise RuntimeError(f"First message is not a system message, instead has role {messages[0].role}")
         system_content = messages[0].content if isinstance(messages[0].content, str) else messages[0].content[0].text
-        static_part_1, dynamic_part_1, static_part_2, dynamic_part_2 = self._split_system_message_for_caching(system_content)
-        data["system"] = self._add_cache_control_to_system_message(static_part_1, dynamic_part_1, static_part_2, dynamic_part_2)
+
+        # Gated cache-optimization path: for at_user_id == CACHE_OBS_USER_ID, use the v2 splitter
+        # that keeps base instructions and tool_usage_rules cached even when the persona block
+        # mutates between turns. Also stabilizes <memory_metadata> so it stops invalidating
+        # downstream cache lookups. All other users get the existing v1 path unchanged.
+        at_user_id_for_opt = getattr(self, "at_user_id", None)
+        use_v2_caching = bool(CACHE_OBS_USER_ID and at_user_id_for_opt == CACHE_OBS_USER_ID)
+        v2_split = self._split_system_message_v2_for_caching(system_content) if use_v2_caching else None
+        if v2_split is not None:
+            static_base, dynamic_persona, dynamic_user_memory, static_rules, dynamic_metadata = v2_split
+            if dynamic_metadata:
+                dynamic_metadata = self._stabilize_memory_metadata(dynamic_metadata)
+            data["system"] = self._add_cache_control_to_system_message_v2(
+                static_base, dynamic_persona, dynamic_user_memory, static_rules, dynamic_metadata
+            )
+        else:
+            static_part_1, dynamic_part_1, static_part_2, dynamic_part_2 = self._split_system_message_for_caching(system_content)
+            data["system"] = self._add_cache_control_to_system_message(static_part_1, dynamic_part_1, static_part_2, dynamic_part_2)
         data["messages"] = [
             m.to_anthropic_dict(
                 inner_thoughts_xml_tag=inner_thoughts_xml_tag,
@@ -428,6 +445,15 @@ class AnthropicClient(LLMClientBase):
 
         # Handle alternating messages
         data["messages"] = merge_tool_results_into_user_messages(data["messages"])
+
+        # Gated: cache the conversation tail by attaching cache_control: ephemeral to the
+        # last assistant message in the persisted history. With a stabilized system prefix
+        # (v2 splitter + stabilized memory_metadata), the next call's prefix will match up
+        # through this breakpoint and read everything from cache. Applied BEFORE prefix_fill
+        # so the prefix-fill assistant marker (appended below) stays uncached and never sits
+        # at the breakpoint position.
+        if use_v2_caching:
+            self._add_cache_control_to_last_assistant_message(data["messages"])
 
         # Prefix fill
         # https://docs.anthropic.com/en/api/messages#body-messages
@@ -517,6 +543,103 @@ class AnthropicClient(LLMClientBase):
             })
 
         return system_parts
+
+    def _split_system_message_v2_for_caching(self, system_content: str):
+        # v2 splitter: 5-part layout that keeps base instructions and tool_usage_rules cached
+        # even when the persona block is mutated by core_memory_append/replace.
+        #
+        # Layout vs v1:
+        #   v1: [base+persona] cached | [human+summary] | [tool_usage+files] cached | [memory_metadata]
+        #   v2: [base] cached | [persona] | [human+summary] | [tool_usage+files] cached | [memory_metadata]
+        #
+        # The trade-off: persona reads become uncached, but the base instructions (a larger,
+        # truly stable chunk) stop being invalidated on every persona append. Net win because
+        # cross-turn cache hit rate goes from near-zero to ~100% on the base prefix.
+        #
+        # Returns None when the markers needed for the 5-part split aren't present, so the
+        # caller can fall back to v1.
+        persona_start = system_content.find("<persona>")
+        persona_end = system_content.find("</persona>")
+        memory_blocks_end = system_content.find("</memory_blocks>")
+        memory_metadata_start = system_content.find("<memory_metadata>")
+
+        if persona_start == -1 or persona_end == -1 or memory_blocks_end == -1:
+            return None
+        if persona_start >= persona_end:
+            return None
+
+        persona_end += len("</persona>")
+        memory_blocks_end += len("</memory_blocks>")
+
+        static_base = system_content[:persona_start].strip()
+        dynamic_persona = system_content[persona_start:persona_end].strip()
+        dynamic_user_memory = system_content[persona_end:memory_blocks_end].strip()
+
+        if memory_metadata_start != -1 and memory_metadata_start > memory_blocks_end:
+            static_rules = system_content[memory_blocks_end:memory_metadata_start].strip()
+            dynamic_metadata = system_content[memory_metadata_start:].strip()
+        else:
+            static_rules = system_content[memory_blocks_end:].strip()
+            dynamic_metadata = ""
+
+        return static_base, dynamic_persona, dynamic_user_memory, static_rules, dynamic_metadata
+
+    def _add_cache_control_to_system_message_v2(self, static_base, dynamic_persona, dynamic_user_memory, static_rules, dynamic_metadata):
+        # Build the 5-part system block list with cache_control: ephemeral on static_base and
+        # static_rules only. Uses 2 of Anthropic's 4 available cache breakpoints, leaving room
+        # for a third on the messages array.
+        parts = []
+        if static_base:
+            parts.append({"type": "text", "text": static_base, "cache_control": {"type": "ephemeral"}})
+        if dynamic_persona:
+            parts.append({"type": "text", "text": dynamic_persona})
+        if dynamic_user_memory:
+            parts.append({"type": "text", "text": dynamic_user_memory})
+        if static_rules:
+            parts.append({"type": "text", "text": static_rules, "cache_control": {"type": "ephemeral"}})
+        if dynamic_metadata:
+            parts.append({"type": "text", "text": dynamic_metadata})
+        return parts
+
+    def _stabilize_memory_metadata(self, metadata_content: str) -> str:
+        # Replace per-second timestamp + recall/archival counts with hourly-stable text so
+        # this trailing block stops invalidating cache lookups on every turn. The agent still
+        # gets a coarse time reference and a reminder that recall tools exist; it never acts
+        # on exact recall/archival counts.
+        import datetime as _dt
+        now = _dt.datetime.now(_dt.timezone.utc)
+        hour_stamp = now.strftime("%Y-%m-%d %H UTC")
+        return (
+            "<memory_metadata>\n"
+            f"- Current hour: {hour_stamp}\n"
+            "- Recall and archival memory tools are available "
+            "(conversation_search, archival_memory_search).\n"
+            "</memory_metadata>"
+        )
+
+    def _add_cache_control_to_last_assistant_message(self, messages_list) -> None:
+        # Walk the messages array backwards, find the last assistant message in the persisted
+        # history, and attach cache_control: ephemeral to its last content block. This caches
+        # the entire conversation tail through that point. Next call has the same prefix +
+        # a new user turn, so it reads everything up to and including this message from cache.
+        if not messages_list:
+            return
+        last_assistant_idx = None
+        for i in range(len(messages_list) - 1, -1, -1):
+            msg = messages_list[i]
+            if isinstance(msg, dict) and msg.get("role") == "assistant":
+                last_assistant_idx = i
+                break
+        if last_assistant_idx is None:
+            return
+        msg = messages_list[last_assistant_idx]
+        content = msg.get("content")
+        if isinstance(content, str):
+            msg["content"] = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+        elif isinstance(content, list) and content:
+            last_block = content[-1]
+            if isinstance(last_block, dict):
+                last_block["cache_control"] = {"type": "ephemeral"}
 
     def _log_cache_observation_request(self, data: dict, num_input_messages: int) -> None:
         # Emits a structured log line describing the request prefix structure
