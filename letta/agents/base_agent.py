@@ -127,6 +127,31 @@ class BaseAgent(ABC):
             if len(diff) > 0:
                 logger.debug(f"Rebuilding system with new memory...\nDiff:\n{diff}")
 
+                # Cache-observability event: system prompt is being rebuilt because
+                # something in agent_state.memory changed. This invalidates the
+                # downstream cache breakpoints. Emit a structured log so we can grep
+                # for the rate of these rebuilds in production and quantify how much
+                # they contribute to overall cache misses. Gated to the cache_obs
+                # sample so log volume stays bounded.
+                _mr_at_user_id = getattr(self, "at_user_id", None)
+                if _mr_at_user_id:
+                    try:
+                        from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
+                        if _is_user_in_cache_obs_sample(_mr_at_user_id):
+                            import json as _json
+                            logger.info(
+                                "[MEMORY_REBUILD] %s",
+                                _json.dumps({
+                                    "at_user_id": _mr_at_user_id,
+                                    "agent_id": agent_state.id,
+                                    "diff_chars": len(diff),
+                                    "old_system_chars": len(curr_system_message_text),
+                                    "new_system_chars": len(new_system_message_str),
+                                }, default=str),
+                            )
+                    except Exception:
+                        pass
+
                 # [DB Call] Update Messages
                 new_system_message = await self.message_manager.update_message_by_id_async(
                     curr_system_message.id, message_update=MessageUpdate(content=new_system_message_str), actor=self.actor

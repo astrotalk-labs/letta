@@ -54,6 +54,28 @@ class EphemeralSummaryAgent(BaseAgent):
         if len(input_messages) > 1:
             raise ValueError("Can only invoke EphemeralSummaryAgent with a single summarization message.")
 
+        # Cache-observability event: the summarizer is firing. When it runs, it
+        # overwrites the <conversation_summary> block AND trims in_context_messages,
+        # both of which invalidate the message-tail cache_control breakpoint on the
+        # next user turn. Emit a structured log so we can measure how often this
+        # happens in production and decide whether to decouple the summary block.
+        # Always log (summarizer is rare, not per-call) but include at_user_id so
+        # we can filter to the cache_obs sample if log volume becomes an issue.
+        try:
+            import json as _json
+            _input_text = input_messages[0].content[0].text if input_messages and input_messages[0].content else ""
+            logger.info(
+                "[SUMMARIZER_FIRED] %s",
+                _json.dumps({
+                    "at_user_id": getattr(self, "at_user_id", None),
+                    "agent_id": self.agent_id,
+                    "target_block_label": self.target_block_label,
+                    "input_text_chars": len(_input_text),
+                }, default=str),
+            )
+        except Exception:
+            pass
+
         # Check block existence
         try:
             block = await self.agent_manager.get_block_with_label_async(

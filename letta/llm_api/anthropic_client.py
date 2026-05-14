@@ -42,11 +42,46 @@ from letta.settings import model_settings
 
 DUMMY_FIRST_USER_MESSAGE = "User initializing bootup sequence."
 
-# Gate for cache-observability logs. Set to a single user_id to capture
-# per-request structure + Anthropic usage breakdown for that user only. Empty
-# string disables. The v2 cache-optimization path is now controlled by the
+# Gate for cache-observability logs. Set to a single user_id who is always
+# observed (force-included regardless of sampling). Empty string disables the
+# always-on user. The v2 cache-optimization path is controlled by the
 # V2_CACHE_ROLLOUT_* knobs below, not by this constant.
 CACHE_OBS_USER_ID = "92744418"
+
+# Broader sampling for cache-observability logs across all v2 traffic.
+# Percentage of users whose (int(at_user_id) % 100) < CACHE_OBS_SAMPLE_PCT
+# will have CACHE_OBS_REQ/USAGE/MISS_DIAG logs emitted in addition to the
+# always-on CACHE_OBS_USER_ID. Set to 0 to disable broader sampling.
+# At 1%, on ~22k calls/hour we expect ~220 sampled calls/hour = manageable
+# log volume. We need this to determine the dominant cache-invalidation
+# source in aggregate production traffic (not just one user).
+CACHE_OBS_SAMPLE_PCT = 1
+
+# Cold-miss threshold for CACHE_MISS_DIAG: emit diagnostic only when
+# cache_read == 0 AND cache_creation > this many tokens. Filters out tiny
+# incremental writes (just-the-new-message-tail cache writes) and focuses
+# on the expensive full-prefix cold writes we want to understand.
+CACHE_MISS_DIAG_MIN_CREATION_TOKENS = 3000
+
+
+def _is_user_in_cache_obs_sample(at_user_id):
+    # Returns True if this user's request should be logged for cache observability.
+    # Combines (a) the always-on test user, and (b) a deterministic % sample of
+    # broader traffic. False for missing/non-numeric ids so unknown traffic is
+    # never accidentally logged.
+    if not at_user_id:
+        return False
+    if CACHE_OBS_USER_ID and at_user_id == CACHE_OBS_USER_ID:
+        return True
+    pct = CACHE_OBS_SAMPLE_PCT
+    if not pct or pct <= 0:
+        return False
+    if pct >= 100:
+        return True
+    try:
+        return (int(at_user_id) % 100) < pct
+    except (ValueError, TypeError):
+        return False
 
 # v2 cache-layout rollout: deterministic 50/50 split by at_user_id % MOD.
 # Users whose (int(at_user_id) % V2_CACHE_ROLLOUT_MOD) < V2_CACHE_ROLLOUT_BUCKET_MAX
@@ -684,11 +719,12 @@ class AnthropicClient(LLMClientBase):
     def _log_cache_observation_request(self, data: dict, num_input_messages: int) -> None:
         # Emits a structured log line describing the request prefix structure
         # so we can correlate it with the cache_read/cache_creation token counts
-        # in the response. Gated to one user_id to keep volume bounded.
+        # in the response. Gated by `_is_user_in_cache_obs_sample` which combines
+        # an always-on test user with a small-percentage sample of broader traffic.
         # `at_user_id` is set by LLMClientBase.__init__; use getattr so a code
         # path that instantiates without going through the base init still no-ops.
         at_user_id = getattr(self, "at_user_id", None)
-        if not CACHE_OBS_USER_ID or at_user_id != CACHE_OBS_USER_ID:
+        if not _is_user_in_cache_obs_sample(at_user_id):
             return
         try:
             def _hash_short(text: str) -> str:
@@ -769,9 +805,12 @@ class AnthropicClient(LLMClientBase):
 
     def _log_cache_observation_usage(self, usage, endpoint_type: Optional[str], model: Optional[str]) -> None:
         # Emits Anthropic usage with cache_read / cache_creation tokens so we can
-        # measure the effect of caching changes against a fixed conversation.
+        # measure the effect of caching changes. Gated to the same sample as
+        # _log_cache_observation_request. Also emits CACHE_MISS_DIAG on cold misses
+        # (cache_read == 0 AND cache_creation > threshold) so we can identify what
+        # the request looked like when caching failed to engage.
         at_user_id = getattr(self, "at_user_id", None)
-        if not CACHE_OBS_USER_ID or at_user_id != CACHE_OBS_USER_ID:
+        if not _is_user_in_cache_obs_sample(at_user_id):
             return
         try:
             if hasattr(usage, "model_dump"):
@@ -780,16 +819,32 @@ class AnthropicClient(LLMClientBase):
                 usage_dict = usage
             else:
                 usage_dict = {"raw": str(usage)}
+            cache_create = usage_dict.get("cache_creation_input_tokens") or 0
+            cache_read = usage_dict.get("cache_read_input_tokens") or 0
             payload = {
                 "at_user_id": at_user_id,
                 "model": model,
                 "endpoint_type": endpoint_type,
                 "input_tokens": usage_dict.get("input_tokens"),
                 "output_tokens": usage_dict.get("output_tokens"),
-                "cache_creation_input_tokens": usage_dict.get("cache_creation_input_tokens"),
-                "cache_read_input_tokens": usage_dict.get("cache_read_input_tokens"),
+                "cache_creation_input_tokens": cache_create,
+                "cache_read_input_tokens": cache_read,
             }
             logger.info("[CACHE_OBS_USAGE] %s", json.dumps(payload, default=str))
+
+            # Cold-miss diagnostic: when cache_read is zero but cache_creation is
+            # large, the cache was completely missed and we wrote a fresh full
+            # prefix. Tag this so we can grep for the request shapes that cause it.
+            if cache_read == 0 and cache_create >= CACHE_MISS_DIAG_MIN_CREATION_TOKENS:
+                diag = {
+                    "at_user_id": at_user_id,
+                    "model": model,
+                    "endpoint_type": endpoint_type,
+                    "cache_creation_input_tokens": cache_create,
+                    "input_tokens": usage_dict.get("input_tokens"),
+                    "agent_id": getattr(self, "_cache_obs_agent_id", None),
+                }
+                logger.info("[CACHE_MISS_DIAG] %s", json.dumps(diag, default=str))
         except Exception as e:
             logger.warning("[CACHE_OBS_USAGE] logging failed: %s", e)
 
