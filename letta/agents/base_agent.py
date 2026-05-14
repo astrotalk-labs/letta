@@ -152,6 +152,50 @@ class BaseAgent(ABC):
                     except Exception:
                         pass
 
+                # Test-user-gated optimization: skip the system message rewrite when
+                # the ONLY differences are 'volatile attribute' values that update on
+                # nearly every call but represent no semantic memory change:
+                #   - chars_current="N" on memory block headers (bumps on every
+                #     core_memory_append, even by 1 char)
+                #   - the memory_edit_timestamp line (refreshed every rebuild)
+                # PR #59 observability data showed ~half of MEMORY_REBUILDs have
+                # diff_chars in 627-631 with old_system_chars == new_system_chars,
+                # which is the signature of pure attribute updates. The LLM does not
+                # act on these values (they are informational metadata), so skipping
+                # the rewrite is behaviour-equivalent for the model but eliminates
+                # the cache invalidation each one was causing. Gated to test user
+                # 92744418 first to verify no behaviour drift; follow-up PR removes
+                # the gate to graduate universally.
+                SKIP_TRIVIAL_REBUILD_USER_ID = "92744418"
+                if _mr_at_user_id == SKIP_TRIVIAL_REBUILD_USER_ID:
+                    try:
+                        import re as _re
+                        def _strip_volatile(text: str) -> str:
+                            text = _re.sub(r' chars_current="\d+"', "", text)
+                            text = _re.sub(r"Memory blocks were last modified: [^\n]+", "X", text)
+                            return text
+                        if _strip_volatile(curr_system_message_text) == _strip_volatile(new_system_message_str):
+                            try:
+                                import json as _json
+                                logger.info(
+                                    "[MEMORY_REBUILD_SKIPPED] %s",
+                                    _json.dumps({
+                                        "at_user_id": _mr_at_user_id,
+                                        "agent_id": agent_state.id,
+                                        "diff_chars": len(diff),
+                                        "system_chars": len(curr_system_message_text),
+                                        "reason": "volatile_attributes_only",
+                                    }, default=str),
+                                )
+                            except Exception:
+                                pass
+                            return in_context_messages
+                    except Exception:
+                        # If the volatile-detection itself errors, fall through to the
+                        # original rebuild path. Never block memory updates due to a
+                        # cache optimization.
+                        pass
+
                 # [DB Call] Update Messages
                 new_system_message = await self.message_manager.update_message_by_id_async(
                     curr_system_message.id, message_update=MessageUpdate(content=new_system_message_str), actor=self.actor
