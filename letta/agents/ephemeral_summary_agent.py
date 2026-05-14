@@ -130,11 +130,26 @@ class EphemeralSummaryAgent(BaseAgent):
 
             def _invoke():
                 client = anthropic.Anthropic(api_key=model_settings.anthropic_api_key)
-                return client.messages.create(
+                # Cache the ~11k-token summarizer system prompt. SUMMARIZER_FIRED logs
+                # show this code path runs roughly 1.5 times/second in production, each
+                # call previously paying full price for the entire system prompt. With
+                # cache_control: ephemeral and the prompt-caching-2024-07-31 beta, the
+                # same prompt becomes a cache_read at 0.1x cost on subsequent calls
+                # (within the 5-minute TTL). System prompt is fully static (loaded
+                # from prompts/summary_system_prompt.txt) so it caches across all
+                # summarizer invocations regardless of which agent triggered them.
+                return client.beta.messages.create(
                     model="claude-haiku-4-5",
                     max_tokens=1500,
-                    system=system,
+                    system=[
+                        {
+                            "type": "text",
+                            "text": system,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
                     messages=messages,
+                    betas=["prompt-caching-2024-07-31"],
                 )
 
             response = await asyncio.to_thread(_invoke)
