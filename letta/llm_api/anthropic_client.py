@@ -90,7 +90,7 @@ def _is_user_in_cache_obs_sample(at_user_id):
 # Test user CACHE_OBS_USER_ID is always force-included so observability logs
 # remain comparable to the PR #54 baseline.
 V2_CACHE_ROLLOUT_MOD = 10
-V2_CACHE_ROLLOUT_BUCKET_MAX = 5
+V2_CACHE_ROLLOUT_BUCKET_MAX = 10
 
 
 def _is_user_in_v2_cache_bucket(at_user_id):
