@@ -429,22 +429,14 @@ class AnthropicClient(LLMClientBase):
             )
             tools_for_request = [OpenAITool(function=f) for f in tools_with_inner_thoughts]
 
-        # Test-user-gated: sort tools by name before serialization to eliminate the
-        # non-deterministic ordering from the SQLAlchemy `tools` relationship in
-        # letta/orm/agent.py (no `order_by` clause). When tools come back in different
-        # orders across calls, the entire request prefix hash changes and ALL cache
-        # breakpoints downstream invalidate, even though tool content is identical.
-        # Test logs from PR #55 show 3 distinct tools-hashes across one 26-min
-        # conversation (~22% of calls had a reordered tools list). Gated to
-        # CACHE_OBS_USER_ID so we can verify the effect in observability logs
-        # before graduating to all traffic.
-        _tools_sort_user_id = getattr(self, "at_user_id", None)
-        if (
-            tools_for_request
-            and len(tools_for_request) > 0
-            and CACHE_OBS_USER_ID
-            and _tools_sort_user_id == CACHE_OBS_USER_ID
-        ):
+        # Sort tools by name before serialization to eliminate non-deterministic
+        # ordering from the SQLAlchemy `tools` relationship in letta/orm/agent.py
+        # (no `order_by` clause). Without this, tools come back in different orders
+        # across calls and the request prefix hash changes — invalidating ALL cache
+        # breakpoints downstream even though tool content is identical. PR #57
+        # verified the fix mechanically for the gated test user (tools hash now
+        # constant); this graduates to all traffic.
+        if tools_for_request and len(tools_for_request) > 0:
             tools_for_request = sorted(tools_for_request, key=lambda t: t.function.name)
 
         if tools_for_request and len(tools_for_request) > 0:
