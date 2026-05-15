@@ -83,14 +83,18 @@ def _is_user_in_cache_obs_sample(at_user_id):
     except (ValueError, TypeError):
         return False
 
-# v2 cache-layout rollout: deterministic 50/50 split by at_user_id % MOD.
-# Users whose (int(at_user_id) % V2_CACHE_ROLLOUT_MOD) < V2_CACHE_ROLLOUT_BUCKET_MAX
-# get the v2 system-block layout + memory_metadata stabilization + messages-tail
-# cache_control. The other half stays on the v1 path.
-# Test user CACHE_OBS_USER_ID is always force-included so observability logs
-# remain comparable to the PR #54 baseline.
+# v2 cache-layout rollout: reverted to 0% after May 14 graduation regression.
+# Per-order cost rose from $0.314 (v1 baseline May 11) to $0.366 (+17%) on
+# May 14 when v2 went 100%. Anthropic API analysis: cache_creation share for
+# Sonnet 4.5 jumped 53% -> 71% the same hour as graduation, and the new
+# messages-tail breakpoint paired with mid-turn core_memory_append rebuilds
+# causes cascade cache invalidation (cache_read collapses to 2114 on ~30%
+# of calls, with 25-50k tokens of cache_creation per cold miss).
+# Setting BUCKET_MAX=0 sends all production users back to v1. Test user
+# CACHE_OBS_USER_ID stays on v2 (force-included below) so we can keep
+# v1-vs-v2 comparable in obs logs while we ship the cascade fix on v1.
 V2_CACHE_ROLLOUT_MOD = 10
-V2_CACHE_ROLLOUT_BUCKET_MAX = 10
+V2_CACHE_ROLLOUT_BUCKET_MAX = 0
 
 
 def _is_user_in_v2_cache_bucket(at_user_id):
