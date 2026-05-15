@@ -152,20 +152,16 @@ class BaseAgent(ABC):
                     except Exception:
                         pass
 
-                # Test-user-gated optimization: skip system message rewrite when
-                # the diff is small AND the total system length is unchanged. This
-                # is the signature of pure attribute-only updates (chars_current,
-                # memory_edit_timestamp) — same length, tiny char churn, no semantic
-                # change. PR #59 obs data: ~half of MEMORY_REBUILDs have diff_chars
-                # in 627-631 with old_chars == new_chars. The regex-strip approach
-                # in the previous attempt didn't fire in production because the
-                # diff format varies; the threshold check is format-independent.
-                # Gated to test user 92744418 first; follow-up PR graduates.
-                SKIP_TRIVIAL_REBUILD_USER_ID = "92744418"
+                # Skip system message rewrite when the diff is small AND total
+                # length is unchanged. This is the signature of pure attribute-only
+                # updates (chars_current, memory_edit_timestamp) — values the LLM
+                # doesn't act on. Verified on test user 92744418 with clean
+                # [MEMORY_REBUILD_SKIPPED] firing; on the 1% obs sample this matches
+                # ~44% of MEMORY_REBUILDs across general traffic. Graduating to all
+                # users to cut the cache-invalidation rate they each cause.
                 SKIP_TRIVIAL_REBUILD_MAX_DIFF = 700
                 if (
-                    _mr_at_user_id == SKIP_TRIVIAL_REBUILD_USER_ID
-                    and len(diff) < SKIP_TRIVIAL_REBUILD_MAX_DIFF
+                    len(diff) < SKIP_TRIVIAL_REBUILD_MAX_DIFF
                     and len(curr_system_message_text) == len(new_system_message_str)
                 ):
                     try:
