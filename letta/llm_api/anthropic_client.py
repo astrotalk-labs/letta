@@ -55,7 +55,7 @@ CACHE_OBS_USER_ID = "92744418"
 # At 1%, on ~22k calls/hour we expect ~220 sampled calls/hour = manageable
 # log volume. We need this to determine the dominant cache-invalidation
 # source in aggregate production traffic (not just one user).
-CACHE_OBS_SAMPLE_PCT = 1
+CACHE_OBS_SAMPLE_PCT = 5
 
 # Cold-miss threshold for CACHE_MISS_DIAG: emit diagnostic only when
 # cache_read == 0 AND cache_creation > this many tokens. Filters out tiny
@@ -486,6 +486,16 @@ class AnthropicClient(LLMClientBase):
             raise RuntimeError(f"First message is not a system message, instead has role {messages[0].role}")
         system_content = messages[0].content if isinstance(messages[0].content, str) else messages[0].content[0].text
 
+        # Capture agent_id from the message stream onto the client so downstream
+        # observability hooks (CACHE_OBS_REQ/USAGE, CACHE_MISS_DIAG) can include
+        # it in their payloads. The agent_id lets us group consecutive calls per
+        # agent during log analysis and compute realized cache hit rate across
+        # sequential turns. PydanticMessage carries .agent_id.
+        try:
+            self._cache_obs_agent_id = getattr(messages[0], "agent_id", None)
+        except Exception:
+            self._cache_obs_agent_id = None
+
         # Cache-optimization rollout: 50/50 split by user_id % 10. Users in the v2
         # bucket get the v2 splitter (keeps base instructions and tool_usage_rules
         # cached even when persona mutates), stabilized <memory_metadata>, and
@@ -767,29 +777,59 @@ class AnthropicClient(LLMClientBase):
             msg_summary = []
             role_counts: Dict[str, int] = {}
             total_msg_chars = 0
+            messages_tail_cache_idx = None
+            messages_tail_prefix_chars = 0
+            running_prefix_chars = 0
             for i, msg in enumerate(messages):
                 role = msg.get("role", "?")
                 role_counts[role] = role_counts.get(role, 0) + 1
                 content = msg.get("content", "")
+                # Detect cache_control on this message (the v2 tail breakpoint
+                # is placed on the last assistant message). When present, capture
+                # the position and the running prefix size up to and including
+                # this message so we can compute the cached portion size and
+                # compare against cache_read_input_tokens from the response.
+                has_cache_ctrl = False
                 if isinstance(content, list):
                     ctext = json.dumps(content, sort_keys=True, default=str)
+                    for blk in content:
+                        if isinstance(blk, dict) and blk.get("cache_control"):
+                            has_cache_ctrl = True
+                            break
                 else:
                     ctext = str(content)
                 total_msg_chars += len(ctext)
+                running_prefix_chars += len(ctext)
+                if has_cache_ctrl:
+                    messages_tail_cache_idx = i
+                    messages_tail_prefix_chars = running_prefix_chars
                 preview = ctext[:80].replace("\n", " ")
                 msg_summary.append({
                     "idx": i,
                     "role": role,
                     "chars": len(ctext),
                     "hash": _hash_short(ctext),
+                    "cache_control": has_cache_ctrl,
                     "prefix": preview,
                 })
 
+            # Sum the chars/tokens of cached system blocks. Together with the
+            # messages-tail cached prefix, this is the theoretical maximum
+            # cache_read tokens for this call. Comparing against the response's
+            # cache_read_input_tokens tells us how much of the available cache
+            # actually hit.
+            cached_system_chars = sum(b["chars"] for b in sys_summary if b.get("cache_control"))
+            v2_active = _is_user_in_v2_cache_bucket(at_user_id)
+
             payload = {
                 "at_user_id": at_user_id,
+                "agent_id": getattr(self, "_cache_obs_agent_id", None),
                 "model": data.get("model"),
+                "v2_active": v2_active,
                 "input_message_count": num_input_messages,
                 "system_block_count": len(system_blocks),
+                "system_cached_chars": cached_system_chars,
+                "system_cached_approx_tokens": cached_system_chars // 4,
                 "system_blocks": sys_summary,
                 "dynamic_tail_preview": dyn_tail_preview,
                 "tools": tools_info,
@@ -797,6 +837,9 @@ class AnthropicClient(LLMClientBase):
                 "messages_role_counts": role_counts,
                 "messages_total_chars": total_msg_chars,
                 "messages_total_approx_tokens": total_msg_chars // 4,
+                "messages_tail_cache_idx": messages_tail_cache_idx,
+                "messages_tail_prefix_chars": messages_tail_prefix_chars,
+                "messages_tail_prefix_approx_tokens": messages_tail_prefix_chars // 4,
                 "messages": msg_summary,
             }
             logger.info("[CACHE_OBS_REQ] %s", json.dumps(payload, default=str))
@@ -823,6 +866,7 @@ class AnthropicClient(LLMClientBase):
             cache_read = usage_dict.get("cache_read_input_tokens") or 0
             payload = {
                 "at_user_id": at_user_id,
+                "agent_id": getattr(self, "_cache_obs_agent_id", None),
                 "model": model,
                 "endpoint_type": endpoint_type,
                 "input_tokens": usage_dict.get("input_tokens"),
