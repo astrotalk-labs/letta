@@ -155,6 +155,40 @@ class EphemeralSummaryAgent(BaseAgent):
             response = await asyncio.to_thread(_invoke)
             summary = response.content[0].text.strip()
 
+            # Cache-observability for the summarizer. PR #60 enabled cache_control
+            # on the system prompt but the dashboard impact was smaller than sized.
+            # We don't know if cache_read is hitting — log usage from response so we
+            # can see ground truth. Sampled to 1% (plus test user) via the existing
+            # helper to bound log volume. Includes a hash of the messages array and
+            # system prompt to spot non-determinism that would invalidate the cache.
+            try:
+                from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
+                if _is_user_in_cache_obs_sample(self.at_user_id):
+                    import hashlib as _hashlib
+                    import json as _json
+                    usage = getattr(response, "usage", None)
+                    _msgs_serialized = _json.dumps(messages, sort_keys=True, default=str)
+                    _msgs_hash = _hashlib.sha256(_msgs_serialized.encode()).hexdigest()[:12]
+                    _system_hash = _hashlib.sha256(system.encode()).hexdigest()[:12]
+                    logger.info(
+                        "[SUMMARIZER_USAGE] %s",
+                        _json.dumps({
+                            "at_user_id": self.at_user_id,
+                            "agent_id": self.agent_id,
+                            "input_tokens": getattr(usage, "input_tokens", None),
+                            "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", None),
+                            "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", None),
+                            "output_tokens": getattr(usage, "output_tokens", None),
+                            "system_chars": len(system),
+                            "system_hash": _system_hash,
+                            "messages_chars": len(_msgs_serialized),
+                            "messages_hash": _msgs_hash,
+                            "num_messages": len(messages),
+                        }, default=str),
+                    )
+            except Exception:
+                pass
+
         logger.warning(f"[SUMMARIZER] Summarization completed | at_user_id={self.at_user_id} | agent_id={self.agent_id} | provider={'azure' if use_azure else 'anthropic'} | summary_length={len(summary)}")
 
         if block.limit and len(summary) > block.limit:
