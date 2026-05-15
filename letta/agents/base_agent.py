@@ -152,49 +152,37 @@ class BaseAgent(ABC):
                     except Exception:
                         pass
 
-                # Test-user-gated optimization: skip the system message rewrite when
-                # the ONLY differences are 'volatile attribute' values that update on
-                # nearly every call but represent no semantic memory change:
-                #   - chars_current="N" on memory block headers (bumps on every
-                #     core_memory_append, even by 1 char)
-                #   - the memory_edit_timestamp line (refreshed every rebuild)
-                # PR #59 observability data showed ~half of MEMORY_REBUILDs have
-                # diff_chars in 627-631 with old_system_chars == new_system_chars,
-                # which is the signature of pure attribute updates. The LLM does not
-                # act on these values (they are informational metadata), so skipping
-                # the rewrite is behaviour-equivalent for the model but eliminates
-                # the cache invalidation each one was causing. Gated to test user
-                # 92744418 first to verify no behaviour drift; follow-up PR removes
-                # the gate to graduate universally.
+                # Test-user-gated optimization: skip system message rewrite when
+                # the diff is small AND the total system length is unchanged. This
+                # is the signature of pure attribute-only updates (chars_current,
+                # memory_edit_timestamp) — same length, tiny char churn, no semantic
+                # change. PR #59 obs data: ~half of MEMORY_REBUILDs have diff_chars
+                # in 627-631 with old_chars == new_chars. The regex-strip approach
+                # in the previous attempt didn't fire in production because the
+                # diff format varies; the threshold check is format-independent.
+                # Gated to test user 92744418 first; follow-up PR graduates.
                 SKIP_TRIVIAL_REBUILD_USER_ID = "92744418"
-                if _mr_at_user_id == SKIP_TRIVIAL_REBUILD_USER_ID:
+                SKIP_TRIVIAL_REBUILD_MAX_DIFF = 700
+                if (
+                    _mr_at_user_id == SKIP_TRIVIAL_REBUILD_USER_ID
+                    and len(diff) < SKIP_TRIVIAL_REBUILD_MAX_DIFF
+                    and len(curr_system_message_text) == len(new_system_message_str)
+                ):
                     try:
-                        import re as _re
-                        def _strip_volatile(text: str) -> str:
-                            text = _re.sub(r' chars_current="\d+"', "", text)
-                            text = _re.sub(r"Memory blocks were last modified: [^\n]+", "X", text)
-                            return text
-                        if _strip_volatile(curr_system_message_text) == _strip_volatile(new_system_message_str):
-                            try:
-                                import json as _json
-                                logger.info(
-                                    "[MEMORY_REBUILD_SKIPPED] %s",
-                                    _json.dumps({
-                                        "at_user_id": _mr_at_user_id,
-                                        "agent_id": agent_state.id,
-                                        "diff_chars": len(diff),
-                                        "system_chars": len(curr_system_message_text),
-                                        "reason": "volatile_attributes_only",
-                                    }, default=str),
-                                )
-                            except Exception:
-                                pass
-                            return in_context_messages
+                        import json as _json
+                        logger.info(
+                            "[MEMORY_REBUILD_SKIPPED] %s",
+                            _json.dumps({
+                                "at_user_id": _mr_at_user_id,
+                                "agent_id": agent_state.id,
+                                "diff_chars": len(diff),
+                                "system_chars": len(curr_system_message_text),
+                                "reason": "small_diff_equal_length",
+                            }, default=str),
+                        )
                     except Exception:
-                        # If the volatile-detection itself errors, fall through to the
-                        # original rebuild path. Never block memory updates due to a
-                        # cache optimization.
                         pass
+                    return in_context_messages
 
                 # [DB Call] Update Messages
                 new_system_message = await self.message_manager.update_message_by_id_async(
