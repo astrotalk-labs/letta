@@ -1130,11 +1130,11 @@ class LettaAgent(BaseAgent):
         # They are re-sent fresh on every call, so historical copies accumulate in DB and
         # grow input tokens O(N) per turn. Filtering them here stops the accumulation
         # without any behaviour change — the LLM still receives them for the current call.
-        # Gated to userId=92744418 for safe rollout.
-        if self.at_user_id == "92744418":
-            _persistable_initial = [m for m in (initial_messages or []) if m.role != MessageRole.system]
-        else:
-            _persistable_initial = initial_messages or []
+        # Validated for many days on userId=92744418 with no qualitative regression in
+        # 20-30 turn conversations. Graduating universally: stale system-event copies in
+        # history are noise that contradicts the fresh per-turn injections from go-ai-chat
+        # (e.g., yesterday's "current time is 2:30 PM" conflicting with today's fresh stamp).
+        _persistable_initial = [m for m in (initial_messages or []) if m.role != MessageRole.system]
         persisted_messages = await self.message_manager.create_many_messages_async(
             _persistable_initial + tool_call_messages, actor=self.actor
         )
