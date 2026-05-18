@@ -42,10 +42,77 @@ from letta.settings import model_settings
 
 DUMMY_FIRST_USER_MESSAGE = "User initializing bootup sequence."
 
-# Gate for cache-observability logs + v2 cache-optimization path. Set to a
-# single user_id to capture per-request structure + Anthropic usage breakdown
-# AND apply the v2 cache layout for that user only. Empty string disables both.
+# Gate for cache-observability logs. Set to a single user_id who is always
+# observed (force-included regardless of sampling). Empty string disables the
+# always-on user. The v2 cache-optimization path is controlled by the
+# V2_CACHE_ROLLOUT_* knobs below, not by this constant.
 CACHE_OBS_USER_ID = "92744418"
+
+# Broader sampling for cache-observability logs across all v2 traffic.
+# Percentage of users whose (int(at_user_id) % 100) < CACHE_OBS_SAMPLE_PCT
+# will have CACHE_OBS_REQ/USAGE/MISS_DIAG logs emitted in addition to the
+# always-on CACHE_OBS_USER_ID. Set to 0 to disable broader sampling.
+# At 1%, on ~22k calls/hour we expect ~220 sampled calls/hour = manageable
+# log volume. We need this to determine the dominant cache-invalidation
+# source in aggregate production traffic (not just one user).
+CACHE_OBS_SAMPLE_PCT = 5
+
+# Cold-miss threshold for CACHE_MISS_DIAG: emit diagnostic only when
+# cache_read == 0 AND cache_creation > this many tokens. Filters out tiny
+# incremental writes (just-the-new-message-tail cache writes) and focuses
+# on the expensive full-prefix cold writes we want to understand.
+CACHE_MISS_DIAG_MIN_CREATION_TOKENS = 3000
+
+
+def _is_user_in_cache_obs_sample(at_user_id):
+    # Returns True if this user's request should be logged for cache observability.
+    # Combines (a) the always-on test user, and (b) a deterministic % sample of
+    # broader traffic. False for missing/non-numeric ids so unknown traffic is
+    # never accidentally logged.
+    if not at_user_id:
+        return False
+    if CACHE_OBS_USER_ID and at_user_id == CACHE_OBS_USER_ID:
+        return True
+    pct = CACHE_OBS_SAMPLE_PCT
+    if not pct or pct <= 0:
+        return False
+    if pct >= 100:
+        return True
+    try:
+        return (int(at_user_id) % 100) < pct
+    except (ValueError, TypeError):
+        return False
+
+# v2 cache-layout rollout: reverted to 0% after May 14 graduation regression.
+# Per-order cost rose from $0.314 (v1 baseline May 11) to $0.366 (+17%) on
+# May 14 when v2 went 100%. Anthropic API analysis: cache_creation share for
+# Sonnet 4.5 jumped 53% -> 71% the same hour as graduation, and the new
+# messages-tail breakpoint paired with mid-turn core_memory_append rebuilds
+# causes cascade cache invalidation (cache_read collapses to 2114 on ~30%
+# of calls, with 25-50k tokens of cache_creation per cold miss).
+# Setting BUCKET_MAX=0 sends all production users back to v1. Test user
+# CACHE_OBS_USER_ID stays on v2 (force-included below) so we can keep
+# v1-vs-v2 comparable in obs logs while we ship the cascade fix on v1.
+V2_CACHE_ROLLOUT_MOD = 10
+V2_CACHE_ROLLOUT_BUCKET_MAX = 0
+
+
+def _is_user_in_v2_cache_bucket(at_user_id):
+    # Returns True if the user_id falls in the v2 rollout bucket. False for
+    # missing/non-numeric ids so unknown traffic defaults to the v1 path (fail-closed).
+    if not at_user_id:
+        return False
+    if CACHE_OBS_USER_ID and at_user_id == CACHE_OBS_USER_ID:
+        return True
+    if V2_CACHE_ROLLOUT_BUCKET_MAX <= 0:
+        return False
+    if V2_CACHE_ROLLOUT_BUCKET_MAX >= V2_CACHE_ROLLOUT_MOD:
+        return True
+    try:
+        return (int(at_user_id) % V2_CACHE_ROLLOUT_MOD) < V2_CACHE_ROLLOUT_BUCKET_MAX
+    except (ValueError, TypeError):
+        return False
+
 
 # --- Geography / business-based API key routing ---
 # Only active for these test user IDs. Once validated, the set can be widened.
@@ -518,6 +585,16 @@ class AnthropicClient(LLMClientBase):
             )
             tools_for_request = [OpenAITool(function=f) for f in tools_with_inner_thoughts]
 
+        # Sort tools by name before serialization to eliminate non-deterministic
+        # ordering from the SQLAlchemy `tools` relationship in letta/orm/agent.py
+        # (no `order_by` clause). Without this, tools come back in different orders
+        # across calls and the request prefix hash changes — invalidating ALL cache
+        # breakpoints downstream even though tool content is identical. PR #57
+        # verified the fix mechanically for the gated test user (tools hash now
+        # constant); this graduates to all traffic.
+        if tools_for_request and len(tools_for_request) > 0:
+            tools_for_request = sorted(tools_for_request, key=lambda t: t.function.name)
+
         if tools_for_request and len(tools_for_request) > 0:
             # TODO eventually enable parallel tool use
             data["tools"] = convert_tools_to_anthropic_format(tools_for_request)
@@ -530,12 +607,24 @@ class AnthropicClient(LLMClientBase):
             raise RuntimeError(f"First message is not a system message, instead has role {messages[0].role}")
         system_content = messages[0].content if isinstance(messages[0].content, str) else messages[0].content[0].text
 
-        # Gated cache-optimization path: for at_user_id == CACHE_OBS_USER_ID, use the v2 splitter
-        # that keeps base instructions and tool_usage_rules cached even when the persona block
-        # mutates between turns. Also stabilizes <memory_metadata> so it stops invalidating
-        # downstream cache lookups. All other users get the existing v1 path unchanged.
+        # Capture agent_id from the message stream onto the client so downstream
+        # observability hooks (CACHE_OBS_REQ/USAGE, CACHE_MISS_DIAG) can include
+        # it in their payloads. The agent_id lets us group consecutive calls per
+        # agent during log analysis and compute realized cache hit rate across
+        # sequential turns. PydanticMessage carries .agent_id.
+        try:
+            self._cache_obs_agent_id = getattr(messages[0], "agent_id", None)
+        except Exception:
+            self._cache_obs_agent_id = None
+
+        # Cache-optimization rollout: 50/50 split by user_id % 10. Users in the v2
+        # bucket get the v2 splitter (keeps base instructions and tool_usage_rules
+        # cached even when persona mutates), stabilized <memory_metadata>, and
+        # cache_control on the last assistant message. The other 50% stay on v1.
+        # Test user CACHE_OBS_USER_ID is always in the v2 bucket so observability
+        # logs remain comparable to the PR #54 baseline.
         at_user_id_for_opt = getattr(self, "at_user_id", None)
-        use_v2_caching = bool(CACHE_OBS_USER_ID and at_user_id_for_opt == CACHE_OBS_USER_ID)
+        use_v2_caching = _is_user_in_v2_cache_bucket(at_user_id_for_opt)
         v2_split = self._split_system_message_v2_for_caching(system_content) if use_v2_caching else None
         if v2_split is not None:
             static_base, dynamic_persona, dynamic_user_memory, static_rules, dynamic_metadata = v2_split
@@ -761,11 +850,12 @@ class AnthropicClient(LLMClientBase):
     def _log_cache_observation_request(self, data: dict, num_input_messages: int) -> None:
         # Emits a structured log line describing the request prefix structure
         # so we can correlate it with the cache_read/cache_creation token counts
-        # in the response. Gated to one user_id to keep volume bounded.
+        # in the response. Gated by `_is_user_in_cache_obs_sample` which combines
+        # an always-on test user with a small-percentage sample of broader traffic.
         # `at_user_id` is set by LLMClientBase.__init__; use getattr so a code
         # path that instantiates without going through the base init still no-ops.
         at_user_id = getattr(self, "at_user_id", None)
-        if not CACHE_OBS_USER_ID or at_user_id != CACHE_OBS_USER_ID:
+        if not _is_user_in_cache_obs_sample(at_user_id):
             return
         try:
             def _hash_short(text: str) -> str:
@@ -808,29 +898,59 @@ class AnthropicClient(LLMClientBase):
             msg_summary = []
             role_counts: Dict[str, int] = {}
             total_msg_chars = 0
+            messages_tail_cache_idx = None
+            messages_tail_prefix_chars = 0
+            running_prefix_chars = 0
             for i, msg in enumerate(messages):
                 role = msg.get("role", "?")
                 role_counts[role] = role_counts.get(role, 0) + 1
                 content = msg.get("content", "")
+                # Detect cache_control on this message (the v2 tail breakpoint
+                # is placed on the last assistant message). When present, capture
+                # the position and the running prefix size up to and including
+                # this message so we can compute the cached portion size and
+                # compare against cache_read_input_tokens from the response.
+                has_cache_ctrl = False
                 if isinstance(content, list):
                     ctext = json.dumps(content, sort_keys=True, default=str)
+                    for blk in content:
+                        if isinstance(blk, dict) and blk.get("cache_control"):
+                            has_cache_ctrl = True
+                            break
                 else:
                     ctext = str(content)
                 total_msg_chars += len(ctext)
+                running_prefix_chars += len(ctext)
+                if has_cache_ctrl:
+                    messages_tail_cache_idx = i
+                    messages_tail_prefix_chars = running_prefix_chars
                 preview = ctext[:80].replace("\n", " ")
                 msg_summary.append({
                     "idx": i,
                     "role": role,
                     "chars": len(ctext),
                     "hash": _hash_short(ctext),
+                    "cache_control": has_cache_ctrl,
                     "prefix": preview,
                 })
 
+            # Sum the chars/tokens of cached system blocks. Together with the
+            # messages-tail cached prefix, this is the theoretical maximum
+            # cache_read tokens for this call. Comparing against the response's
+            # cache_read_input_tokens tells us how much of the available cache
+            # actually hit.
+            cached_system_chars = sum(b["chars"] for b in sys_summary if b.get("cache_control"))
+            v2_active = _is_user_in_v2_cache_bucket(at_user_id)
+
             payload = {
                 "at_user_id": at_user_id,
+                "agent_id": getattr(self, "_cache_obs_agent_id", None),
                 "model": data.get("model"),
+                "v2_active": v2_active,
                 "input_message_count": num_input_messages,
                 "system_block_count": len(system_blocks),
+                "system_cached_chars": cached_system_chars,
+                "system_cached_approx_tokens": cached_system_chars // 4,
                 "system_blocks": sys_summary,
                 "dynamic_tail_preview": dyn_tail_preview,
                 "tools": tools_info,
@@ -838,6 +958,9 @@ class AnthropicClient(LLMClientBase):
                 "messages_role_counts": role_counts,
                 "messages_total_chars": total_msg_chars,
                 "messages_total_approx_tokens": total_msg_chars // 4,
+                "messages_tail_cache_idx": messages_tail_cache_idx,
+                "messages_tail_prefix_chars": messages_tail_prefix_chars,
+                "messages_tail_prefix_approx_tokens": messages_tail_prefix_chars // 4,
                 "messages": msg_summary,
             }
             logger.info("[CACHE_OBS_REQ] %s", json.dumps(payload, default=str))
@@ -846,9 +969,12 @@ class AnthropicClient(LLMClientBase):
 
     def _log_cache_observation_usage(self, usage, endpoint_type: Optional[str], model: Optional[str]) -> None:
         # Emits Anthropic usage with cache_read / cache_creation tokens so we can
-        # measure the effect of caching changes against a fixed conversation.
+        # measure the effect of caching changes. Gated to the same sample as
+        # _log_cache_observation_request. Also emits CACHE_MISS_DIAG on cold misses
+        # (cache_read == 0 AND cache_creation > threshold) so we can identify what
+        # the request looked like when caching failed to engage.
         at_user_id = getattr(self, "at_user_id", None)
-        if not CACHE_OBS_USER_ID or at_user_id != CACHE_OBS_USER_ID:
+        if not _is_user_in_cache_obs_sample(at_user_id):
             return
         try:
             if hasattr(usage, "model_dump"):
@@ -857,16 +983,33 @@ class AnthropicClient(LLMClientBase):
                 usage_dict = usage
             else:
                 usage_dict = {"raw": str(usage)}
+            cache_create = usage_dict.get("cache_creation_input_tokens") or 0
+            cache_read = usage_dict.get("cache_read_input_tokens") or 0
             payload = {
                 "at_user_id": at_user_id,
+                "agent_id": getattr(self, "_cache_obs_agent_id", None),
                 "model": model,
                 "endpoint_type": endpoint_type,
                 "input_tokens": usage_dict.get("input_tokens"),
                 "output_tokens": usage_dict.get("output_tokens"),
-                "cache_creation_input_tokens": usage_dict.get("cache_creation_input_tokens"),
-                "cache_read_input_tokens": usage_dict.get("cache_read_input_tokens"),
+                "cache_creation_input_tokens": cache_create,
+                "cache_read_input_tokens": cache_read,
             }
             logger.info("[CACHE_OBS_USAGE] %s", json.dumps(payload, default=str))
+
+            # Cold-miss diagnostic: when cache_read is zero but cache_creation is
+            # large, the cache was completely missed and we wrote a fresh full
+            # prefix. Tag this so we can grep for the request shapes that cause it.
+            if cache_read == 0 and cache_create >= CACHE_MISS_DIAG_MIN_CREATION_TOKENS:
+                diag = {
+                    "at_user_id": at_user_id,
+                    "model": model,
+                    "endpoint_type": endpoint_type,
+                    "cache_creation_input_tokens": cache_create,
+                    "input_tokens": usage_dict.get("input_tokens"),
+                    "agent_id": getattr(self, "_cache_obs_agent_id", None),
+                }
+                logger.info("[CACHE_MISS_DIAG] %s", json.dumps(diag, default=str))
         except Exception as e:
             logger.warning("[CACHE_OBS_USAGE] logging failed: %s", e)
 

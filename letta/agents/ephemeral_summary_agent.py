@@ -54,6 +54,28 @@ class EphemeralSummaryAgent(BaseAgent):
         if len(input_messages) > 1:
             raise ValueError("Can only invoke EphemeralSummaryAgent with a single summarization message.")
 
+        # Cache-observability event: the summarizer is firing. When it runs, it
+        # overwrites the <conversation_summary> block AND trims in_context_messages,
+        # both of which invalidate the message-tail cache_control breakpoint on the
+        # next user turn. Emit a structured log so we can measure how often this
+        # happens in production and decide whether to decouple the summary block.
+        # Always log (summarizer is rare, not per-call) but include at_user_id so
+        # we can filter to the cache_obs sample if log volume becomes an issue.
+        try:
+            import json as _json
+            _input_text = input_messages[0].content[0].text if input_messages and input_messages[0].content else ""
+            logger.info(
+                "[SUMMARIZER_FIRED] %s",
+                _json.dumps({
+                    "at_user_id": getattr(self, "at_user_id", None),
+                    "agent_id": self.agent_id,
+                    "target_block_label": self.target_block_label,
+                    "input_text_chars": len(_input_text),
+                }, default=str),
+            )
+        except Exception:
+            pass
+
         # Check block existence
         try:
             block = await self.agent_manager.get_block_with_label_async(
@@ -108,15 +130,64 @@ class EphemeralSummaryAgent(BaseAgent):
 
             def _invoke():
                 client = anthropic.Anthropic(api_key=model_settings.anthropic_api_key)
-                return client.messages.create(
+                # Cache the ~11k-token summarizer system prompt. SUMMARIZER_FIRED logs
+                # show this code path runs roughly 1.5 times/second in production, each
+                # call previously paying full price for the entire system prompt. With
+                # cache_control: ephemeral and the prompt-caching-2024-07-31 beta, the
+                # same prompt becomes a cache_read at 0.1x cost on subsequent calls
+                # (within the 5-minute TTL). System prompt is fully static (loaded
+                # from prompts/summary_system_prompt.txt) so it caches across all
+                # summarizer invocations regardless of which agent triggered them.
+                return client.beta.messages.create(
                     model="claude-haiku-4-5",
                     max_tokens=1500,
-                    system=system,
+                    system=[
+                        {
+                            "type": "text",
+                            "text": system,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
                     messages=messages,
+                    betas=["prompt-caching-2024-07-31"],
                 )
 
             response = await asyncio.to_thread(_invoke)
             summary = response.content[0].text.strip()
+
+            # Cache-observability for the summarizer. PR #60 enabled cache_control
+            # on the system prompt but the dashboard impact was smaller than sized.
+            # We don't know if cache_read is hitting — log usage from response so we
+            # can see ground truth. Sampled to 1% (plus test user) via the existing
+            # helper to bound log volume. Includes a hash of the messages array and
+            # system prompt to spot non-determinism that would invalidate the cache.
+            try:
+                from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
+                if _is_user_in_cache_obs_sample(self.at_user_id):
+                    import hashlib as _hashlib
+                    import json as _json
+                    usage = getattr(response, "usage", None)
+                    _msgs_serialized = _json.dumps(messages, sort_keys=True, default=str)
+                    _msgs_hash = _hashlib.sha256(_msgs_serialized.encode()).hexdigest()[:12]
+                    _system_hash = _hashlib.sha256(system.encode()).hexdigest()[:12]
+                    logger.info(
+                        "[SUMMARIZER_USAGE] %s",
+                        _json.dumps({
+                            "at_user_id": self.at_user_id,
+                            "agent_id": self.agent_id,
+                            "input_tokens": getattr(usage, "input_tokens", None),
+                            "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", None),
+                            "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", None),
+                            "output_tokens": getattr(usage, "output_tokens", None),
+                            "system_chars": len(system),
+                            "system_hash": _system_hash,
+                            "messages_chars": len(_msgs_serialized),
+                            "messages_hash": _msgs_hash,
+                            "num_messages": len(messages),
+                        }, default=str),
+                    )
+            except Exception:
+                pass
 
         logger.warning(f"[SUMMARIZER] Summarization completed | at_user_id={self.at_user_id} | agent_id={self.agent_id} | provider={'azure' if use_azure else 'anthropic'} | summary_length={len(summary)}")
 

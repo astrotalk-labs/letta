@@ -127,6 +127,63 @@ class BaseAgent(ABC):
             if len(diff) > 0:
                 logger.debug(f"Rebuilding system with new memory...\nDiff:\n{diff}")
 
+                # Cache-observability event: system prompt is being rebuilt because
+                # something in agent_state.memory changed. This invalidates the
+                # downstream cache breakpoints. Emit a structured log so we can grep
+                # for the rate of these rebuilds in production and quantify how much
+                # they contribute to overall cache misses. Gated to the cache_obs
+                # sample so log volume stays bounded.
+                _mr_at_user_id = getattr(self, "at_user_id", None)
+                if _mr_at_user_id:
+                    try:
+                        from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
+                        if _is_user_in_cache_obs_sample(_mr_at_user_id):
+                            import json as _json
+                            logger.info(
+                                "[MEMORY_REBUILD] %s",
+                                _json.dumps({
+                                    "at_user_id": _mr_at_user_id,
+                                    "agent_id": agent_state.id,
+                                    "diff_chars": len(diff),
+                                    "old_system_chars": len(curr_system_message_text),
+                                    "new_system_chars": len(new_system_message_str),
+                                }, default=str),
+                            )
+                    except Exception:
+                        pass
+
+                # Test-user-gated optimization: skip system message rewrite when
+                # the diff is small AND the total system length is unchanged. This
+                # is the signature of pure attribute-only updates (chars_current,
+                # memory_edit_timestamp) — same length, tiny char churn, no semantic
+                # change. PR #59 obs data: ~half of MEMORY_REBUILDs have diff_chars
+                # in 627-631 with old_chars == new_chars. The regex-strip approach
+                # in the previous attempt didn't fire in production because the
+                # diff format varies; the threshold check is format-independent.
+                # Gated to test user 92744418 first; follow-up PR graduates.
+                SKIP_TRIVIAL_REBUILD_USER_ID = "92744418"
+                SKIP_TRIVIAL_REBUILD_MAX_DIFF = 700
+                if (
+                    _mr_at_user_id == SKIP_TRIVIAL_REBUILD_USER_ID
+                    and len(diff) < SKIP_TRIVIAL_REBUILD_MAX_DIFF
+                    and len(curr_system_message_text) == len(new_system_message_str)
+                ):
+                    try:
+                        import json as _json
+                        logger.info(
+                            "[MEMORY_REBUILD_SKIPPED] %s",
+                            _json.dumps({
+                                "at_user_id": _mr_at_user_id,
+                                "agent_id": agent_state.id,
+                                "diff_chars": len(diff),
+                                "system_chars": len(curr_system_message_text),
+                                "reason": "small_diff_equal_length",
+                            }, default=str),
+                        )
+                    except Exception:
+                        pass
+                    return in_context_messages
+
                 # [DB Call] Update Messages
                 new_system_message = await self.message_manager.update_message_by_id_async(
                     curr_system_message.id, message_update=MessageUpdate(content=new_system_message_str), actor=self.actor
