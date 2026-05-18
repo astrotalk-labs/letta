@@ -149,10 +149,10 @@ def _fetch_geo_api_key_sync(at_user_id: str) -> Optional[str]:
         import os
         import redis as _redis_lib
 
-        host = os.environ.get("LETTA_1_REDIS_HOST")
-        password = os.environ.get("LETTA_1_REDIS_PASSWORD")
+        host = os.environ.get("LETTA_REDIS_HOST")
+        password = os.environ.get("LETTA_REDIS_PASSWORD")
         if not host:
-            get_logger(__name__).warning("[GEO_KEY] LETTA_1_REDIS_HOST not set, using default key")
+            get_logger(__name__).warning("[GEO_KEY] LETTA_REDIS_HOST not set, using default key")
             return None
         r = _redis_lib.Redis(
             host=host, port=11641, username="default", password=password,
