@@ -1136,13 +1136,19 @@ class SyncServer(Server):
         return passages
 
     async def insert_archival_memory_async(self, agent_id: str, memory_contents: str, actor: User, gb_user_id: Optional[str] = None) -> List[Passage]:
-        # Get the agent object (loaded in memory)
+        import time
+
+        t0 = time.time()
         agent_state = await self.agent_manager.get_agent_by_id_async(agent_id=agent_id, actor=actor)
-        # Insert into archival memory
+        t1 = time.time()
+        logger.info(f"[archival] get_agent took {t1-t0:.2f}s agent_id={agent_id}")
+
         # TODO: @mindy look at moving this to agent_manager to avoid above extra call
         passages = await self.passage_manager.insert_passage_async(
             agent_state=agent_state, agent_id=agent_id, text=memory_contents, actor=actor, gb_user_id=gb_user_id
         )
+        t2 = time.time()
+        logger.info(f"[archival] insert_passage took {t2-t1:.2f}s agent_id={agent_id} chars={len(memory_contents)}")
 
         return passages
 
