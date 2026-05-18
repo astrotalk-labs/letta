@@ -143,6 +143,7 @@ def _fetch_geo_api_key_sync(at_user_id: str) -> Optional[str]:
     """Sync: fetch USER_STATIC_DATA from the chat-order Redis instance and
     return the matching Anthropic API key value. Returns None on any failure."""
     if at_user_id not in _GEO_KEY_GATED_USER_IDS:
+        get_logger(__name__).info("[GEO_KEY] user=%s not in gated set, skipping", at_user_id)
         return None
     try:
         import os
@@ -151,6 +152,7 @@ def _fetch_geo_api_key_sync(at_user_id: str) -> Optional[str]:
         host = os.environ.get("LETTA_1_REDIS_HOST")
         password = os.environ.get("LETTA_1_REDIS_PASSWORD")
         if not host:
+            get_logger(__name__).warning("[GEO_KEY] LETTA_1_REDIS_HOST not set, using default key")
             return None
         r = _redis_lib.Redis(
             host=host, port=11641, username="default", password=password,
@@ -161,10 +163,12 @@ def _fetch_geo_api_key_sync(at_user_id: str) -> Optional[str]:
         finally:
             r.close()
         if not raw:
+            get_logger(__name__).warning("[GEO_KEY] no Redis data for user=%s, using default key", at_user_id)
             return None
         data = json.loads(raw)
         key_env = _select_geo_key_env(data)
         if not key_env:
+            get_logger(__name__).warning("[GEO_KEY] unrecognised businessId=%s for user=%s, using default key", data.get("businessId"), at_user_id)
             return None
         key_value = os.environ.get(key_env)
         if key_value:
@@ -184,6 +188,7 @@ async def _fetch_geo_api_key_async(at_user_id: str) -> Optional[str]:
     """Async: fetch USER_STATIC_DATA from the chat-order Redis instance and
     return the matching Anthropic API key value. Returns None on any failure."""
     if at_user_id not in _GEO_KEY_GATED_USER_IDS:
+        get_logger(__name__).info("[GEO_KEY] user=%s not in gated set, skipping", at_user_id)
         return None
     try:
         import os
@@ -192,6 +197,7 @@ async def _fetch_geo_api_key_async(at_user_id: str) -> Optional[str]:
         host = os.environ.get("LETTA_1_REDIS_HOST")
         password = os.environ.get("LETTA_1_REDIS_PASSWORD")
         if not host:
+            get_logger(__name__).warning("[GEO_KEY] LETTA_1_REDIS_HOST not set, using default key")
             return None
         r = _aioredis.Redis(
             host=host, port=11641, username="default", password=password,
@@ -202,10 +208,12 @@ async def _fetch_geo_api_key_async(at_user_id: str) -> Optional[str]:
         finally:
             await r.aclose()
         if not raw:
+            get_logger(__name__).warning("[GEO_KEY] no Redis data for user=%s, using default key", at_user_id)
             return None
         data = json.loads(raw)
         key_env = _select_geo_key_env(data)
         if not key_env:
+            get_logger(__name__).warning("[GEO_KEY] unrecognised businessId=%s for user=%s, using default key", data.get("businessId"), at_user_id)
             return None
         key_value = os.environ.get(key_env)
         if key_value:
@@ -474,6 +482,7 @@ class AnthropicClient(LLMClientBase):
 
         if not override_key:
             at_uid = getattr(self, "at_user_id", None)
+            logger.info("[GEO_KEY] _get_anthropic_client_async at_user_id=%s", at_uid)
             if at_uid:
                 override_key = await _fetch_geo_api_key_async(at_uid)
 
