@@ -102,7 +102,7 @@ def _fetch_geo_api_key_sync(at_user_id: str) -> Optional[str]:
         key_value = os.environ.get(key_env)
         if key_value:
             get_logger(__name__).info(
-                "[GEO_KEY] user=%s businessId=%s isForeign=%s isNative=%s → %s",
+                "[GEO_KEY] user=%s businessId=%s isForeign=%s isNative=%s → env=%s",
                 at_user_id, data.get("businessId"), data.get("isForeign"), data.get("isNative"), key_env,
             )
         else:
@@ -143,7 +143,7 @@ async def _fetch_geo_api_key_async(at_user_id: str) -> Optional[str]:
         key_value = os.environ.get(key_env)
         if key_value:
             get_logger(__name__).info(
-                "[GEO_KEY] user=%s businessId=%s isForeign=%s isNative=%s → %s",
+                "[GEO_KEY] user=%s businessId=%s isForeign=%s isNative=%s → env=%s",
                 at_user_id, data.get("businessId"), data.get("isForeign"), data.get("isNative"), key_env,
             )
         else:
