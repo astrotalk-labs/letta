@@ -241,6 +241,7 @@ class LettaAgent(BaseAgent):
                     agent_step_span,
                     use_vertex_experiment=use_vertex_experiment,
                     use_bedrock_experiment=use_bedrock_experiment,
+                    step_index=i,
                 )
             )
             in_context_messages = current_in_context_messages + new_in_context_messages
@@ -408,7 +409,7 @@ class LettaAgent(BaseAgent):
 
             request_data, response_data, current_in_context_messages, new_in_context_messages, valid_tool_names = (
                 await self._build_and_request_from_llm(
-                    current_in_context_messages, new_in_context_messages, agent_state, llm_client, tool_rules_solver, agent_step_span, use_vertex_experiment=use_vertex_experiment, use_bedrock_experiment=use_bedrock_experiment
+                    current_in_context_messages, new_in_context_messages, agent_state, llm_client, tool_rules_solver, agent_step_span, use_vertex_experiment=use_vertex_experiment, use_bedrock_experiment=use_bedrock_experiment, step_index=i
                 )
             )
             in_context_messages = current_in_context_messages + new_in_context_messages
@@ -583,6 +584,7 @@ class LettaAgent(BaseAgent):
                 agent_state,
                 llm_client,
                 tool_rules_solver,
+                step_index=i,
             )
             log_event("agent.stream.llm_response.received")  # [3^]
 
@@ -746,6 +748,7 @@ class LettaAgent(BaseAgent):
         agent_step_span: "Span",
         use_vertex_experiment: bool = False,
         use_bedrock_experiment: bool = False,
+        step_index: int = 0,
     ) -> Tuple[Dict, Dict, List[Message], List[Message], List[str]] | None:
         for attempt in range(self.max_summarization_retries + 1):
             try:
@@ -756,6 +759,7 @@ class LettaAgent(BaseAgent):
                     in_context_messages=current_in_context_messages + new_in_context_messages,
                     agent_state=agent_state,
                     tool_rules_solver=tool_rules_solver,
+                    step_index=step_index,
                 )
                 log_event("agent.stream_no_tokens.llm_request.created")
 
@@ -798,6 +802,7 @@ class LettaAgent(BaseAgent):
         agent_state: AgentState,
         llm_client: LLMClientBase,
         tool_rules_solver: ToolRulesSolver,
+        step_index: int = 0,
     ) -> Tuple[Dict, AsyncStream[ChatCompletionChunk], List[Message], List[Message], List[str], int] | None:
         for attempt in range(self.max_summarization_retries + 1):
             try:
@@ -808,6 +813,7 @@ class LettaAgent(BaseAgent):
                     in_context_messages=current_in_context_messages + new_in_context_messages,
                     agent_state=agent_state,
                     tool_rules_solver=tool_rules_solver,
+                    step_index=step_index,
                 )
                 log_event("agent.stream.llm_request.created")  # [2^]
 
@@ -909,6 +915,7 @@ class LettaAgent(BaseAgent):
         in_context_messages: List[Message],
         agent_state: AgentState,
         tool_rules_solver: ToolRulesSolver,
+        step_index: int = 0,
     ) -> Tuple[dict, List[str]]:
         self.num_messages, self.num_archival_memories = await asyncio.gather(
             (
@@ -922,13 +929,44 @@ class LettaAgent(BaseAgent):
                 else asyncio.sleep(0, result=self.num_archival_memories)
             ),
         )
-        in_context_messages = await self._rebuild_memory_async(
-            in_context_messages,
-            agent_state,
-            num_messages=self.num_messages,
-            num_archival_memories=self.num_archival_memories,
-            tool_rules_solver=tool_rules_solver,
+
+        # PR β cascade fix: skip _rebuild_memory_async on intermediate steps of the
+        # same user turn. The agent multi-step loop calls core_memory_append between
+        # LLM calls, which used to trigger a rebuild every step and invalidate the
+        # system-prompt cache. Per the PR #66 deep cache obs: cache_read collapses
+        # from ~25k tokens to ~2.1k tokens (only static_base hit) on the step right
+        # after a mid-turn core_memory_append, then writes 20-50k tokens of new
+        # cache_creation for the same prefix already cached on the prior step.
+        # Skipping the rebuild reuses the system prompt from step 0 of this turn.
+        # Memory state still persists in DB; the LLM that just called append already
+        # has the appended content in its own assistant message — it does not need
+        # a refreshed system block to function correctly. Gated to test user
+        # 92744418 for safe rollout; graduates universally after 24-48h validation.
+        skip_rebuild = (
+            self.at_user_id == "92744418"
+            and step_index > 0
         )
+        if skip_rebuild:
+            try:
+                import json as _json
+                logger.info(
+                    "[REBUILD_SKIPPED_MID_TURN] %s",
+                    _json.dumps({
+                        "at_user_id": self.at_user_id,
+                        "agent_id": agent_state.id,
+                        "step_index": step_index,
+                    }, default=str),
+                )
+            except Exception:
+                pass
+        else:
+            in_context_messages = await self._rebuild_memory_async(
+                in_context_messages,
+                agent_state,
+                num_messages=self.num_messages,
+                num_archival_memories=self.num_archival_memories,
+                tool_rules_solver=tool_rules_solver,
+            )
 
         tools = [
             t
