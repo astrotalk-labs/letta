@@ -119,12 +119,36 @@ def _is_user_in_v2_cache_bucket(at_user_id):
 _GEO_KEY_GATED_USER_IDS: frozenset = frozenset({"92744418", "54516480"})
 
 _COHORT_TO_KEY_ENV: dict = {
-    "AT_NATIVE":  "ABC2_AT_NATIVE_ANTHROPIC_KEY",
-    "AT_FOREIGN": "ABC2_AT_FOREIGN_ANTHROPIC_KEY",
+    "AT_NATIVE":  "ABC2_AT_NATIVE_4_5",
+    "AT_FOREIGN": "ABC2_AT_FOREIGN_4_5",
     "INDIAN_AT":  "ABC2_AT_INDIA_ANTHROPIC_KEY",
-    "PANDITJI":   "ABC2_PANDITJI_ANTHROPIC_KEY",
-    "LUMUS":      "ABC2_LUMUS_ANTHROPIC_KEY",
+    "PANDITJI":   "ABC2_PANDITJI_4_5",
+    "LUMUS":      "ABC2_LUMUS_4_5",
 }
+
+_COHORT_TO_BEDROCK_ARN: dict = {
+    "AT_NATIVE":  "v9a7gf6hhoqm",
+    "AT_FOREIGN": "ngef7rrnxwrh",
+    "INDIAN_AT":  "rg76qwszdgvo",
+    "PANDITJI":   "18c7gtd1mst5",
+    "LUMUS":      "9gx7yplss61x",
+}
+
+
+def _resolve_bedrock_arn_from_cohort(at_user_id: Optional[str], user_cohort: Optional[str]) -> Optional[str]:
+    """Return the Bedrock inference profile ARN for the given cohort, or None to fall back
+    to the existing BEDROCK_*_INFERENCE_PROFILE_ARN env vars. Only applies for gated users."""
+    if not at_user_id or at_user_id not in _GEO_KEY_GATED_USER_IDS:
+        return None
+    if not user_cohort or user_cohort == "UNKNOWN":
+        get_logger(__name__).warning("[GEO_KEY_BEDROCK] user=%s cohort=UNKNOWN/missing, using default ARN", at_user_id)
+        return None
+    arn = _COHORT_TO_BEDROCK_ARN.get(user_cohort)
+    if not arn:
+        get_logger(__name__).warning("[GEO_KEY_BEDROCK] user=%s unrecognised cohort=%s, using default ARN", at_user_id, user_cohort)
+        return None
+    get_logger(__name__).info("[GEO_KEY_BEDROCK] user=%s cohort=%s → arn=%s", at_user_id, user_cohort, arn)
+    return arn
 
 
 def _resolve_key_from_cohort(at_user_id: Optional[str], user_cohort: Optional[str]) -> Optional[str]:
@@ -212,16 +236,23 @@ class AnthropicClient(LLMClientBase):
             aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY') or model_settings.aws_secret_access_key
             aws_session_token = os.getenv('AWS_SESSION_TOKEN')
 
-            # Determine model ID: pick inference profile ARN based on the requested model,
-            # falling back to the generic BEDROCK_INFERENCE_PROFILE_ARN, then the raw model name.
+            # Determine model ID: cohort-based ARN takes priority for gated users,
+            # then fall back to model-name env vars, then raw model name.
             requested_model = (request_data.get('model') or llm_config.model or "").lower()
-            default_arn = os.getenv('BEDROCK_INFERENCE_PROFILE_ARN')
-            if "haiku" in requested_model:
-                bedrock_inference_profile = os.getenv('BEDROCK_HAIKU_INFERENCE_PROFILE_ARN') or default_arn
-            elif "sonnet-4-6" in requested_model or "sonnet-4.6" in requested_model:
-                bedrock_inference_profile = os.getenv('BEDROCK_SONNET_4_6_INFERENCE_PROFILE_ARN') or default_arn
+            cohort_arn = _resolve_bedrock_arn_from_cohort(
+                getattr(self, "at_user_id", None),
+                getattr(self, "user_cohort", None),
+            )
+            if cohort_arn:
+                bedrock_inference_profile = cohort_arn
             else:
-                bedrock_inference_profile = default_arn
+                default_arn = os.getenv('BEDROCK_INFERENCE_PROFILE_ARN')
+                if "haiku" in requested_model:
+                    bedrock_inference_profile = os.getenv('BEDROCK_HAIKU_INFERENCE_PROFILE_ARN') or default_arn
+                elif "sonnet-4-6" in requested_model or "sonnet-4.6" in requested_model:
+                    bedrock_inference_profile = os.getenv('BEDROCK_SONNET_4_6_INFERENCE_PROFILE_ARN') or default_arn
+                else:
+                    bedrock_inference_profile = default_arn
             print(f"DEBUG: [AnthropicClient] Selected inference profile for model='{requested_model}': {bedrock_inference_profile}")
             model_id = bedrock_inference_profile if bedrock_inference_profile else request_data.get('model')
 
