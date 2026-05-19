@@ -239,6 +239,7 @@ class AnthropicClient(LLMClientBase):
             # Determine model ID: cohort-based ARN takes priority for gated users,
             # then fall back to model-name env vars, then raw model name.
             requested_model = (request_data.get('model') or llm_config.model or "").lower()
+            logger.info("[GEO_KEY_BEDROCK] request_async at_user_id=%s user_cohort=%s", getattr(self, "at_user_id", None), getattr(self, "user_cohort", None))
             cohort_arn = _resolve_bedrock_arn_from_cohort(
                 getattr(self, "at_user_id", None),
                 getattr(self, "user_cohort", None),
