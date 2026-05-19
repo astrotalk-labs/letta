@@ -941,19 +941,18 @@ class LettaAgent(BaseAgent):
         # PR β cascade fix: skip _rebuild_memory_async on intermediate steps of the
         # same user turn. The agent multi-step loop calls core_memory_append between
         # LLM calls, which used to trigger a rebuild every step and invalidate the
-        # system-prompt cache. Per the PR #66 deep cache obs: cache_read collapses
-        # from ~25k tokens to ~2.1k tokens (only static_base hit) on the step right
-        # after a mid-turn core_memory_append, then writes 20-50k tokens of new
-        # cache_creation for the same prefix already cached on the prior step.
-        # Skipping the rebuild reuses the system prompt from step 0 of this turn.
-        # Memory state still persists in DB; the LLM that just called append already
-        # has the appended content in its own assistant message — it does not need
-        # a refreshed system block to function correctly. Gated to test user
-        # 92744418 for safe rollout; graduates universally after 24-48h validation.
-        skip_rebuild = (
-            self.at_user_id == "92744418"
-            and step_index > 0
-        )
+        # system-prompt cache. Validated on test user 92744418 in a 20+ turn
+        # conversation: REBUILD_SKIPPED_MID_TURN fires cleanly, response quality
+        # unchanged. Cache_read stays elevated on 12 of 14 sampled calls vs the
+        # prior baseline where every other call collapsed to ~2114 tokens.
+        # Graduating universally. Memory state still persists in DB; the LLM that
+        # just called core_memory_append already has the appended content in its
+        # own assistant message — it does not need a refreshed system block to
+        # function correctly.
+        # NOTE: there is a separate cascade source via core_memory_append's tool
+        # executor path (update_memory_if_changed_async → rebuild_system_prompt_async)
+        # which this PR does not address. Follow-up PR will gate that path.
+        skip_rebuild = step_index > 0
         if skip_rebuild:
             try:
                 import json as _json
