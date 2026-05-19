@@ -167,6 +167,7 @@ class LettaAgent(BaseAgent):
         use_vertex_experiment: bool = False,
         use_bedrock_experiment: bool = False,
         model_override: Optional[str] = None,
+        user_cohort: Optional[str] = None,
     ) -> LettaResponse:
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
@@ -179,6 +180,7 @@ class LettaAgent(BaseAgent):
             use_vertex_experiment=use_vertex_experiment,
             use_bedrock_experiment=use_bedrock_experiment,
             model_override=model_override,
+            user_cohort=user_cohort,
         )
         return _create_letta_response(
             new_in_context_messages=new_in_context_messages,
@@ -199,6 +201,7 @@ class LettaAgent(BaseAgent):
         use_vertex_experiment: bool = False,
         use_bedrock_experiment: bool = False,
         model_override: Optional[str] = None,
+        user_cohort: Optional[str] = None,
     ):
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
@@ -217,6 +220,7 @@ class LettaAgent(BaseAgent):
             put_inner_thoughts_first=True,
             actor=self.actor,
             at_user_id=self.at_user_id,
+            user_cohort=user_cohort,
         )
         stop_reason = None
         usage = LettaUsageStatistics()
@@ -370,6 +374,7 @@ class LettaAgent(BaseAgent):
         use_vertex_experiment: bool = False,
         use_bedrock_experiment: bool = False,
         model_override: Optional[str] = None,
+        user_cohort: Optional[str] = None,
     ) -> Tuple[List[Message], List[Message], Optional[LettaStopReason], LettaUsageStatistics]:
         """
         Carries out an invocation of the agent loop. In each step, the agent
@@ -393,6 +398,7 @@ class LettaAgent(BaseAgent):
             put_inner_thoughts_first=True,
             actor=self.actor,
             at_user_id=self.at_user_id,
+            user_cohort=user_cohort,
         )
 
         # span for request
@@ -527,6 +533,7 @@ class LettaAgent(BaseAgent):
         use_vertex_experiment: bool = False,
         use_bedrock_experiment: bool = False,
         model_override: Optional[str] = None,
+        user_cohort: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Carries out an invocation of the agent loop in a streaming fashion that yields partial tokens.
@@ -554,6 +561,7 @@ class LettaAgent(BaseAgent):
             put_inner_thoughts_first=True,
             actor=self.actor,
             at_user_id=self.at_user_id,
+            user_cohort=user_cohort,
         )
         stop_reason = None
         usage = LettaUsageStatistics()

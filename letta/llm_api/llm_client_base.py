@@ -31,9 +31,11 @@ class LLMClientBase:
         use_tool_naming: bool = True,
         actor: Optional["User"] = None,
         at_user_id: Optional[str] = None,
+        user_cohort: Optional[str] = None,
     ):
         self.actor = actor
         self.at_user_id = at_user_id
+        self.user_cohort = user_cohort
         self.put_inner_thoughts_first = put_inner_thoughts_first
         self.use_tool_naming = use_tool_naming
 

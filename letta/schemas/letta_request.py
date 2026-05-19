@@ -46,6 +46,16 @@ class LettaRequest(BaseModel):
         description="Optional model name to use for this request only, overriding the agent's configured llm_config.model. Useful for runtime A/B testing (e.g. shifting an agent from Sonnet 4.5 to Sonnet 4.6 without modifying the stored agent config).",
     )
 
+    user_cohort: Optional[str] = Field(
+        default=None,
+        description="User cohort for API key routing. One of: AT_NATIVE, AT_FOREIGN, INDIAN_AT, PANDITJI, LUMUS, UNKNOWN. Populated by the upstream service from Redis USER_STATIC_DATA_{userId}.",
+    )
+
+    business_id: Optional[int] = Field(
+        default=None,
+        description="Raw business ID from the order (1=AstroTalk, 10=Panditji, 12=Lumus). 0 when unavailable.",
+    )
+
 
 class LettaStreamingRequest(LettaRequest):
     stream_tokens: bool = Field(

@@ -721,6 +721,7 @@ async def send_message(
             use_vertex_experiment=request.use_vertex_experiment,
             use_bedrock_experiment=request.use_bedrock_experiment,
             model_override=request.model_override,
+            user_cohort=request.user_cohort,
         )
     else:
         result = await server.send_message_to_agent(
@@ -737,6 +738,7 @@ async def send_message(
             use_vertex_experiment=request.use_vertex_experiment,
             use_bedrock_experiment=request.use_bedrock_experiment,
             model_override=request.model_override,
+            user_cohort=request.user_cohort,
         )
     return result
 
@@ -821,6 +823,7 @@ async def send_message_streaming(
                     use_vertex_experiment=request.use_vertex_experiment,
                     use_bedrock_experiment=request.use_bedrock_experiment,
                     model_override=request.model_override,
+                    user_cohort=request.user_cohort,
                 ),
                 media_type="text/event-stream",
             )
@@ -835,6 +838,7 @@ async def send_message_streaming(
                     use_vertex_experiment=request.use_vertex_experiment,
                     use_bedrock_experiment=request.use_bedrock_experiment,
                     model_override=request.model_override,
+                    user_cohort=request.user_cohort,
                 ),
                 media_type="text/event-stream",
             )
@@ -854,6 +858,7 @@ async def send_message_streaming(
             use_vertex_experiment=request.use_vertex_experiment,
             use_bedrock_experiment=request.use_bedrock_experiment,
             model_override=request.model_override,
+            user_cohort=request.user_cohort,
         )
 
     return result
