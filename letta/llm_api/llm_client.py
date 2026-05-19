@@ -75,5 +75,6 @@ class LLMClient:
                         put_inner_thoughts_first=put_inner_thoughts_first,
                         actor=actor,
                         at_user_id=at_user_id,
+                        user_cohort=user_cohort,
                     )
                 return None
