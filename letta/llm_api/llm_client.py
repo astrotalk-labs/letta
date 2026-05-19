@@ -16,6 +16,7 @@ class LLMClient:
         put_inner_thoughts_first: bool = True,
         actor: Optional["User"] = None,
         at_user_id: Optional[str] = None,
+        user_cohort: Optional[str] = None,
     ) -> Optional[LLMClientBase]:
         """
         Create an LLM client based on the model endpoint type.
@@ -54,6 +55,7 @@ class LLMClient:
                     put_inner_thoughts_first=put_inner_thoughts_first,
                     actor=actor,
                     at_user_id=at_user_id,
+                    user_cohort=user_cohort,
                 )
             case ProviderType.openai | ProviderType.together:
                 from letta.llm_api.openai_client import OpenAIClient

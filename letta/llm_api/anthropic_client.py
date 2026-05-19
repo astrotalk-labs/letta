@@ -117,116 +117,35 @@ def _is_user_in_v2_cache_bucket(at_user_id):
 # --- Geography / business-based API key routing ---
 # Only active for these test user IDs. Once validated, the set can be widened.
 _GEO_KEY_GATED_USER_IDS: frozenset = frozenset({"92744418", "54516480"})
-_AT_BUSINESS_ID = 1
-_PANDITJI_BUSINESS_ID = 10
-_LUMUS_BUSINESS_ID = 12
+
+_COHORT_TO_KEY_ENV: dict = {
+    "AT_NATIVE":  "ABC2_AT_NATIVE_ANTHROPIC_KEY",
+    "AT_FOREIGN": "ABC2_AT_FOREIGN_ANTHROPIC_KEY",
+    "INDIAN_AT":  "ABC2_AT_INDIA_ANTHROPIC_KEY",
+    "PANDITJI":   "ABC2_PANDITJI_ANTHROPIC_KEY",
+    "LUMUS":      "ABC2_LUMUS_ANTHROPIC_KEY",
+}
 
 
-def _select_geo_key_env(data: dict) -> Optional[str]:
-    """Return the env-var name for the Anthropic key that matches the user's
-    business/geography data. Returns None when the businessId is unrecognised."""
-    business_id = data.get("businessId")
-    if business_id == _PANDITJI_BUSINESS_ID:
-        return "ABC2_PANDITJI_ANTHROPIC_KEY"
-    if business_id == _LUMUS_BUSINESS_ID:
-        return "ABC2_LUMUS_ANTHROPIC_KEY"
-    if business_id == _AT_BUSINESS_ID:
-        if data.get("isForeign"):
-            return "ABC2_AT_FOREIGN_ANTHROPIC_KEY"
-        if data.get("isNative"):
-            return "ABC2_AT_NATIVE_ANTHROPIC_KEY"
-        return "ABC2_AT_INDIA_ANTHROPIC_KEY"
-    return None
-
-
-def _fetch_geo_api_key_sync(at_user_id: str) -> Optional[str]:
-    """Sync: fetch USER_STATIC_DATA from the chat-order Redis instance and
-    return the matching Anthropic API key value. Returns None on any failure."""
-    if at_user_id not in _GEO_KEY_GATED_USER_IDS:
-        get_logger(__name__).info("[GEO_KEY] user=%s not in gated set, skipping", at_user_id)
+def _resolve_key_from_cohort(at_user_id: Optional[str], user_cohort: Optional[str]) -> Optional[str]:
+    """Return the Anthropic API key value for the given cohort, or None to use the default.
+    Only applies for gated user IDs; UNKNOWN cohort and unrecognised values fall back to default."""
+    import os
+    if not at_user_id or at_user_id not in _GEO_KEY_GATED_USER_IDS:
         return None
-    try:
-        import os
-        import redis as _redis_lib
-
-        host = os.environ.get("LETTA_REDIS_HOST")
-        password = os.environ.get("LETTA_REDIS_PASSWORD")
-        if not host:
-            get_logger(__name__).warning("[GEO_KEY] LETTA_REDIS_HOST not set, using default key")
-            return None
-        r = _redis_lib.Redis(
-            host=host, port=11641, username="default", password=password,
-            decode_responses=True, socket_connect_timeout=2, socket_timeout=2,
-        )
-        try:
-            raw = r.get(f"USER_STATIC_DATA_{at_user_id}")
-        finally:
-            r.close()
-        if not raw:
-            get_logger(__name__).warning("[GEO_KEY] no Redis data for user=%s, using default key", at_user_id)
-            return None
-        data = json.loads(raw)
-        key_env = _select_geo_key_env(data)
-        if not key_env:
-            get_logger(__name__).warning("[GEO_KEY] unrecognised businessId=%s for user=%s, using default key", data.get("businessId"), at_user_id)
-            return None
-        key_value = os.environ.get(key_env)
-        if key_value:
-            get_logger(__name__).info(
-                "[GEO_KEY] user=%s businessId=%s isForeign=%s isNative=%s → env=%s",
-                at_user_id, data.get("businessId"), data.get("isForeign"), data.get("isNative"), key_env,
-            )
-        else:
-            get_logger(__name__).warning("[GEO_KEY] env var %s not set, using default key", key_env)
-        return key_value or None
-    except Exception as exc:
-        get_logger(__name__).warning("[GEO_KEY] sync lookup failed for user %s: %s", at_user_id, exc)
+    if not user_cohort or user_cohort == "UNKNOWN":
+        get_logger(__name__).warning("[GEO_KEY] user=%s cohort=UNKNOWN/missing, using default key", at_user_id)
         return None
-
-
-async def _fetch_geo_api_key_async(at_user_id: str) -> Optional[str]:
-    """Async: fetch USER_STATIC_DATA from the chat-order Redis instance and
-    return the matching Anthropic API key value. Returns None on any failure."""
-    if at_user_id not in _GEO_KEY_GATED_USER_IDS:
-        get_logger(__name__).info("[GEO_KEY] user=%s not in gated set, skipping", at_user_id)
+    key_env = _COHORT_TO_KEY_ENV.get(user_cohort)
+    if not key_env:
+        get_logger(__name__).warning("[GEO_KEY] user=%s unrecognised cohort=%s, using default key", at_user_id, user_cohort)
         return None
-    try:
-        import os
-        import redis.asyncio as _aioredis
-
-        host = os.environ.get("LETTA_REDIS_HOST")
-        password = os.environ.get("LETTA_REDIS_PASSWORD")
-        if not host:
-            get_logger(__name__).warning("[GEO_KEY] LETTA_REDIS_HOST not set, using default key")
-            return None
-        r = _aioredis.Redis(
-            host=host, port=11641, username="default", password=password,
-            decode_responses=True, socket_connect_timeout=2, socket_timeout=2,
-        )
-        try:
-            raw = await r.get(f"USER_STATIC_DATA_{at_user_id}")
-        finally:
-            await r.aclose()
-        if not raw:
-            get_logger(__name__).warning("[GEO_KEY] no Redis data for user=%s, using default key", at_user_id)
-            return None
-        data = json.loads(raw)
-        key_env = _select_geo_key_env(data)
-        if not key_env:
-            get_logger(__name__).warning("[GEO_KEY] unrecognised businessId=%s for user=%s, using default key", data.get("businessId"), at_user_id)
-            return None
-        key_value = os.environ.get(key_env)
-        if key_value:
-            get_logger(__name__).info(
-                "[GEO_KEY] user=%s businessId=%s isForeign=%s isNative=%s → env=%s",
-                at_user_id, data.get("businessId"), data.get("isForeign"), data.get("isNative"), key_env,
-            )
-        else:
-            get_logger(__name__).warning("[GEO_KEY] env var %s not set, using default key", key_env)
-        return key_value or None
-    except Exception as exc:
-        get_logger(__name__).warning("[GEO_KEY] async lookup failed for user %s: %s", at_user_id, exc)
-        return None
+    key_value = os.environ.get(key_env)
+    if key_value:
+        get_logger(__name__).info("[GEO_KEY] user=%s cohort=%s → env=%s", at_user_id, user_cohort, key_env)
+    else:
+        get_logger(__name__).warning("[GEO_KEY] user=%s cohort=%s env var %s not set, using default key", at_user_id, user_cohort, key_env)
+    return key_value or None
 
 
 logger = get_logger(__name__)
@@ -457,8 +376,9 @@ class AnthropicClient(LLMClientBase):
 
         if not override_key:
             at_uid = getattr(self, "at_user_id", None)
-            if at_uid:
-                override_key = _fetch_geo_api_key_sync(at_uid)
+            cohort = getattr(self, "user_cohort", None)
+            logger.info("[GEO_KEY] _get_anthropic_client at_user_id=%s user_cohort=%s", at_uid, cohort)
+            override_key = _resolve_key_from_cohort(at_uid, cohort)
 
         if async_client:
             return (
@@ -482,9 +402,9 @@ class AnthropicClient(LLMClientBase):
 
         if not override_key:
             at_uid = getattr(self, "at_user_id", None)
-            logger.info("[GEO_KEY] _get_anthropic_client_async at_user_id=%s", at_uid)
-            if at_uid:
-                override_key = await _fetch_geo_api_key_async(at_uid)
+            cohort = getattr(self, "user_cohort", None)
+            logger.info("[GEO_KEY] _get_anthropic_client_async at_user_id=%s user_cohort=%s", at_uid, cohort)
+            override_key = _resolve_key_from_cohort(at_uid, cohort)
 
         if async_client:
             return (
