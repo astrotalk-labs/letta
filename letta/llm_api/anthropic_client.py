@@ -135,6 +135,17 @@ _COHORT_TO_BEDROCK_ARN: dict = {
 }
 
 
+def _build_bedrock_arn(profile_id: str) -> str:
+    """Construct a full Bedrock ARN by taking the prefix from BEDROCK_INFERENCE_PROFILE_ARN
+    and replacing its profile ID with the given one. Falls back to the raw ID if env var unset."""
+    import os
+    base = os.getenv("BEDROCK_INFERENCE_PROFILE_ARN", "")
+    if "/" in base:
+        prefix = base.rsplit("/", 1)[0]
+        return f"{prefix}/{profile_id}"
+    return profile_id
+
+
 def _resolve_bedrock_arn_from_cohort(at_user_id: Optional[str], user_cohort: Optional[str]) -> Optional[str]:
     """Return the Bedrock inference profile ARN for the given cohort, or None to fall back
     to the existing BEDROCK_*_INFERENCE_PROFILE_ARN env vars. Only applies for gated users."""
@@ -143,10 +154,11 @@ def _resolve_bedrock_arn_from_cohort(at_user_id: Optional[str], user_cohort: Opt
     if not user_cohort or user_cohort == "UNKNOWN":
         get_logger(__name__).warning("[GEO_KEY_BEDROCK] user=%s cohort=UNKNOWN/missing, using default ARN", at_user_id)
         return None
-    arn = _COHORT_TO_BEDROCK_ARN.get(user_cohort)
-    if not arn:
+    profile_id = _COHORT_TO_BEDROCK_ARN.get(user_cohort)
+    if not profile_id:
         get_logger(__name__).warning("[GEO_KEY_BEDROCK] user=%s unrecognised cohort=%s, using default ARN", at_user_id, user_cohort)
         return None
+    arn = _build_bedrock_arn(profile_id)
     get_logger(__name__).info("[GEO_KEY_BEDROCK] user=%s cohort=%s → arn=%s", at_user_id, user_cohort, arn)
     return arn
 
