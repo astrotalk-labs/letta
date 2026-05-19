@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import os
 import re
 from typing import Dict, List, Optional, Union
 
@@ -138,7 +139,6 @@ _COHORT_TO_BEDROCK_ARN: dict = {
 def _build_bedrock_arn(profile_id: str) -> str:
     """Construct a full Bedrock ARN by taking the prefix from BEDROCK_INFERENCE_PROFILE_ARN
     and replacing its profile ID with the given one. Falls back to the raw ID if env var unset."""
-    import os
     base = os.getenv("BEDROCK_INFERENCE_PROFILE_ARN", "")
     if "/" in base:
         prefix = base.rsplit("/", 1)[0]
@@ -166,7 +166,6 @@ def _resolve_bedrock_arn_from_cohort(at_user_id: Optional[str], user_cohort: Opt
 def _resolve_key_from_cohort(at_user_id: Optional[str], user_cohort: Optional[str]) -> Optional[str]:
     """Return the Anthropic API key value for the given cohort, or None to use the default.
     Only applies for gated user IDs; UNKNOWN cohort and unrecognised values fall back to default."""
-    import os
     if not at_user_id or at_user_id not in _GEO_KEY_GATED_USER_IDS:
         return None
     if not user_cohort or user_cohort == "UNKNOWN":
@@ -204,7 +203,6 @@ class AnthropicClient(LLMClientBase):
             print(f"DEBUG: [AnthropicClient] Request data model: {request_data.get('model')}")
             from anthropic import AsyncAnthropicVertex
             from letta.settings import model_settings
-            import os
 
             # Create async Vertex client with proper configuration
             project_id = model_settings.google_cloud_project
@@ -235,10 +233,6 @@ class AnthropicClient(LLMClientBase):
             response = await client.messages.create(**request_data)
             print(f"DEBUG: [AnthropicClient] Response received successfully")
         elif llm_config.model_endpoint_type == "anthropic_bedrock":
-            print(f"DEBUG: [AnthropicClient] Using AWS Bedrock client via boto3 (model_endpoint_type=anthropic_bedrock)")
-            print(f"DEBUG: [AnthropicClient] Request data model: {request_data.get('model')}")
-            import os
-            import json
             import asyncio
             import boto3
             from letta.settings import model_settings
@@ -266,11 +260,8 @@ class AnthropicClient(LLMClientBase):
                     bedrock_inference_profile = os.getenv('BEDROCK_SONNET_4_6_INFERENCE_PROFILE_ARN') or default_arn
                 else:
                     bedrock_inference_profile = default_arn
-            print(f"DEBUG: [AnthropicClient] Selected inference profile for model='{requested_model}': {bedrock_inference_profile}")
             model_id = bedrock_inference_profile if bedrock_inference_profile else request_data.get('model')
-
-            print(f"DEBUG: [AnthropicClient] Creating boto3 bedrock-runtime client with region={aws_region}")
-            print(f"DEBUG: [AnthropicClient] Using model_id={model_id}")
+            logger.info("[BEDROCK] model_id=%s region=%s", model_id, aws_region)
 
             client_kwargs = {
                 "service_name": "bedrock-runtime",
@@ -284,14 +275,25 @@ class AnthropicClient(LLMClientBase):
 
             bedrock_client = boto3.client(**client_kwargs)
 
+            # Strip cache_control from system blocks and messages — Bedrock's invoke_model
+            # rejects these fields with ValidationException unless the inference profile has
+            # prompt caching explicitly enabled. The direct Anthropic API enables caching
+            # via the SDK beta header, which doesn't translate to boto3 invoke_model.
+            def _strip_cache_control(obj):
+                if isinstance(obj, dict):
+                    return {k: _strip_cache_control(v) for k, v in obj.items() if k != "cache_control"}
+                if isinstance(obj, list):
+                    return [_strip_cache_control(item) for item in obj]
+                return obj
+
             # Build the Bedrock request body in Anthropic Messages API format
             bedrock_body = {
                 "anthropic_version": "bedrock-2023-05-31",
                 "max_tokens": request_data.get("max_tokens", 4096),
-                "messages": request_data.get("messages", []),
+                "messages": _strip_cache_control(request_data.get("messages", [])),
             }
             if "system" in request_data:
-                bedrock_body["system"] = request_data["system"]
+                bedrock_body["system"] = _strip_cache_control(request_data["system"])
             if "tools" in request_data:
                 bedrock_body["tools"] = request_data["tools"]
             if "tool_choice" in request_data:
@@ -307,20 +309,24 @@ class AnthropicClient(LLMClientBase):
             if "thinking" in request_data:
                 bedrock_body["thinking"] = request_data["thinking"]
 
-            print(f"DEBUG: [AnthropicClient] Calling bedrock invoke_model with modelId={model_id}")
+            logger.info("[BEDROCK] invoking model, thinking=%s", bedrock_body.get("thinking"))
 
             # Run synchronous boto3 call in a thread to avoid blocking the event loop
             def _invoke():
-                resp = bedrock_client.invoke_model(
-                    modelId=model_id,
-                    contentType="application/json",
-                    accept="application/json",
-                    body=json.dumps(bedrock_body),
-                )
-                return json.loads(resp["body"].read())
+                try:
+                    resp = bedrock_client.invoke_model(
+                        modelId=model_id,
+                        contentType="application/json",
+                        accept="application/json",
+                        body=json.dumps(bedrock_body),
+                    )
+                    return json.loads(resp["body"].read())
+                except Exception as boto_err:
+                    logger.error("[BEDROCK] invoke_model failed model_id=%s error=%s", model_id, boto_err, exc_info=True)
+                    raise
 
             result = await asyncio.to_thread(_invoke)
-            print(f"DEBUG: [AnthropicClient] Bedrock response received successfully")
+            logger.info("[BEDROCK] response received stop_reason=%s", result.get("stop_reason"))
 
             # Convert Bedrock response to match Anthropic SDK response format
             # Bedrock returns the same format as Anthropic Messages API
