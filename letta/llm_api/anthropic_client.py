@@ -116,7 +116,7 @@ def _is_user_in_v2_cache_bucket(at_user_id):
 
 # --- Geography / business-based API key routing ---
 # Only active for these test user IDs. Once validated, the set can be widened.
-_GEO_KEY_GATED_USER_IDS: frozenset = frozenset({"92744418", "54516480"})
+_GEO_KEY_GATED_USER_IDS: frozenset = frozenset({"92744418", "54516480", "118403462", "108764485", "116567517"})
 
 _COHORT_TO_KEY_ENV: dict = {
     "AT_NATIVE":  "ABC2_AT_NATIVE_ANTHROPIC_KEY",
