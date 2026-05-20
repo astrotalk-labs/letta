@@ -57,6 +57,11 @@ from letta.utils import log_telemetry, validate_function_response
 logger = get_logger(__name__)
 
 
+# Per-request thinking/output_config forwarding is gated to these user IDs.
+# Expand once validated.
+_THINKING_GATED_USER_IDS: frozenset = frozenset({"92744418"})
+
+
 class LettaAgent(BaseAgent):
 
     def __init__(
@@ -168,6 +173,8 @@ class LettaAgent(BaseAgent):
         use_bedrock_experiment: bool = False,
         model_override: Optional[str] = None,
         user_cohort: Optional[str] = None,
+        thinking: Optional[dict] = None,
+        output_config: Optional[dict] = None,
     ) -> LettaResponse:
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
@@ -181,6 +188,8 @@ class LettaAgent(BaseAgent):
             use_bedrock_experiment=use_bedrock_experiment,
             model_override=model_override,
             user_cohort=user_cohort,
+            thinking=thinking,
+            output_config=output_config,
         )
         return _create_letta_response(
             new_in_context_messages=new_in_context_messages,
@@ -202,6 +211,8 @@ class LettaAgent(BaseAgent):
         use_bedrock_experiment: bool = False,
         model_override: Optional[str] = None,
         user_cohort: Optional[str] = None,
+        thinking: Optional[dict] = None,
+        output_config: Optional[dict] = None,
     ):
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
@@ -246,6 +257,8 @@ class LettaAgent(BaseAgent):
                     use_vertex_experiment=use_vertex_experiment,
                     use_bedrock_experiment=use_bedrock_experiment,
                     step_index=i,
+                    thinking=thinking,
+                    output_config=output_config,
                 )
             )
             in_context_messages = current_in_context_messages + new_in_context_messages
@@ -375,6 +388,8 @@ class LettaAgent(BaseAgent):
         use_bedrock_experiment: bool = False,
         model_override: Optional[str] = None,
         user_cohort: Optional[str] = None,
+        thinking: Optional[dict] = None,
+        output_config: Optional[dict] = None,
     ) -> Tuple[List[Message], List[Message], Optional[LettaStopReason], LettaUsageStatistics]:
         """
         Carries out an invocation of the agent loop. In each step, the agent
@@ -415,7 +430,9 @@ class LettaAgent(BaseAgent):
 
             request_data, response_data, current_in_context_messages, new_in_context_messages, valid_tool_names = (
                 await self._build_and_request_from_llm(
-                    current_in_context_messages, new_in_context_messages, agent_state, llm_client, tool_rules_solver, agent_step_span, use_vertex_experiment=use_vertex_experiment, use_bedrock_experiment=use_bedrock_experiment, step_index=i
+                    current_in_context_messages, new_in_context_messages, agent_state, llm_client, tool_rules_solver, agent_step_span,
+                    use_vertex_experiment=use_vertex_experiment, use_bedrock_experiment=use_bedrock_experiment, step_index=i,
+                    thinking=thinking, output_config=output_config,
                 )
             )
             in_context_messages = current_in_context_messages + new_in_context_messages
@@ -534,6 +551,8 @@ class LettaAgent(BaseAgent):
         use_bedrock_experiment: bool = False,
         model_override: Optional[str] = None,
         user_cohort: Optional[str] = None,
+        thinking: Optional[dict] = None,
+        output_config: Optional[dict] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Carries out an invocation of the agent loop in a streaming fashion that yields partial tokens.
@@ -593,6 +612,8 @@ class LettaAgent(BaseAgent):
                 llm_client,
                 tool_rules_solver,
                 step_index=i,
+                thinking=thinking,
+                output_config=output_config,
             )
             log_event("agent.stream.llm_response.received")  # [3^]
 
@@ -757,6 +778,8 @@ class LettaAgent(BaseAgent):
         use_vertex_experiment: bool = False,
         use_bedrock_experiment: bool = False,
         step_index: int = 0,
+        thinking: Optional[dict] = None,
+        output_config: Optional[dict] = None,
     ) -> Tuple[Dict, Dict, List[Message], List[Message], List[str]] | None:
         for attempt in range(self.max_summarization_retries + 1):
             try:
@@ -770,6 +793,16 @@ class LettaAgent(BaseAgent):
                     step_index=step_index,
                 )
                 log_event("agent.stream_no_tokens.llm_request.created")
+
+                # Inject per-request thinking/output_config overrides (gated)
+                if self.at_user_id in _THINKING_GATED_USER_IDS:
+                    if thinking is not None:
+                        request_data["thinking"] = thinking
+                        request_data["temperature"] = 1.0
+                        if request_data.get("max_tokens", 0) < 8000:
+                            request_data["max_tokens"] = 8000
+                    if output_config is not None:
+                        request_data["output_config"] = output_config
 
                 async with AsyncTimer() as timer:
                     # Attempt LLM request
@@ -811,6 +844,8 @@ class LettaAgent(BaseAgent):
         llm_client: LLMClientBase,
         tool_rules_solver: ToolRulesSolver,
         step_index: int = 0,
+        thinking: Optional[dict] = None,
+        output_config: Optional[dict] = None,
     ) -> Tuple[Dict, AsyncStream[ChatCompletionChunk], List[Message], List[Message], List[str], int] | None:
         for attempt in range(self.max_summarization_retries + 1):
             try:
@@ -824,6 +859,16 @@ class LettaAgent(BaseAgent):
                     step_index=step_index,
                 )
                 log_event("agent.stream.llm_request.created")  # [2^]
+
+                # Inject per-request thinking/output_config overrides (gated)
+                if self.at_user_id in _THINKING_GATED_USER_IDS:
+                    if thinking is not None:
+                        request_data["thinking"] = thinking
+                        request_data["temperature"] = 1.0
+                        if request_data.get("max_tokens", 0) < 8000:
+                            request_data["max_tokens"] = 8000
+                    if output_config is not None:
+                        request_data["output_config"] = output_config
 
                 provider_request_start_timestamp_ns = get_utc_timestamp_ns()
                 if first_chunk and ttft_span is not None:

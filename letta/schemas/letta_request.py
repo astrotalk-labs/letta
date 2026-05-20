@@ -56,6 +56,16 @@ class LettaRequest(BaseModel):
         description="Raw business ID from the order (1=AstroTalk, 10=Panditji, 12=Lumus). 0 when unavailable.",
     )
 
+    thinking: Optional[dict] = Field(
+        default=None,
+        description="Extended thinking config forwarded to the Claude API (e.g. {'type': 'adaptive'}). When set, temperature is forced to 1 and max_tokens is raised to at least 8000.",
+    )
+
+    output_config: Optional[dict] = Field(
+        default=None,
+        description="Output config forwarded to the Claude API (e.g. {'effort': 'high'}).",
+    )
+
 
 class LettaStreamingRequest(LettaRequest):
     stream_tokens: bool = Field(
