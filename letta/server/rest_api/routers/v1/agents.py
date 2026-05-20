@@ -722,6 +722,8 @@ async def send_message(
             use_bedrock_experiment=request.use_bedrock_experiment,
             model_override=request.model_override,
             user_cohort=request.user_cohort,
+            thinking=request.thinking,
+            output_config=request.output_config,
         )
     else:
         result = await server.send_message_to_agent(
@@ -824,6 +826,8 @@ async def send_message_streaming(
                     use_bedrock_experiment=request.use_bedrock_experiment,
                     model_override=request.model_override,
                     user_cohort=request.user_cohort,
+                    thinking=request.thinking,
+                    output_config=request.output_config,
                 ),
                 media_type="text/event-stream",
             )
@@ -839,6 +843,8 @@ async def send_message_streaming(
                     use_bedrock_experiment=request.use_bedrock_experiment,
                     model_override=request.model_override,
                     user_cohort=request.user_cohort,
+                    thinking=request.thinking,
+                    output_config=request.output_config,
                 ),
                 media_type="text/event-stream",
             )
