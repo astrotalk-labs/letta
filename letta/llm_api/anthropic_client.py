@@ -1132,9 +1132,6 @@ class AnthropicClient(LLMClientBase):
             }
         }
         """
-        # 'refusal' is a newer stop_reason not yet in the SDK's Literal type; normalize before parsing
-        if response_data.get("stop_reason") == "refusal":
-            response_data = {**response_data, "stop_reason": "end_turn"}
         response = AnthropicMessage(**response_data)
         prompt_tokens = response.usage.input_tokens
         completion_tokens = response.usage.output_tokens
@@ -1347,8 +1344,6 @@ def remap_finish_reason(stop_reason: str) -> str:
         return "length"
     elif stop_reason == "tool_use":
         return "function_call"
-    elif stop_reason == "refusal":
-        return "stop"
     else:
         raise ValueError(f"Unexpected stop_reason: {stop_reason}")
 
