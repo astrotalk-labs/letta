@@ -941,18 +941,25 @@ class LettaAgent(BaseAgent):
         # PR β cascade fix: skip _rebuild_memory_async on intermediate steps of the
         # same user turn. The agent multi-step loop calls core_memory_append between
         # LLM calls, which used to trigger a rebuild every step and invalidate the
-        # system-prompt cache. Validated on test user 92744418 in a 20+ turn
-        # conversation: REBUILD_SKIPPED_MID_TURN fires cleanly, response quality
-        # unchanged. Cache_read stays elevated on 12 of 14 sampled calls vs the
-        # prior baseline where every other call collapsed to ~2114 tokens.
-        # Graduating universally. Memory state still persists in DB; the LLM that
-        # just called core_memory_append already has the appended content in its
-        # own assistant message — it does not need a refreshed system block to
-        # function correctly.
-        # NOTE: there is a separate cascade source via core_memory_append's tool
-        # executor path (update_memory_if_changed_async → rebuild_system_prompt_async)
-        # which this PR does not address. Follow-up PR will gate that path.
-        skip_rebuild = step_index > 0
+        # system-prompt cache.
+        #
+        # ROLLED BACK to test-user-only after universal graduation (PR #77) showed
+        # cost-per-minute +2.9% vs pre-graduation in a clean traffic-normalized
+        # comparison (₹3.96/min → ₹4.07/min, 20h post-grad). The reason: the
+        # tool-executor path (core_memory_append → update_memory_if_changed_async
+        # → rebuild_system_prompt_async) rebuilds system prompt DURING tool
+        # execution, independent of this code path. Skipping the agent-loop
+        # rebuild without also gating the tool-executor rebuild causes a second-
+        # order effect where the next user turn's rebuild has a bigger
+        # accumulated diff, hurting cache more on subsequent turns.
+        #
+        # Restoring test-user gate while we ship the tool-executor cascade fix
+        # (next PR). Will re-graduate this together with that fix once both
+        # paths skip in coordinated fashion.
+        skip_rebuild = (
+            self.at_user_id == "92744418"
+            and step_index > 0
+        )
         if skip_rebuild:
             try:
                 import json as _json
