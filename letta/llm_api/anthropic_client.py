@@ -117,7 +117,7 @@ def _is_user_in_v2_cache_bucket(at_user_id):
 
 # --- Geography / business-based API key routing ---
 # Only active for these test user IDs. Once validated, the set can be widened.
-_GEO_KEY_GATED_USER_IDS: frozenset = frozenset({"92744418", "54516480"})
+_GEO_KEY_GATED_USER_IDS: frozenset = frozenset({"92744418", "54516480", "118403462", "108764485", "116567517"})
 
 _COHORT_TO_KEY_ENV: dict = {
     "AT_NATIVE":  "ABC2_AT_NATIVE_ANTHROPIC_KEY",
@@ -1132,6 +1132,9 @@ class AnthropicClient(LLMClientBase):
             }
         }
         """
+        # 'refusal' is a newer stop_reason not yet in the SDK's Literal type; normalize before parsing
+        if response_data.get("stop_reason") == "refusal":
+            response_data = {**response_data, "stop_reason": "end_turn"}
         response = AnthropicMessage(**response_data)
         prompt_tokens = response.usage.input_tokens
         completion_tokens = response.usage.output_tokens
@@ -1344,6 +1347,8 @@ def remap_finish_reason(stop_reason: str) -> str:
         return "length"
     elif stop_reason == "tool_use":
         return "function_call"
+    elif stop_reason == "refusal":
+        return "stop"
     else:
         raise ValueError(f"Unexpected stop_reason: {stop_reason}")
 
