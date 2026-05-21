@@ -801,6 +801,9 @@ class LettaAgent(BaseAgent):
                         request_data["temperature"] = 1.0
                         if request_data.get("max_tokens", 0) < 8000:
                             request_data["max_tokens"] = 8000
+                        # Thinking is incompatible with tool_choice "any"/"tool"; downgrade to "auto"
+                        if request_data.get("tool_choice", {}).get("type") in ("any", "tool"):
+                            request_data["tool_choice"] = {"type": "auto", "disable_parallel_tool_use": True}
                 # output_config flows to all users unconditionally
                 if output_config is not None:
                     request_data["output_config"] = output_config
@@ -869,6 +872,9 @@ class LettaAgent(BaseAgent):
                         request_data["temperature"] = 1.0
                         if request_data.get("max_tokens", 0) < 8000:
                             request_data["max_tokens"] = 8000
+                        # Thinking is incompatible with tool_choice "any"/"tool"; downgrade to "auto"
+                        if request_data.get("tool_choice", {}).get("type") in ("any", "tool"):
+                            request_data["tool_choice"] = {"type": "auto", "disable_parallel_tool_use": True}
                 # output_config flows to all users unconditionally
                 if output_config is not None:
                     request_data["output_config"] = output_config
