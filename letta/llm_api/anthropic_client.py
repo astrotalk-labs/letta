@@ -115,9 +115,6 @@ def _is_user_in_v2_cache_bucket(at_user_id):
 
 
 # --- Geography / business-based API key routing ---
-# Only active for these test user IDs. Once validated, the set can be widened.
-_GEO_KEY_GATED_USER_IDS: frozenset = frozenset({"92744418", "54516480", "118403462", "108764485", "116567517"})
-
 _COHORT_TO_KEY_ENV: dict = {
     "AT_NATIVE":  "ABC2_AT_NATIVE_ANTHROPIC_KEY",
     "AT_FOREIGN": "ABC2_AT_FOREIGN_ANTHROPIC_KEY",
@@ -148,9 +145,7 @@ def _build_bedrock_arn(profile_id: str) -> str:
 
 def _resolve_bedrock_arn_from_cohort(at_user_id: Optional[str], user_cohort: Optional[str]) -> Optional[str]:
     """Return the Bedrock inference profile ARN for the given cohort, or None to fall back
-    to the existing BEDROCK_*_INFERENCE_PROFILE_ARN env vars. Only applies for gated users."""
-    if not at_user_id or at_user_id not in _GEO_KEY_GATED_USER_IDS:
-        return None
+    to the existing BEDROCK_*_INFERENCE_PROFILE_ARN env vars."""
     if not user_cohort or user_cohort == "UNKNOWN":
         get_logger(__name__).warning("[GEO_KEY_BEDROCK] user=%s cohort=UNKNOWN/missing, using default ARN", at_user_id)
         return None
@@ -165,10 +160,8 @@ def _resolve_bedrock_arn_from_cohort(at_user_id: Optional[str], user_cohort: Opt
 
 def _resolve_key_from_cohort(at_user_id: Optional[str], user_cohort: Optional[str]) -> Optional[str]:
     """Return the Anthropic API key value for the given cohort, or None to use the default.
-    Only applies for gated user IDs; UNKNOWN cohort and unrecognised values fall back to default."""
+    UNKNOWN cohort and unrecognised values fall back to default."""
     import os
-    if not at_user_id or at_user_id not in _GEO_KEY_GATED_USER_IDS:
-        return None
     if not user_cohort or user_cohort == "UNKNOWN":
         get_logger(__name__).warning("[GEO_KEY] user=%s cohort=UNKNOWN/missing, using default key", at_user_id)
         return None
