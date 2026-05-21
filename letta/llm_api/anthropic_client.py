@@ -299,6 +299,8 @@ class AnthropicClient(LLMClientBase):
                 bedrock_body["stop_sequences"] = request_data["stop_sequences"]
             if "thinking" in request_data:
                 bedrock_body["thinking"] = request_data["thinking"]
+            if "output_config" in request_data:
+                bedrock_body["output_config"] = request_data["output_config"]
 
             print(f"DEBUG: [AnthropicClient] Calling bedrock invoke_model with modelId={model_id}")
 

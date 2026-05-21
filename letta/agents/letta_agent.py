@@ -794,15 +794,16 @@ class LettaAgent(BaseAgent):
                 )
                 log_event("agent.stream_no_tokens.llm_request.created")
 
-                # Inject per-request thinking/output_config overrides (gated)
+                # Inject per-request thinking overrides (gated)
                 if self.at_user_id in _THINKING_GATED_USER_IDS:
                     if thinking is not None:
                         request_data["thinking"] = thinking
                         request_data["temperature"] = 1.0
                         if request_data.get("max_tokens", 0) < 8000:
                             request_data["max_tokens"] = 8000
-                    if output_config is not None:
-                        request_data["output_config"] = output_config
+                # output_config flows to all users unconditionally
+                if output_config is not None:
+                    request_data["output_config"] = output_config
 
                 async with AsyncTimer() as timer:
                     # Attempt LLM request
@@ -860,15 +861,16 @@ class LettaAgent(BaseAgent):
                 )
                 log_event("agent.stream.llm_request.created")  # [2^]
 
-                # Inject per-request thinking/output_config overrides (gated)
+                # Inject per-request thinking overrides (gated)
                 if self.at_user_id in _THINKING_GATED_USER_IDS:
                     if thinking is not None:
                         request_data["thinking"] = thinking
                         request_data["temperature"] = 1.0
                         if request_data.get("max_tokens", 0) < 8000:
                             request_data["max_tokens"] = 8000
-                    if output_config is not None:
-                        request_data["output_config"] = output_config
+                # output_config flows to all users unconditionally
+                if output_config is not None:
+                    request_data["output_config"] = output_config
 
                 provider_request_start_timestamp_ns = get_utc_timestamp_ns()
                 if first_chunk and ttft_span is not None:
