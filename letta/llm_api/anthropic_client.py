@@ -305,7 +305,15 @@ class AnthropicClient(LLMClientBase):
             if "stop_sequences" in request_data:
                 bedrock_body["stop_sequences"] = request_data["stop_sequences"]
             if "thinking" in request_data:
-                bedrock_body["thinking"] = request_data["thinking"]
+                _requested_model = (request_data.get("model") or llm_config.model or "").lower()
+                _supports_thinking = "claude-sonnet-4-6" in _requested_model or "claude-opus-4-6" in _requested_model
+                if _supports_thinking:
+                    bedrock_body["thinking"] = request_data["thinking"]
+                else:
+                    logger.warning(
+                        "[BEDROCK] Dropping thinking field — model '%s' does not support it on Bedrock",
+                        _requested_model,
+                    )
             if "output_config" in request_data:
                 bedrock_body["output_config"] = request_data["output_config"]
 
