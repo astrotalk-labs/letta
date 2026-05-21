@@ -225,7 +225,14 @@ class AnthropicClient(LLMClientBase):
 
             # Vertex doesn't support beta features
             print(f"DEBUG: [AnthropicClient] Calling client.messages.create with model={request_data.get('model')}")
-            response = await client.messages.create(**request_data)
+            _vertex_extra_body = {}
+            _vertex_sdk_data = {}
+            for k, v in request_data.items():
+                if k == "output_config":
+                    _vertex_extra_body["output_config"] = v
+                else:
+                    _vertex_sdk_data[k] = v
+            response = await client.messages.create(**_vertex_sdk_data, **({"extra_body": _vertex_extra_body} if _vertex_extra_body else {}))
             print(f"DEBUG: [AnthropicClient] Response received successfully")
         elif llm_config.model_endpoint_type == "anthropic_bedrock":
             print(f"DEBUG: [AnthropicClient] Using AWS Bedrock client via boto3 (model_endpoint_type=anthropic_bedrock)")
@@ -339,7 +346,14 @@ class AnthropicClient(LLMClientBase):
         else:
             print(f"DEBUG: [AnthropicClient] Using standard Anthropic client (model_endpoint_type={llm_config.model_endpoint_type})")
             client = await self._get_anthropic_client_async(llm_config, async_client=True)
-            response = await client.beta.messages.create(**request_data, betas=["tools-2024-04-04", "prompt-caching-2024-07-31"])
+            _extra_body = {}
+            _sdk_data = {}
+            for k, v in request_data.items():
+                if k == "output_config":
+                    _extra_body["output_config"] = v
+                else:
+                    _sdk_data[k] = v
+            response = await client.beta.messages.create(**_sdk_data, betas=["tools-2024-04-04", "prompt-caching-2024-07-31"], **({"extra_body": _extra_body} if _extra_body else {}))
         logger.info("This is the usage response from claude %s", response.usage)
         self._log_cache_observation_usage(
             response.usage,
@@ -352,7 +366,14 @@ class AnthropicClient(LLMClientBase):
     async def stream_async(self, request_data: dict, llm_config: LLMConfig) -> AsyncStream[BetaRawMessageStreamEvent]:
         client = await self._get_anthropic_client_async(llm_config, async_client=True)
         request_data["stream"] = True
-        return await client.beta.messages.create(**request_data, betas=["tools-2024-04-04", "prompt-caching-2024-07-31"])
+        _stream_extra_body = {}
+        _stream_sdk_data = {}
+        for k, v in request_data.items():
+            if k == "output_config":
+                _stream_extra_body["output_config"] = v
+            else:
+                _stream_sdk_data[k] = v
+        return await client.beta.messages.create(**_stream_sdk_data, betas=["tools-2024-04-04", "prompt-caching-2024-07-31"], **({"extra_body": _stream_extra_body} if _stream_extra_body else {}))
 
     @trace_method
     async def send_llm_batch_request_async(

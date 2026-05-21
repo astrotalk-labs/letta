@@ -804,6 +804,7 @@ class LettaAgent(BaseAgent):
                 # output_config flows to all users unconditionally
                 if output_config is not None:
                     request_data["output_config"] = output_config
+                    print(f"DEBUG: [_build_and_request_from_llm] output_config injected: {output_config}")
 
                 async with AsyncTimer() as timer:
                     # Attempt LLM request
@@ -871,6 +872,7 @@ class LettaAgent(BaseAgent):
                 # output_config flows to all users unconditionally
                 if output_config is not None:
                     request_data["output_config"] = output_config
+                    print(f"DEBUG: [_build_and_request_from_llm_streaming] output_config injected: {output_config}")
 
                 provider_request_start_timestamp_ns = get_utc_timestamp_ns()
                 if first_chunk and ttft_span is not None:
