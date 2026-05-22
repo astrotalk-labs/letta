@@ -724,6 +724,7 @@ async def send_message(
             user_cohort=request.user_cohort,
             thinking=request.thinking,
             output_config=request.output_config,
+            task_id=request.task_id,
         )
     else:
         result = await server.send_message_to_agent(
