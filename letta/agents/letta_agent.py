@@ -57,6 +57,24 @@ from letta.utils import log_telemetry, validate_function_response
 logger = get_logger(__name__)
 
 
+def _log_step_timing(step: str, elapsed_ms: float, **kwargs) -> None:
+    """Emit a single structured timing log line with a latency-threshold bracket.
+
+    Brackets:
+      [ok]   < 2 s
+      [>2s]  >= 2 s and < 5 s
+      [>5s]  >= 5 s   ← almost always a problem worth investigating
+    """
+    if elapsed_ms >= 5_000:
+        bracket = ">5s"
+    elif elapsed_ms >= 2_000:
+        bracket = ">2s"
+    else:
+        bracket = "ok"
+    extra = "  ".join(f"{k}={v}" for k, v in kwargs.items() if v is not None)
+    logger.info("[STEP_TIMING][%s][%s]  duration_ms=%.0f  %s", step, bracket, elapsed_ms, extra)
+
+
 # Per-request thinking/output_config forwarding is gated to these user IDs.
 # Expand once validated.
 _THINKING_GATED_USER_IDS: frozenset = frozenset({"92744418"})
@@ -221,9 +239,13 @@ class LettaAgent(BaseAgent):
         # Handle provider switching based on experiment flags
         self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override)
 
-        current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
-            input_messages, agent_state, self.message_manager, self.actor
-        )
+        async with AsyncTimer() as _t:
+            current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
+                input_messages, agent_state, self.message_manager, self.actor
+            )
+        _log_step_timing("message_buffer_load", _t.elapsed_ms,
+                         agent_id=agent_state.id, user_id=self.at_user_id,
+                         msg_count=len(current_in_context_messages))
         initial_messages = new_in_context_messages
         tool_rules_solver = ToolRulesSolver(agent_state.tool_rules)
         llm_client = LLMClient.create(
@@ -331,15 +353,19 @@ class LettaAgent(BaseAgent):
             agent_step_span.end()
 
             # Log LLM Trace
-            await self.telemetry_manager.create_provider_trace_async(
-                actor=self.actor,
-                provider_trace_create=ProviderTraceCreate(
-                    request_json=request_data,
-                    response_json=response_data,
-                    step_id=step_id,
-                    organization_id=self.actor.organization_id,
-                ),
-            )
+            async with AsyncTimer() as _t:
+                await self.telemetry_manager.create_provider_trace_async(
+                    actor=self.actor,
+                    provider_trace_create=ProviderTraceCreate(
+                        request_json=request_data,
+                        response_json=response_data,
+                        step_id=step_id,
+                        organization_id=self.actor.organization_id,
+                    ),
+                )
+            _log_step_timing("telemetry_persist", _t.elapsed_ms,
+                             agent_id=agent_state.id, user_id=self.at_user_id,
+                             step_id=step_id)
 
             # stream step
             # TODO: improve TTFT
@@ -403,9 +429,13 @@ class LettaAgent(BaseAgent):
         # Handle provider switching based on experiment flags
         self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override)
 
-        current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
-            input_messages, agent_state, self.message_manager, self.actor
-        )
+        async with AsyncTimer() as _t:
+            current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
+                input_messages, agent_state, self.message_manager, self.actor
+            )
+        _log_step_timing("message_buffer_load", _t.elapsed_ms,
+                         agent_id=agent_state.id, user_id=self.at_user_id,
+                         msg_count=len(current_in_context_messages))
         initial_messages = new_in_context_messages
         tool_rules_solver = ToolRulesSolver(agent_state.tool_rules)
         llm_client = LLMClient.create(
@@ -505,15 +535,19 @@ class LettaAgent(BaseAgent):
             agent_step_span.end()
 
             # Log LLM Trace
-            await self.telemetry_manager.create_provider_trace_async(
-                actor=self.actor,
-                provider_trace_create=ProviderTraceCreate(
-                    request_json=request_data,
-                    response_json=response_data,
-                    step_id=step_id,
-                    organization_id=self.actor.organization_id,
-                ),
-            )
+            async with AsyncTimer() as _t:
+                await self.telemetry_manager.create_provider_trace_async(
+                    actor=self.actor,
+                    provider_trace_create=ProviderTraceCreate(
+                        request_json=request_data,
+                        response_json=response_data,
+                        step_id=step_id,
+                        organization_id=self.actor.organization_id,
+                    ),
+                )
+            _log_step_timing("telemetry_persist", _t.elapsed_ms,
+                             agent_id=agent_state.id, user_id=self.at_user_id,
+                             step_id=step_id)
 
             MetricRegistry().step_execution_time_ms_histogram.record(step_start - get_utc_timestamp_ns(), get_ctx_attributes())
 
@@ -785,13 +819,17 @@ class LettaAgent(BaseAgent):
             try:
                 log_event("agent.stream_no_tokens.messages.refreshed")
                 # Create LLM request data
-                request_data, valid_tool_names = await self._create_llm_request_data_async(
-                    llm_client=llm_client,
-                    in_context_messages=current_in_context_messages + new_in_context_messages,
-                    agent_state=agent_state,
-                    tool_rules_solver=tool_rules_solver,
-                    step_index=step_index,
-                )
+                async with AsyncTimer() as _t:
+                    request_data, valid_tool_names = await self._create_llm_request_data_async(
+                        llm_client=llm_client,
+                        in_context_messages=current_in_context_messages + new_in_context_messages,
+                        agent_state=agent_state,
+                        tool_rules_solver=tool_rules_solver,
+                        step_index=step_index,
+                    )
+                _log_step_timing("llm_request_build", _t.elapsed_ms,
+                                 agent_id=agent_state.id, user_id=self.at_user_id,
+                                 step_idx=step_index, model=agent_state.llm_config.model)
                 log_event("agent.stream_no_tokens.llm_request.created")
 
                 # Inject per-request thinking overrides (gated)
@@ -818,6 +856,10 @@ class LettaAgent(BaseAgent):
                     dict(get_ctx_attributes(), **{"model.name": agent_state.llm_config.model}),
                 )
                 agent_step_span.add_event(name="llm_request_ms", attributes={"duration_ms": timer.elapsed_ms})
+                _log_step_timing("llm_call", timer.elapsed_ms,
+                                 agent_id=agent_state.id, user_id=self.at_user_id,
+                                 step_idx=step_index, model=agent_state.llm_config.model,
+                                 provider=agent_state.llm_config.model_endpoint_type)
 
                 return request_data, response, current_in_context_messages, new_in_context_messages, valid_tool_names
 
@@ -1029,13 +1071,19 @@ class LettaAgent(BaseAgent):
             except Exception:
                 pass
         else:
-            in_context_messages = await self._rebuild_memory_async(
-                in_context_messages,
-                agent_state,
-                num_messages=self.num_messages,
-                num_archival_memories=self.num_archival_memories,
-                tool_rules_solver=tool_rules_solver,
-            )
+            async with AsyncTimer() as _t:
+                in_context_messages = await self._rebuild_memory_async(
+                    in_context_messages,
+                    agent_state,
+                    num_messages=self.num_messages,
+                    num_archival_memories=self.num_archival_memories,
+                    tool_rules_solver=tool_rules_solver,
+                )
+            _log_step_timing("memory_rebuild", _t.elapsed_ms,
+                             agent_id=agent_state.id, user_id=self.at_user_id,
+                             step_idx=step_index,
+                             archival_count=self.num_archival_memories,
+                             msg_count=self.num_messages)
 
         tools = [
             t
@@ -1155,13 +1203,18 @@ class LettaAgent(BaseAgent):
                 base_error_message += f"\n** Hint: Possible rules that were violated:\n{bullet_points}"
             tool_execution_result = ToolExecutionResult(status="error", func_return=base_error_message)
         else:
-            tool_execution_result = await self._execute_tool(
-                tool_name=tool_call_name,
-                tool_args=tool_args,
-                agent_state=agent_state,
-                agent_step_span=agent_step_span,
-                step_id=step_id,
-            )
+            async with AsyncTimer() as _t:
+                tool_execution_result = await self._execute_tool(
+                    tool_name=tool_call_name,
+                    tool_args=tool_args,
+                    agent_state=agent_state,
+                    agent_step_span=agent_step_span,
+                    step_id=step_id,
+                )
+            _log_step_timing("tool_execution", _t.elapsed_ms,
+                             agent_id=agent_state.id, user_id=self.at_user_id,
+                             step_id=step_id, tool=tool_call_name,
+                             success=tool_execution_result.success_flag)
         log_telemetry(
             self.logger, "_handle_ai_response execute tool finish", tool_execution_result=tool_execution_result, tool_call_id=tool_call_id
         )
@@ -1202,19 +1255,23 @@ class LettaAgent(BaseAgent):
         # Following agent loop to persist this before messages
         # TODO (cliandy): determine what should match old loop w/provider_id, job_id
         # TODO (cliandy): UsageStatistics and LettaUsageStatistics are used in many places, but are not the same.
-        logged_step = await self.step_manager.log_step_async(
-            actor=self.actor,
-            agent_id=agent_state.id,
-            provider_name=agent_state.llm_config.model_endpoint_type,
-            provider_category=agent_state.llm_config.provider_category or "base",
-            model=agent_state.llm_config.model,
-            model_endpoint=agent_state.llm_config.model_endpoint,
-            context_window_limit=agent_state.llm_config.context_window,
-            usage=usage,
-            provider_id=None,
-            job_id=None,
-            step_id=step_id,
-        )
+        async with AsyncTimer() as _t:
+            logged_step = await self.step_manager.log_step_async(
+                actor=self.actor,
+                agent_id=agent_state.id,
+                provider_name=agent_state.llm_config.model_endpoint_type,
+                provider_category=agent_state.llm_config.provider_category or "base",
+                model=agent_state.llm_config.model,
+                model_endpoint=agent_state.llm_config.model_endpoint,
+                context_window_limit=agent_state.llm_config.context_window,
+                usage=usage,
+                provider_id=None,
+                job_id=None,
+                step_id=step_id,
+            )
+        _log_step_timing("step_persist", _t.elapsed_ms,
+                         agent_id=agent_state.id, user_id=self.at_user_id,
+                         step_id=step_id)
 
         # 5b. Persist Messages to DB
         tool_call_messages = create_letta_messages_from_llm_response(
@@ -1242,9 +1299,14 @@ class LettaAgent(BaseAgent):
         # history are noise that contradicts the fresh per-turn injections from go-ai-chat
         # (e.g., yesterday's "current time is 2:30 PM" conflicting with today's fresh stamp).
         _persistable_initial = [m for m in (initial_messages or []) if m.role != MessageRole.system]
-        persisted_messages = await self.message_manager.create_many_messages_async(
-            _persistable_initial + tool_call_messages, actor=self.actor
-        )
+        _all_messages_to_persist = _persistable_initial + tool_call_messages
+        async with AsyncTimer() as _t:
+            persisted_messages = await self.message_manager.create_many_messages_async(
+                _all_messages_to_persist, actor=self.actor
+            )
+        _log_step_timing("message_persist", _t.elapsed_ms,
+                         agent_id=agent_state.id, user_id=self.at_user_id,
+                         step_id=step_id, msg_count=len(_all_messages_to_persist))
         self.last_function_response = function_response
 
         return persisted_messages, continue_stepping, stop_reason
