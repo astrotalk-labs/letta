@@ -309,10 +309,16 @@ class AnthropicClient(LLMClientBase):
                 _supports_thinking = "claude-sonnet-4-6" in _requested_model or "claude-opus-4-6" in _requested_model
                 if _supports_thinking:
                     _thinking_val = request_data["thinking"]
-                    # Bedrock does not support {"type": "adaptive"} — convert to enabled with a budget
+                    # Bedrock does not support {"type": "adaptive"} — convert to enabled with a budget.
+                    # budget_tokens must be strictly less than max_tokens (Bedrock requirement).
                     if isinstance(_thinking_val, dict) and _thinking_val.get("type") == "adaptive":
-                        _thinking_val = {"type": "enabled", "budget_tokens": 8000}
-                        logger.warning("[BEDROCK] Converted adaptive thinking to enabled (budget_tokens=8000) — Bedrock does not support adaptive type")
+                        _max_tokens = bedrock_body.get("max_tokens", 4096)
+                        _budget_tokens = max(1024, _max_tokens - 1000)
+                        _thinking_val = {"type": "enabled", "budget_tokens": _budget_tokens}
+                        logger.warning(
+                            "[BEDROCK] Converted adaptive thinking to enabled (budget_tokens=%d, max_tokens=%d) — Bedrock does not support adaptive type",
+                            _budget_tokens, _max_tokens,
+                        )
                     bedrock_body["thinking"] = _thinking_val
                 else:
                     logger.warning(
