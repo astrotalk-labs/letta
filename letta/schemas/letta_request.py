@@ -1,6 +1,6 @@
-from typing import List, Optional
+from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from letta.constants import DEFAULT_MAX_STEPS, DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG
 from letta.schemas.letta_message import MessageType
@@ -70,6 +70,14 @@ class LettaRequest(BaseModel):
         default=None,
         description="Optional task ID for step-wise latency logging. When provided, timing for each phase (context prep, LLM call, tool execution, context rebuild) is emitted as warning logs to help identify bottlenecks.",
     )
+
+    @field_validator("task_id", mode="before")
+    @classmethod
+    def coerce_task_id_to_str(cls, v: Any) -> Optional[str]:
+        """Accept integers or any scalar as task_id and coerce to string."""
+        if v is None:
+            return None
+        return str(v)
 
 
 class LettaStreamingRequest(LettaRequest):
