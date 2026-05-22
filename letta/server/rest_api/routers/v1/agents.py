@@ -724,6 +724,7 @@ async def send_message(
             user_cohort=request.user_cohort,
             thinking=request.thinking,
             output_config=request.output_config,
+            latencyOptimisationFlow=request.latencyOptimisationFlow,
         )
     else:
         result = await server.send_message_to_agent(
@@ -845,6 +846,7 @@ async def send_message_streaming(
                     user_cohort=request.user_cohort,
                     thinking=request.thinking,
                     output_config=request.output_config,
+                    latencyOptimisationFlow=request.latencyOptimisationFlow,
                 ),
                 media_type="text/event-stream",
             )

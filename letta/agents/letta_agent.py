@@ -57,14 +57,18 @@ from letta.utils import log_telemetry, validate_function_response
 logger = get_logger(__name__)
 
 
-def _log_step_timing(step: str, elapsed_ms: float, **kwargs) -> None:
+def _log_step_timing(step: str, elapsed_ms: float, enabled: bool = False, **kwargs) -> None:
     """Emit a single structured timing log line with a latency-threshold bracket.
+
+    Only fires when enabled=True (gated by latencyOptimisationFlow in the request).
 
     Brackets:
       [ok]   < 2 s
       [>2s]  >= 2 s and < 5 s
       [>5s]  >= 5 s   ← almost always a problem worth investigating
     """
+    if not enabled:
+        return
     if elapsed_ms >= 5_000:
         bracket = ">5s"
     elif elapsed_ms >= 2_000:
@@ -193,6 +197,7 @@ class LettaAgent(BaseAgent):
         user_cohort: Optional[str] = None,
         thinking: Optional[dict] = None,
         output_config: Optional[dict] = None,
+        latencyOptimisationFlow: bool = False,
     ) -> LettaResponse:
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
@@ -208,6 +213,7 @@ class LettaAgent(BaseAgent):
             user_cohort=user_cohort,
             thinking=thinking,
             output_config=output_config,
+            latencyOptimisationFlow=latencyOptimisationFlow,
         )
         return _create_letta_response(
             new_in_context_messages=new_in_context_messages,
@@ -231,6 +237,7 @@ class LettaAgent(BaseAgent):
         user_cohort: Optional[str] = None,
         thinking: Optional[dict] = None,
         output_config: Optional[dict] = None,
+        latencyOptimisationFlow: bool = False,
     ):
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
@@ -239,11 +246,16 @@ class LettaAgent(BaseAgent):
         # Handle provider switching based on experiment flags
         self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override)
 
+        # When latencyOptimisationFlow is on, cap max_steps to prevent runaway loops
+        if latencyOptimisationFlow:
+            max_steps = min(max_steps, 10)
+
         async with AsyncTimer() as _t:
             current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
                 input_messages, agent_state, self.message_manager, self.actor
             )
         _log_step_timing("message_buffer_load", _t.elapsed_ms,
+                         enabled=latencyOptimisationFlow,
                          agent_id=agent_state.id, user_id=self.at_user_id,
                          msg_count=len(current_in_context_messages))
         initial_messages = new_in_context_messages
@@ -263,6 +275,10 @@ class LettaAgent(BaseAgent):
         request_span.set_attributes({f"llm_config.{k}": v for k, v in agent_state.llm_config.model_dump().items() if v is not None})
 
         for i in range(max_steps):
+            _log_step_timing("step_start", 0.0,
+                             enabled=latencyOptimisationFlow,
+                             step=i + 1, max_steps=max_steps,
+                             agent_id=agent_state.id, user_id=self.at_user_id)
             step_id = generate_step_id()
             step_start = get_utc_timestamp_ns()
             agent_step_span = tracer.start_span("agent_step", start_time=step_start)
@@ -281,6 +297,7 @@ class LettaAgent(BaseAgent):
                     step_index=i,
                     thinking=thinking,
                     output_config=output_config,
+                    latencyOptimisationFlow=latencyOptimisationFlow,
                 )
             )
             in_context_messages = current_in_context_messages + new_in_context_messages
@@ -340,6 +357,7 @@ class LettaAgent(BaseAgent):
                 initial_messages=initial_messages,
                 agent_step_span=agent_step_span,
                 is_final_step=(i == max_steps - 1),
+                latencyOptimisationFlow=latencyOptimisationFlow,
             )
             self.response_messages.extend(persisted_messages)
             new_in_context_messages.extend(persisted_messages)
@@ -351,6 +369,10 @@ class LettaAgent(BaseAgent):
             step_ns = now - step_start
             agent_step_span.add_event(name="step_ms", attributes={"duration_ms": ns_to_ms(step_ns)})
             agent_step_span.end()
+            _log_step_timing("step_total", ns_to_ms(step_ns),
+                             enabled=latencyOptimisationFlow,
+                             step=i + 1, max_steps=max_steps,
+                             agent_id=agent_state.id, user_id=self.at_user_id)
 
             # Log LLM Trace
             async with AsyncTimer() as _t:
@@ -364,6 +386,7 @@ class LettaAgent(BaseAgent):
                     ),
                 )
             _log_step_timing("telemetry_persist", _t.elapsed_ms,
+                             enabled=latencyOptimisationFlow,
                              agent_id=agent_state.id, user_id=self.at_user_id,
                              step_id=step_id)
 
@@ -385,19 +408,32 @@ class LettaAgent(BaseAgent):
 
         # Extend the in context message ids
         if not agent_state.message_buffer_autoclear:
-            await self._rebuild_context_window(
-                in_context_messages=current_in_context_messages,
-                new_letta_messages=new_in_context_messages,
-                llm_config=agent_state.llm_config,
-                total_tokens=usage.total_tokens,
-                force=False,
-            )
+            async with AsyncTimer() as _t:
+                await self._rebuild_context_window(
+                    in_context_messages=current_in_context_messages,
+                    new_letta_messages=new_in_context_messages,
+                    llm_config=agent_state.llm_config,
+                    total_tokens=usage.total_tokens,
+                    force=False,
+                    latencyOptimisationFlow=latencyOptimisationFlow,
+                )
+            _log_step_timing("context_window_rebuild", _t.elapsed_ms,
+                             enabled=latencyOptimisationFlow,
+                             agent_id=agent_state.id, user_id=self.at_user_id,
+                             total_tokens=usage.total_tokens,
+                             ctx_window=agent_state.llm_config.context_window)
 
         # log request time
         if request_start_timestamp_ns:
             now = get_utc_timestamp_ns()
             request_ns = now - request_start_timestamp_ns
             request_span.add_event(name="letta_request_ms", attributes={"duration_ms": ns_to_ms(request_ns)})
+            _log_step_timing("request_complete", ns_to_ms(request_ns),
+                             enabled=latencyOptimisationFlow,
+                             agent_id=agent_state.id, user_id=self.at_user_id,
+                             total_steps=usage.step_count,
+                             total_tokens=usage.total_tokens,
+                             provider=agent_state.llm_config.model_endpoint_type)
         request_span.end()
 
         # Return back usage
@@ -416,6 +452,7 @@ class LettaAgent(BaseAgent):
         user_cohort: Optional[str] = None,
         thinking: Optional[dict] = None,
         output_config: Optional[dict] = None,
+        latencyOptimisationFlow: bool = False,
     ) -> Tuple[List[Message], List[Message], Optional[LettaStopReason], LettaUsageStatistics]:
         """
         Carries out an invocation of the agent loop. In each step, the agent
@@ -429,11 +466,16 @@ class LettaAgent(BaseAgent):
         # Handle provider switching based on experiment flags
         self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override)
 
+        # When latencyOptimisationFlow is on, cap max_steps to prevent runaway loops
+        if latencyOptimisationFlow:
+            max_steps = min(max_steps, 10)
+
         async with AsyncTimer() as _t:
             current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
                 input_messages, agent_state, self.message_manager, self.actor
             )
         _log_step_timing("message_buffer_load", _t.elapsed_ms,
+                         enabled=latencyOptimisationFlow,
                          agent_id=agent_state.id, user_id=self.at_user_id,
                          msg_count=len(current_in_context_messages))
         initial_messages = new_in_context_messages
@@ -453,6 +495,10 @@ class LettaAgent(BaseAgent):
         stop_reason = None
         usage = LettaUsageStatistics()
         for i in range(max_steps):
+            _log_step_timing("step_start", 0.0,
+                             enabled=latencyOptimisationFlow,
+                             step=i + 1, max_steps=max_steps,
+                             agent_id=agent_state.id, user_id=self.at_user_id)
             step_id = generate_step_id()
             step_start = get_utc_timestamp_ns()
             agent_step_span = tracer.start_span("agent_step", start_time=step_start)
@@ -463,6 +509,7 @@ class LettaAgent(BaseAgent):
                     current_in_context_messages, new_in_context_messages, agent_state, llm_client, tool_rules_solver, agent_step_span,
                     use_vertex_experiment=use_vertex_experiment, use_bedrock_experiment=use_bedrock_experiment, step_index=i,
                     thinking=thinking, output_config=output_config,
+                    latencyOptimisationFlow=latencyOptimisationFlow,
                 )
             )
             in_context_messages = current_in_context_messages + new_in_context_messages
@@ -522,6 +569,7 @@ class LettaAgent(BaseAgent):
                 initial_messages=initial_messages,
                 agent_step_span=agent_step_span,
                 is_final_step=(i == max_steps - 1),
+                latencyOptimisationFlow=latencyOptimisationFlow,
             )
             self.response_messages.extend(persisted_messages)
             new_in_context_messages.extend(persisted_messages)
@@ -533,6 +581,10 @@ class LettaAgent(BaseAgent):
             step_ns = now - step_start
             agent_step_span.add_event(name="step_ms", attributes={"duration_ms": ns_to_ms(step_ns)})
             agent_step_span.end()
+            _log_step_timing("step_total", ns_to_ms(step_ns),
+                             enabled=latencyOptimisationFlow,
+                             step=i + 1, max_steps=max_steps,
+                             agent_id=agent_state.id, user_id=self.at_user_id)
 
             # Log LLM Trace
             async with AsyncTimer() as _t:
@@ -546,6 +598,7 @@ class LettaAgent(BaseAgent):
                     ),
                 )
             _log_step_timing("telemetry_persist", _t.elapsed_ms,
+                             enabled=latencyOptimisationFlow,
                              agent_id=agent_state.id, user_id=self.at_user_id,
                              step_id=step_id)
 
@@ -559,17 +612,30 @@ class LettaAgent(BaseAgent):
             now = get_utc_timestamp_ns()
             request_ns = now - request_start_timestamp_ns
             request_span.add_event(name="request_ms", attributes={"duration_ms": ns_to_ms(request_ns)})
+            _log_step_timing("request_complete", ns_to_ms(request_ns),
+                             enabled=latencyOptimisationFlow,
+                             agent_id=agent_state.id, user_id=self.at_user_id,
+                             total_steps=usage.step_count,
+                             total_tokens=usage.total_tokens,
+                             provider=agent_state.llm_config.model_endpoint_type)
         request_span.end()
 
         # Extend the in context message ids
         if not agent_state.message_buffer_autoclear:
-            await self._rebuild_context_window(
-                in_context_messages=current_in_context_messages,
-                new_letta_messages=new_in_context_messages,
-                llm_config=agent_state.llm_config,
-                total_tokens=usage.total_tokens,
-                force=False,
-            )
+            async with AsyncTimer() as _t:
+                await self._rebuild_context_window(
+                    in_context_messages=current_in_context_messages,
+                    new_letta_messages=new_in_context_messages,
+                    llm_config=agent_state.llm_config,
+                    total_tokens=usage.total_tokens,
+                    force=False,
+                    latencyOptimisationFlow=latencyOptimisationFlow,
+                )
+            _log_step_timing("context_window_rebuild", _t.elapsed_ms,
+                             enabled=latencyOptimisationFlow,
+                             agent_id=agent_state.id, user_id=self.at_user_id,
+                             total_tokens=usage.total_tokens,
+                             ctx_window=agent_state.llm_config.context_window)
 
         return current_in_context_messages, new_in_context_messages, usage, stop_reason
 
@@ -814,6 +880,7 @@ class LettaAgent(BaseAgent):
         step_index: int = 0,
         thinking: Optional[dict] = None,
         output_config: Optional[dict] = None,
+        latencyOptimisationFlow: bool = False,
     ) -> Tuple[Dict, Dict, List[Message], List[Message], List[str]] | None:
         for attempt in range(self.max_summarization_retries + 1):
             try:
@@ -828,6 +895,7 @@ class LettaAgent(BaseAgent):
                         step_index=step_index,
                     )
                 _log_step_timing("llm_request_build", _t.elapsed_ms,
+                                 enabled=latencyOptimisationFlow,
                                  agent_id=agent_state.id, user_id=self.at_user_id,
                                  step_idx=step_index, model=agent_state.llm_config.model)
                 log_event("agent.stream_no_tokens.llm_request.created")
@@ -857,6 +925,7 @@ class LettaAgent(BaseAgent):
                 )
                 agent_step_span.add_event(name="llm_request_ms", attributes={"duration_ms": timer.elapsed_ms})
                 _log_step_timing("llm_call", timer.elapsed_ms,
+                                 enabled=latencyOptimisationFlow,
                                  agent_id=agent_state.id, user_id=self.at_user_id,
                                  step_idx=step_index, model=agent_state.llm_config.model,
                                  provider=agent_state.llm_config.model_endpoint_type)
@@ -868,6 +937,12 @@ class LettaAgent(BaseAgent):
                     raise e
 
                 # Handle the error and prepare for retry
+                _log_step_timing("context_overflow_retry", 0.0,
+                                 enabled=latencyOptimisationFlow,
+                                 attempt=attempt + 1,
+                                 max_retries=self.max_summarization_retries,
+                                 agent_id=agent_state.id, user_id=self.at_user_id,
+                                 step_idx=step_index)
                 current_in_context_messages = await self._handle_llm_error(
                     e,
                     llm_client=llm_client,
@@ -875,6 +950,7 @@ class LettaAgent(BaseAgent):
                     new_letta_messages=new_in_context_messages,
                     llm_config=agent_state.llm_config,
                     force=True,
+                    latencyOptimisationFlow=latencyOptimisationFlow,
                 )
                 new_in_context_messages = []
                 log_event(f"agent.stream_no_tokens.retry_attempt.{attempt + 1}")
@@ -904,6 +980,7 @@ class LettaAgent(BaseAgent):
                     agent_state=agent_state,
                     tool_rules_solver=tool_rules_solver,
                     step_index=step_index,
+                    latencyOptimisationFlow=latencyOptimisationFlow,
                 )
                 log_event("agent.stream.llm_request.created")  # [2^]
 
@@ -965,10 +1042,15 @@ class LettaAgent(BaseAgent):
         new_letta_messages: List[Message],
         llm_config: LLMConfig,
         force: bool,
+        latencyOptimisationFlow: bool = False,
     ) -> List[Message]:
         if isinstance(e, ContextWindowExceededError):
             return await self._rebuild_context_window(
-                in_context_messages=in_context_messages, new_letta_messages=new_letta_messages, llm_config=llm_config, force=force
+                in_context_messages=in_context_messages,
+                new_letta_messages=new_letta_messages,
+                llm_config=llm_config,
+                force=force,
+                latencyOptimisationFlow=latencyOptimisationFlow,
             )
         else:
             raise llm_client.handle_llm_error(e)
@@ -981,6 +1063,7 @@ class LettaAgent(BaseAgent):
         llm_config: LLMConfig,
         total_tokens: Optional[int] = None,
         force: bool = False,
+        latencyOptimisationFlow: bool = False,
     ) -> List[Message]:
         # If total tokens is reached, we truncate down
         # TODO: This can be broken by bad configs, e.g. lower bound too high, initial messages too fat, etc.
@@ -988,16 +1071,31 @@ class LettaAgent(BaseAgent):
             self.logger.warning(
                 f"Total tokens {total_tokens} exceeds configured max tokens {llm_config.context_window}, forcefully clearing message history."
             )
+            _t0 = get_utc_timestamp_ns()
             new_in_context_messages, updated = self.summarizer.summarize(
                 in_context_messages=in_context_messages, new_letta_messages=new_letta_messages, force=True, clear=True
             )
+            _log_step_timing("summarizer_run", ns_to_ms(get_utc_timestamp_ns() - _t0),
+                             enabled=latencyOptimisationFlow,
+                             trigger="forced_overflow",
+                             msg_in=len(in_context_messages), msg_out=len(new_in_context_messages))
         else:
+            _t0 = get_utc_timestamp_ns()
             new_in_context_messages, updated = self.summarizer.summarize(
                 in_context_messages=in_context_messages, new_letta_messages=new_letta_messages
             )
-        await self.agent_manager.set_in_context_messages_async(
-            agent_id=self.agent_id, message_ids=[m.id for m in new_in_context_messages], actor=self.actor
-        )
+            _log_step_timing("summarizer_run", ns_to_ms(get_utc_timestamp_ns() - _t0),
+                             enabled=latencyOptimisationFlow,
+                             trigger="normal",
+                             msg_in=len(in_context_messages), msg_out=len(new_in_context_messages))
+
+        async with AsyncTimer() as _t:
+            await self.agent_manager.set_in_context_messages_async(
+                agent_id=self.agent_id, message_ids=[m.id for m in new_in_context_messages], actor=self.actor
+            )
+        _log_step_timing("ctx_window_persist", _t.elapsed_ms,
+                         enabled=latencyOptimisationFlow,
+                         msg_count=len(new_in_context_messages))
 
         return new_in_context_messages
 
@@ -1021,6 +1119,7 @@ class LettaAgent(BaseAgent):
         agent_state: AgentState,
         tool_rules_solver: ToolRulesSolver,
         step_index: int = 0,
+        latencyOptimisationFlow: bool = False,
     ) -> Tuple[dict, List[str]]:
         self.num_messages, self.num_archival_memories = await asyncio.gather(
             (
@@ -1080,6 +1179,7 @@ class LettaAgent(BaseAgent):
                     tool_rules_solver=tool_rules_solver,
                 )
             _log_step_timing("memory_rebuild", _t.elapsed_ms,
+                             enabled=latencyOptimisationFlow,
                              agent_id=agent_state.id, user_id=self.at_user_id,
                              step_idx=step_index,
                              archival_count=self.num_archival_memories,
@@ -1145,6 +1245,7 @@ class LettaAgent(BaseAgent):
         initial_messages: Optional[List[Message]] = None,
         agent_step_span: Optional["Span"] = None,
         is_final_step: Optional[bool] = None,
+        latencyOptimisationFlow: bool = False,
     ) -> Tuple[List[Message], bool, Optional[LettaStopReason]]:
         """
         Now that streaming is done, handle the final AI response.
@@ -1212,6 +1313,7 @@ class LettaAgent(BaseAgent):
                     step_id=step_id,
                 )
             _log_step_timing("tool_execution", _t.elapsed_ms,
+                             enabled=latencyOptimisationFlow,
                              agent_id=agent_state.id, user_id=self.at_user_id,
                              step_id=step_id, tool=tool_call_name,
                              success=tool_execution_result.success_flag)
@@ -1270,6 +1372,7 @@ class LettaAgent(BaseAgent):
                 step_id=step_id,
             )
         _log_step_timing("step_persist", _t.elapsed_ms,
+                         enabled=latencyOptimisationFlow,
                          agent_id=agent_state.id, user_id=self.at_user_id,
                          step_id=step_id)
 
@@ -1305,6 +1408,7 @@ class LettaAgent(BaseAgent):
                 _all_messages_to_persist, actor=self.actor
             )
         _log_step_timing("message_persist", _t.elapsed_ms,
+                         enabled=latencyOptimisationFlow,
                          agent_id=agent_state.id, user_id=self.at_user_id,
                          step_id=step_id, msg_count=len(_all_messages_to_persist))
         self.last_function_response = function_response

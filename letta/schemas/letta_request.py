@@ -66,6 +66,11 @@ class LettaRequest(BaseModel):
         description="Output config forwarded to the Claude API (e.g. {'effort': 'high'}).",
     )
 
+    latencyOptimisationFlow: bool = Field(
+        default=False,
+        description="When True, emits [STEP_TIMING] log lines for each pipeline phase (message_buffer_load, llm_request_build, memory_rebuild, llm_call, tool_execution, step_persist, message_persist, telemetry_persist). Useful for latency debugging. Has no effect on response content.",
+    )
+
 
 class LettaStreamingRequest(LettaRequest):
     stream_tokens: bool = Field(
