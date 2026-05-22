@@ -433,15 +433,12 @@ class LettaAgent(BaseAgent):
         self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override)
 
         _ctx_prep_start = get_utc_timestamp_ns() if task_id else None
-        current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
-            input_messages, agent_state, self.message_manager, self.actor
-        )
-        if task_id and _ctx_prep_start:
-            logger.warning(f"[TASK_LATENCY] task_id={task_id} phase=context_prep duration_ms={ns_to_ms(get_utc_timestamp_ns() - _ctx_prep_start)}")
         async with AsyncTimer() as _t:
             current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
                 input_messages, agent_state, self.message_manager, self.actor
             )
+        if task_id and _ctx_prep_start:
+            logger.warning(f"[TASK_LATENCY] task_id={task_id} phase=context_prep duration_ms={ns_to_ms(get_utc_timestamp_ns() - _ctx_prep_start)}")
         _log_step_timing("message_buffer_load", _t.elapsed_ms,
                          agent_id=agent_state.id, user_id=self.at_user_id,
                          msg_count=len(current_in_context_messages))
