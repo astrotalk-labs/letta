@@ -66,6 +66,11 @@ class LettaRequest(BaseModel):
         description="Output config forwarded to the Claude API (e.g. {'effort': 'high'}).",
     )
 
+    task_id: Optional[str] = Field(
+        default=None,
+        description="Optional task ID for step-wise latency logging. When provided, timing for each phase (context prep, LLM call, tool execution, context rebuild) is emitted as warning logs to help identify bottlenecks.",
+    )
+
 
 class LettaStreamingRequest(LettaRequest):
     stream_tokens: bool = Field(

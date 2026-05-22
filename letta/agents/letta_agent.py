@@ -193,6 +193,7 @@ class LettaAgent(BaseAgent):
         user_cohort: Optional[str] = None,
         thinking: Optional[dict] = None,
         output_config: Optional[dict] = None,
+        task_id: Optional[str] = None,
     ) -> LettaResponse:
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
@@ -208,6 +209,7 @@ class LettaAgent(BaseAgent):
             user_cohort=user_cohort,
             thinking=thinking,
             output_config=output_config,
+            task_id=task_id,
         )
         return _create_letta_response(
             new_in_context_messages=new_in_context_messages,
@@ -416,6 +418,7 @@ class LettaAgent(BaseAgent):
         user_cohort: Optional[str] = None,
         thinking: Optional[dict] = None,
         output_config: Optional[dict] = None,
+        task_id: Optional[str] = None,
     ) -> Tuple[List[Message], List[Message], Optional[LettaStopReason], LettaUsageStatistics]:
         """
         Carries out an invocation of the agent loop. In each step, the agent
@@ -429,10 +432,13 @@ class LettaAgent(BaseAgent):
         # Handle provider switching based on experiment flags
         self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override)
 
+        _ctx_prep_start = get_utc_timestamp_ns() if task_id else None
         async with AsyncTimer() as _t:
             current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
                 input_messages, agent_state, self.message_manager, self.actor
             )
+        if task_id and _ctx_prep_start:
+            logger.warning(f"[TASK_LATENCY] task_id={task_id} phase=context_prep duration_ms={ns_to_ms(get_utc_timestamp_ns() - _ctx_prep_start)}")
         _log_step_timing("message_buffer_load", _t.elapsed_ms,
                          agent_id=agent_state.id, user_id=self.at_user_id,
                          msg_count=len(current_in_context_messages))
@@ -458,6 +464,7 @@ class LettaAgent(BaseAgent):
             agent_step_span = tracer.start_span("agent_step", start_time=step_start)
             agent_step_span.set_attributes({"step_id": step_id})
 
+            _llm_start = get_utc_timestamp_ns() if task_id else None
             request_data, response_data, current_in_context_messages, new_in_context_messages, valid_tool_names = (
                 await self._build_and_request_from_llm(
                     current_in_context_messages, new_in_context_messages, agent_state, llm_client, tool_rules_solver, agent_step_span,
@@ -465,6 +472,8 @@ class LettaAgent(BaseAgent):
                     thinking=thinking, output_config=output_config,
                 )
             )
+            if task_id and _llm_start:
+                logger.warning(f"[TASK_LATENCY] task_id={task_id} step={i} phase=llm_call duration_ms={ns_to_ms(get_utc_timestamp_ns() - _llm_start)}")
             in_context_messages = current_in_context_messages + new_in_context_messages
 
             log_event("agent.step.llm_response.received")  # [3^]
@@ -511,6 +520,7 @@ class LettaAgent(BaseAgent):
                 logger.info("No reasoning content found.")
                 reasoning = None
 
+            _tool_start = get_utc_timestamp_ns() if task_id else None
             persisted_messages, should_continue, stop_reason = await self._handle_ai_response(
                 tool_call,
                 valid_tool_names,
@@ -523,6 +533,8 @@ class LettaAgent(BaseAgent):
                 agent_step_span=agent_step_span,
                 is_final_step=(i == max_steps - 1),
             )
+            if task_id and _tool_start:
+                logger.warning(f"[TASK_LATENCY] task_id={task_id} step={i} phase=tool_exec duration_ms={ns_to_ms(get_utc_timestamp_ns() - _tool_start)}")
             self.response_messages.extend(persisted_messages)
             new_in_context_messages.extend(persisted_messages)
             initial_messages = None
@@ -532,6 +544,8 @@ class LettaAgent(BaseAgent):
             now = get_utc_timestamp_ns()
             step_ns = now - step_start
             agent_step_span.add_event(name="step_ms", attributes={"duration_ms": ns_to_ms(step_ns)})
+            if task_id:
+                logger.warning(f"[TASK_LATENCY] task_id={task_id} step={i} phase=total_step duration_ms={ns_to_ms(step_ns)}")
             agent_step_span.end()
 
             # Log LLM Trace
@@ -562,6 +576,7 @@ class LettaAgent(BaseAgent):
         request_span.end()
 
         # Extend the in context message ids
+        _ctx_rebuild_start = get_utc_timestamp_ns() if task_id else None
         if not agent_state.message_buffer_autoclear:
             await self._rebuild_context_window(
                 in_context_messages=current_in_context_messages,
@@ -570,6 +585,10 @@ class LettaAgent(BaseAgent):
                 total_tokens=usage.total_tokens,
                 force=False,
             )
+        if task_id and _ctx_rebuild_start:
+            logger.warning(f"[TASK_LATENCY] task_id={task_id} phase=ctx_rebuild duration_ms={ns_to_ms(get_utc_timestamp_ns() - _ctx_rebuild_start)}")
+        if task_id and request_start_timestamp_ns:
+            logger.warning(f"[TASK_LATENCY] task_id={task_id} phase=total_request duration_ms={ns_to_ms(get_utc_timestamp_ns() - request_start_timestamp_ns)}")
 
         return current_in_context_messages, new_in_context_messages, usage, stop_reason
 
