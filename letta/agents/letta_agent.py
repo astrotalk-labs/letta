@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 import uuid
 from typing import AsyncGenerator, Dict, List, Optional, Tuple, Union
 
@@ -90,12 +89,19 @@ _MEMORY_TOOL_NAMES: frozenset = frozenset({
     "core_memory_replace",
 })
 
-# Haiku model names per provider.  Override via env vars if needed.
-# Bedrock requires an explicit ARN since there is no sensible default.
+# Haiku model identifiers per provider, used by the latencyOptimisationFlow cascade.
+# Hardcoded for prod stability — the Bedrock value is the AstroTalk ap-south-1
+# application inference profile for Claude Haiku 3.5.
+_HAIKU_MODEL_ANTHROPIC: str = "claude-haiku-3-5-20241022"
+_HAIKU_MODEL_VERTEX: str = "claude-haiku-3-5@20241022"
+_HAIKU_MODEL_BEDROCK_ARN: str = (
+    "arn:aws:bedrock:ap-south-1:441618926843:application-inference-profile/8y2dovlqcwlc"
+)
+
 _HAIKU_MODEL_BY_PROVIDER: dict = {
-    "anthropic": os.environ.get("ANTHROPIC_HAIKU_MODEL", "claude-haiku-3-5-20241022"),
-    "anthropic_vertex": os.environ.get("VERTEX_HAIKU_MODEL", "claude-haiku-3-5@20241022"),
-    "anthropic_bedrock": os.environ.get("BEDROCK_HAIKU_INFERENCE_PROFILE_ARN"),
+    "anthropic": _HAIKU_MODEL_ANTHROPIC,
+    "anthropic_vertex": _HAIKU_MODEL_VERTEX,
+    "anthropic_bedrock": _HAIKU_MODEL_BEDROCK_ARN,
 }
 
 
@@ -481,9 +487,8 @@ class LettaAgent(BaseAgent):
             _haiku_model = _HAIKU_MODEL_BY_PROVIDER.get(agent_state.llm_config.model_endpoint_type)
             if not _haiku_model:
                 logger.warning(
-                    f"[HAIKU_CASCADE] latencyOptimisationFlow=True but no Haiku model configured "
-                    f"for provider={agent_state.llm_config.model_endpoint_type}. "
-                    "Set BEDROCK_HAIKU_INFERENCE_PROFILE_ARN / ANTHROPIC_HAIKU_MODEL / VERTEX_HAIKU_MODEL."
+                    f"[HAIKU_CASCADE] latencyOptimisationFlow=True but no Haiku model mapped "
+                    f"for provider={agent_state.llm_config.model_endpoint_type}; skipping cascade."
                 )
 
         # span for request
