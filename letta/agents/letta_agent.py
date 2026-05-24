@@ -90,10 +90,10 @@ _MEMORY_TOOL_NAMES: frozenset = frozenset({
 })
 
 # Haiku model identifiers per provider, used by the latencyOptimisationFlow cascade.
-# Hardcoded for prod stability — the Bedrock value is the AstroTalk ap-south-1
-# application inference profile for Claude Haiku 3.5.
-_HAIKU_MODEL_ANTHROPIC: str = "claude-haiku-3-5-20241022"
-_HAIKU_MODEL_VERTEX: str = "claude-haiku-3-5@20241022"
+# Hardcoded for prod stability — Bedrock value is the AstroTalk ap-south-1 application
+# inference profile that already points at Claude Haiku 4.5.
+_HAIKU_MODEL_ANTHROPIC: str = "claude-haiku-4-5-20251001"
+_HAIKU_MODEL_VERTEX: str = "claude-haiku-4-5@20251001"
 _HAIKU_MODEL_BEDROCK_ARN: str = (
     "arn:aws:bedrock:ap-south-1:441618926843:application-inference-profile/8y2dovlqcwlc"
 )
