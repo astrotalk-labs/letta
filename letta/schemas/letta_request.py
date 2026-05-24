@@ -1,6 +1,6 @@
 from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from letta.constants import DEFAULT_MAX_STEPS, DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG
 from letta.schemas.letta_message import MessageType
@@ -8,6 +8,10 @@ from letta.schemas.message import MessageCreate
 
 
 class LettaRequest(BaseModel):
+    # Allow callers to send either the camelCase JSON key or the snake_case Python
+    # name for fields that declare a validation_alias (e.g. latencyOptimisationFlow).
+    model_config = ConfigDict(populate_by_name=True)
+
     messages: List[MessageCreate] = Field(..., description="The messages to be sent to the agent.")
     max_steps: int = Field(
         default=DEFAULT_MAX_STEPS,
@@ -73,13 +77,16 @@ class LettaRequest(BaseModel):
 
     latencyOptimisationFlow: bool = Field(
         default=False,
+        validation_alias=AliasChoices("latencyOptimisationFlow", "latency_optimisation_flow"),
         description=(
             "When True, latency-optimised execution is enabled: memory-tool follow-up steps "
             "(archival_memory_search, recall_memory_search, core_memory_append, "
             "core_memory_replace, archival_memory_insert) are routed through the configured "
             "Haiku model instead of the agent's default model. Step 0 and non-memory steps "
             "still use the full model so quality of reasoning and the final send_message "
-            "response are unaffected. Works with Anthropic direct, Vertex AI, and AWS Bedrock."
+            "response are unaffected. Works with Anthropic direct, Vertex AI, and AWS Bedrock. "
+            "Accepts both camelCase (`latencyOptimisationFlow`) and snake_case "
+            "(`latency_optimisation_flow`) JSON keys."
         ),
     )
 
