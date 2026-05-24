@@ -1208,15 +1208,32 @@ class AnthropicClient(LLMClientBase):
                             # the OpenAI-style nested-format branch and fall through.
                             pass
 
-                    if isinstance(tool_input, dict) and "id" in tool_input and tool_input["id"].startswith("toolu_") and "function" in tool_input:
-                        arguments = json.dumps(tool_input["function"]["arguments"], indent=2)
+                    # Detect the OpenAI-style nested format some models return:
+                    #   {"id": "toolu_...", "function": {"name": "...", "arguments": {...}}}
+                    # Each access must be guarded — at least one observed Haiku 4.5
+                    # response on Bedrock returned `function` as a STRING instead of a
+                    # dict, which crashed `tool_input["function"]["arguments"]` with
+                    # TypeError: string indices must be integers. We now require
+                    # `function` to be a dict before stepping into it.
+                    _is_nested_openai_format = (
+                        isinstance(tool_input, dict)
+                        and isinstance(tool_input.get("id"), str)
+                        and tool_input["id"].startswith("toolu_")
+                        and isinstance(tool_input.get("function"), dict)
+                    )
+                    if _is_nested_openai_format:
+                        _function_dict = tool_input["function"]
+                        _args_raw = _function_dict.get("arguments")
+                        arguments = json.dumps(_args_raw, indent=2)
                         try:
                             args_json = json.loads(arguments)
                             if not isinstance(args_json, dict):
                                 raise ValueError("Expected parseable json object for arguments")
                         except:
-                            arguments = str(tool_input["function"]["arguments"])
+                            arguments = str(_args_raw)
                     else:
+                        # Standard Anthropic format: `input` IS the arguments dict
+                        # (or whatever else the model returned — we serialize it as-is).
                         arguments = json.dumps(tool_input, indent=2)
                     tool_calls = [
                         ToolCall(
