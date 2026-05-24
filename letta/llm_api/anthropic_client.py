@@ -1186,7 +1186,29 @@ class AnthropicClient(LLMClientBase):
                 if content_part.type == "tool_use":
                     # hack for incorrect tool format
                     tool_input = json.loads(json.dumps(content_part.input))
-                    if "id" in tool_input and tool_input["id"].startswith("toolu_") and "function" in tool_input:
+
+                    # Defensive: some model/provider combinations (notably Haiku on Bedrock
+                    # with restricted tool_choice) return `input` as a JSON-encoded string
+                    # instead of a dict. The "id" in tool_input check below would then do
+                    # a substring scan on the string and the subsequent tool_input["id"]
+                    # access would raise TypeError("string indices must be integers, not 'str'").
+                    # Parse string-shaped inputs back to a dict before the format hack runs.
+                    if isinstance(tool_input, str):
+                        logger.warning(
+                            "[ANTHROPIC_CLIENT] tool_use.input arrived as a string (len=%d, name=%s); parsing as JSON",
+                            len(tool_input),
+                            getattr(content_part, "name", "?"),
+                        )
+                        try:
+                            _parsed = json.loads(tool_input)
+                            if isinstance(_parsed, dict):
+                                tool_input = _parsed
+                        except (ValueError, TypeError):
+                            # Leave as string; the isinstance(dict) guard below will skip
+                            # the OpenAI-style nested-format branch and fall through.
+                            pass
+
+                    if isinstance(tool_input, dict) and "id" in tool_input and tool_input["id"].startswith("toolu_") and "function" in tool_input:
                         arguments = json.dumps(tool_input["function"]["arguments"], indent=2)
                         try:
                             args_json = json.loads(arguments)
