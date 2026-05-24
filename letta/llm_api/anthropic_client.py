@@ -248,25 +248,38 @@ class AnthropicClient(LLMClientBase):
             aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY') or model_settings.aws_secret_access_key
             aws_session_token = os.getenv('AWS_SESSION_TOKEN')
 
-            # Determine model ID: cohort-based ARN takes priority for gated users,
-            # then fall back to model-name env vars, then raw model name.
-            requested_model = (request_data.get('model') or llm_config.model or "").lower()
+            # Determine model ID priority order:
+            #   1. If the requested model is already a full Bedrock ARN, trust it directly
+            #      (used by the latencyOptimisationFlow cascade which passes a hardcoded
+            #      Haiku ARN — the ARN profile-ID has no "haiku" substring so the env-var
+            #      lookup below would mis-route to the default Sonnet ARN).
+            #   2. Cohort-based ARN for gated users
+            #   3. Model-name → env-var lookup (existing substring matching)
+            #   4. Raw model name as last resort
+            requested_model_raw = request_data.get('model') or llm_config.model or ""
+            requested_model = requested_model_raw.lower()
             logger.info("[GEO_KEY_BEDROCK] request_async at_user_id=%s user_cohort=%s", getattr(self, "at_user_id", None), getattr(self, "user_cohort", None))
-            cohort_arn = _resolve_bedrock_arn_from_cohort(
-                getattr(self, "at_user_id", None),
-                getattr(self, "user_cohort", None),
-            )
-            if cohort_arn:
-                bedrock_inference_profile = cohort_arn
+
+            if requested_model_raw.startswith("arn:aws:bedrock:"):
+                # Direct ARN passed by the caller — use it verbatim.
+                bedrock_inference_profile = requested_model_raw
+                print(f"DEBUG: [AnthropicClient] Using direct ARN from requested_model: {bedrock_inference_profile}")
             else:
-                default_arn = os.getenv('BEDROCK_INFERENCE_PROFILE_ARN')
-                if "haiku" in requested_model:
-                    bedrock_inference_profile = os.getenv('BEDROCK_HAIKU_INFERENCE_PROFILE_ARN') or default_arn
-                elif "sonnet-4-6" in requested_model or "sonnet-4.6" in requested_model:
-                    bedrock_inference_profile = os.getenv('BEDROCK_SONNET_4_6_INFERENCE_PROFILE_ARN') or default_arn
+                cohort_arn = _resolve_bedrock_arn_from_cohort(
+                    getattr(self, "at_user_id", None),
+                    getattr(self, "user_cohort", None),
+                )
+                if cohort_arn:
+                    bedrock_inference_profile = cohort_arn
                 else:
-                    bedrock_inference_profile = default_arn
-            print(f"DEBUG: [AnthropicClient] Selected inference profile for model='{requested_model}': {bedrock_inference_profile}")
+                    default_arn = os.getenv('BEDROCK_INFERENCE_PROFILE_ARN')
+                    if "haiku" in requested_model:
+                        bedrock_inference_profile = os.getenv('BEDROCK_HAIKU_INFERENCE_PROFILE_ARN') or default_arn
+                    elif "sonnet-4-6" in requested_model or "sonnet-4.6" in requested_model:
+                        bedrock_inference_profile = os.getenv('BEDROCK_SONNET_4_6_INFERENCE_PROFILE_ARN') or default_arn
+                    else:
+                        bedrock_inference_profile = default_arn
+                print(f"DEBUG: [AnthropicClient] Selected inference profile for model='{requested_model}': {bedrock_inference_profile}")
             model_id = bedrock_inference_profile if bedrock_inference_profile else request_data.get('model')
 
             print(f"DEBUG: [AnthropicClient] Creating boto3 bedrock-runtime client with region={aws_region}")
