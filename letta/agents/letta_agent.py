@@ -213,7 +213,7 @@ class LettaAgent(BaseAgent):
         thinking: Optional[dict] = None,
         output_config: Optional[dict] = None,
         task_id: Optional[str] = None,
-        use_haiku_for_memory_steps: bool = False,
+        latency_optimisation_flow: bool = False,
     ) -> LettaResponse:
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
@@ -230,7 +230,7 @@ class LettaAgent(BaseAgent):
             thinking=thinking,
             output_config=output_config,
             task_id=task_id,
-            use_haiku_for_memory_steps=use_haiku_for_memory_steps,
+            latency_optimisation_flow=latency_optimisation_flow,
         )
         return _create_letta_response(
             new_in_context_messages=new_in_context_messages,
@@ -440,7 +440,7 @@ class LettaAgent(BaseAgent):
         thinking: Optional[dict] = None,
         output_config: Optional[dict] = None,
         task_id: Optional[str] = None,
-        use_haiku_for_memory_steps: bool = False,
+        latency_optimisation_flow: bool = False,
     ) -> Tuple[List[Message], List[Message], Optional[LettaStopReason], LettaUsageStatistics]:
         """
         Carries out an invocation of the agent loop. In each step, the agent
@@ -474,14 +474,14 @@ class LettaAgent(BaseAgent):
             user_cohort=user_cohort,
         )
 
-        # Resolve the Haiku model name for this provider (used when use_haiku_for_memory_steps=True).
+        # Resolve the Haiku model name for this provider (used when latency_optimisation_flow=True).
         # The model name is provider-specific; Bedrock requires an explicit ARN env var.
         _haiku_model: Optional[str] = None
-        if use_haiku_for_memory_steps:
+        if latency_optimisation_flow:
             _haiku_model = _HAIKU_MODEL_BY_PROVIDER.get(agent_state.llm_config.model_endpoint_type)
             if not _haiku_model:
                 logger.warning(
-                    f"[HAIKU_CASCADE] use_haiku_for_memory_steps=True but no Haiku model configured "
+                    f"[HAIKU_CASCADE] latencyOptimisationFlow=True but no Haiku model configured "
                     f"for provider={agent_state.llm_config.model_endpoint_type}. "
                     "Set BEDROCK_HAIKU_INFERENCE_PROFILE_ARN / ANTHROPIC_HAIKU_MODEL / VERTEX_HAIKU_MODEL."
                 )
