@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import uuid
 from typing import AsyncGenerator, Dict, List, Optional, Tuple, Union
 
@@ -78,6 +79,24 @@ def _log_step_timing(step: str, elapsed_ms: float, **kwargs) -> None:
 # Per-request thinking/output_config forwarding is gated to these user IDs.
 # Expand once validated.
 _THINKING_GATED_USER_IDS: frozenset = frozenset({"92744418"})
+
+# Memory tools that are safe to run with a lightweight model.
+# The LLM only needs to formulate a search/write query here — no complex reasoning required.
+_MEMORY_TOOL_NAMES: frozenset = frozenset({
+    "archival_memory_search",
+    "archival_memory_insert",
+    "recall_memory_search",
+    "core_memory_append",
+    "core_memory_replace",
+})
+
+# Haiku model names per provider.  Override via env vars if needed.
+# Bedrock requires an explicit ARN since there is no sensible default.
+_HAIKU_MODEL_BY_PROVIDER: dict = {
+    "anthropic": os.environ.get("ANTHROPIC_HAIKU_MODEL", "claude-haiku-3-5-20241022"),
+    "anthropic_vertex": os.environ.get("VERTEX_HAIKU_MODEL", "claude-haiku-3-5@20241022"),
+    "anthropic_bedrock": os.environ.get("BEDROCK_HAIKU_INFERENCE_PROFILE_ARN"),
+}
 
 
 class LettaAgent(BaseAgent):
@@ -194,6 +213,7 @@ class LettaAgent(BaseAgent):
         thinking: Optional[dict] = None,
         output_config: Optional[dict] = None,
         task_id: Optional[str] = None,
+        use_haiku_for_memory_steps: bool = False,
     ) -> LettaResponse:
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
@@ -210,6 +230,7 @@ class LettaAgent(BaseAgent):
             thinking=thinking,
             output_config=output_config,
             task_id=task_id,
+            use_haiku_for_memory_steps=use_haiku_for_memory_steps,
         )
         return _create_letta_response(
             new_in_context_messages=new_in_context_messages,
@@ -419,6 +440,7 @@ class LettaAgent(BaseAgent):
         thinking: Optional[dict] = None,
         output_config: Optional[dict] = None,
         task_id: Optional[str] = None,
+        use_haiku_for_memory_steps: bool = False,
     ) -> Tuple[List[Message], List[Message], Optional[LettaStopReason], LettaUsageStatistics]:
         """
         Carries out an invocation of the agent loop. In each step, the agent
@@ -452,17 +474,40 @@ class LettaAgent(BaseAgent):
             user_cohort=user_cohort,
         )
 
+        # Resolve the Haiku model name for this provider (used when use_haiku_for_memory_steps=True).
+        # The model name is provider-specific; Bedrock requires an explicit ARN env var.
+        _haiku_model: Optional[str] = None
+        if use_haiku_for_memory_steps:
+            _haiku_model = _HAIKU_MODEL_BY_PROVIDER.get(agent_state.llm_config.model_endpoint_type)
+            if not _haiku_model:
+                logger.warning(
+                    f"[HAIKU_CASCADE] use_haiku_for_memory_steps=True but no Haiku model configured "
+                    f"for provider={agent_state.llm_config.model_endpoint_type}. "
+                    "Set BEDROCK_HAIKU_INFERENCE_PROFILE_ARN / ANTHROPIC_HAIKU_MODEL / VERTEX_HAIKU_MODEL."
+                )
+
         # span for request
         request_span = tracer.start_span("time_to_first_token")
         request_span.set_attributes({f"llm_config.{k}": v for k, v in agent_state.llm_config.model_dump().items() if v is not None})
 
         stop_reason = None
         usage = LettaUsageStatistics()
+        _prev_tool_name: Optional[str] = None  # tracks the tool called in the previous step for cascade decisions
         for i in range(max_steps):
             step_id = generate_step_id()
             step_start = get_utc_timestamp_ns()
             agent_step_span = tracer.start_span("agent_step", start_time=step_start)
             agent_step_span.set_attributes({"step_id": step_id})
+
+            # Cascade to Haiku for memory-tool follow-up steps (step 0 always uses full model).
+            _original_model: Optional[str] = None
+            if _haiku_model and i > 0 and _prev_tool_name in _MEMORY_TOOL_NAMES:
+                _original_model = agent_state.llm_config.model
+                agent_state.llm_config.model = _haiku_model
+                logger.warning(
+                    f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} step={i} "
+                    f"prev_tool={_prev_tool_name} model={_original_model} -> {_haiku_model}"
+                )
 
             _llm_start = get_utc_timestamp_ns() if task_id else None
             request_data, response_data, current_in_context_messages, new_in_context_messages, valid_tool_names = (
@@ -479,6 +524,10 @@ class LettaAgent(BaseAgent):
             log_event("agent.step.llm_response.received")  # [3^]
 
             response = llm_client.convert_response_to_chat_completion(response_data, in_context_messages, agent_state.llm_config)
+
+            # Restore original model now that the Haiku-cascaded request + response parse is complete
+            if _original_model is not None:
+                agent_state.llm_config.model = _original_model
 
             # TODO: add run_id
             usage.step_count += 1
@@ -538,6 +587,7 @@ class LettaAgent(BaseAgent):
             self.response_messages.extend(persisted_messages)
             new_in_context_messages.extend(persisted_messages)
             initial_messages = None
+            _prev_tool_name = tool_call.function.name  # used by next iteration for cascade decision
             log_event("agent.step.llm_response.processed")  # [4^]
 
             # log step time

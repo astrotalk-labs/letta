@@ -71,6 +71,17 @@ class LettaRequest(BaseModel):
         description="Optional task ID for step-wise latency logging. When provided, timing for each phase (context prep, LLM call, tool execution, context rebuild) is emitted as warning logs to help identify bottlenecks.",
     )
 
+    use_haiku_for_memory_steps: bool = Field(
+        default=False,
+        description=(
+            "When True, memory-tool steps (archival_memory_search, recall_memory_search, "
+            "core_memory_append, core_memory_replace, archival_memory_insert) are executed "
+            "with the configured Haiku model instead of the agent's default model. "
+            "The final send_message step always uses the full model. "
+            "Works with Anthropic direct, Vertex AI, and AWS Bedrock providers."
+        ),
+    )
+
     @field_validator("task_id", mode="before")
     @classmethod
     def coerce_task_id_to_str(cls, v: Any) -> Optional[str]:
