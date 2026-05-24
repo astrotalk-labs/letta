@@ -1037,17 +1037,41 @@ class LettaAgent(BaseAgent):
                 # never even attempted on send_message — if Haiku has no other tool to call
                 # it returns a text response, which signals the cascade to hand off to the
                 # primary model for the actual send_message.
+                # Wrapped in try/except so any structural surprise in request_data surfaces
+                # as a clear log line rather than a bare TypeError up the stack.
                 if excluded_tool_names:
-                    if "tools" in request_data and isinstance(request_data["tools"], list):
-                        request_data["tools"] = [
-                            t for t in request_data["tools"]
-                            if (t.get("name") if isinstance(t, dict) else None) not in excluded_tool_names
-                        ]
-                    valid_tool_names = [n for n in valid_tool_names if n not in excluded_tool_names]
-                    # Let the model return text if no tool fits — it must not be forced to
-                    # call a tool when send_message has been stripped out.
-                    if request_data.get("tool_choice", {}).get("type") in ("any", "tool"):
-                        request_data["tool_choice"] = {"type": "auto", "disable_parallel_tool_use": True}
+                    try:
+                        logger.warning(
+                            f"[HAIKU_CASCADE_DBG] entering tool-restriction block; "
+                            f"excluded={sorted(excluded_tool_names)} "
+                            f"request_data_type={type(request_data).__name__} "
+                            f"tools_type={type(request_data.get('tools')).__name__ if isinstance(request_data, dict) else 'N/A'} "
+                            f"tool_choice_type={type(request_data.get('tool_choice')).__name__ if isinstance(request_data, dict) else 'N/A'}"
+                        )
+                        if isinstance(request_data, dict) and isinstance(request_data.get("tools"), list):
+                            _orig_tool_count = len(request_data["tools"])
+                            request_data["tools"] = [
+                                t for t in request_data["tools"]
+                                if isinstance(t, dict) and t.get("name") not in excluded_tool_names
+                            ]
+                            logger.warning(
+                                f"[HAIKU_CASCADE_DBG] tools filtered: {_orig_tool_count} -> {len(request_data['tools'])}"
+                            )
+                        if isinstance(valid_tool_names, list):
+                            valid_tool_names = [n for n in valid_tool_names if n not in excluded_tool_names]
+                        # Let the model return text if no tool fits — it must not be forced to
+                        # call a tool when send_message has been stripped out.
+                        _tc = request_data.get("tool_choice") if isinstance(request_data, dict) else None
+                        if isinstance(_tc, dict) and _tc.get("type") in ("any", "tool"):
+                            request_data["tool_choice"] = {"type": "auto", "disable_parallel_tool_use": True}
+                            logger.warning(f"[HAIKU_CASCADE_DBG] tool_choice downgraded to auto")
+                    except Exception as _exc:
+                        import traceback as _tb
+                        logger.warning(
+                            f"[HAIKU_CASCADE_DBG] tool-restriction block raised {type(_exc).__name__}: {_exc}\n"
+                            f"{_tb.format_exc()}"
+                        )
+                        raise
 
                 # Inject per-request thinking overrides (gated)
                 if self.at_user_id in _THINKING_GATED_USER_IDS:
