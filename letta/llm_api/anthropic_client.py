@@ -1210,20 +1210,46 @@ class AnthropicClient(LLMClientBase):
 
                     # Detect the OpenAI-style nested format some models return:
                     #   {"id": "toolu_...", "function": {"name": "...", "arguments": {...}}}
-                    # Each access must be guarded — at least one observed Haiku 4.5
-                    # response on Bedrock returned `function` as a STRING instead of a
-                    # dict, which crashed `tool_input["function"]["arguments"]` with
-                    # TypeError: string indices must be integers. We now require
-                    # `function` to be a dict before stepping into it.
-                    _is_nested_openai_format = (
+                    # and the variant Haiku 4.5 on Bedrock has been observed to return,
+                    # where `function` itself is a JSON-encoded STRING:
+                    #   {"id": "toolu_...", "function": "{\"name\":\"...\",\"arguments\":{...}}"}
+                    # Both variants ultimately want us to extract function["arguments"]
+                    # as the real tool arguments dict. Without this normalisation a
+                    # send_message call would lose its `message` key and downstream
+                    # validators would raise "Function call ... missing ... argument".
+                    _function = None
+                    _is_nested_openai_format = False
+                    if (
                         isinstance(tool_input, dict)
                         and isinstance(tool_input.get("id"), str)
                         and tool_input["id"].startswith("toolu_")
-                        and isinstance(tool_input.get("function"), dict)
-                    )
+                        and "function" in tool_input
+                    ):
+                        _function = tool_input["function"]
+                        if isinstance(_function, str):
+                            # Provider returned function as a JSON string — parse it.
+                            try:
+                                _parsed_function = json.loads(_function)
+                                if isinstance(_parsed_function, dict):
+                                    _function = _parsed_function
+                                else:
+                                    _function = None
+                            except (ValueError, TypeError):
+                                _function = None
+                        if isinstance(_function, dict):
+                            _is_nested_openai_format = True
+
                     if _is_nested_openai_format:
-                        _function_dict = tool_input["function"]
-                        _args_raw = _function_dict.get("arguments")
+                        _args_raw = _function.get("arguments")
+                        # The `arguments` field itself may also be a JSON-encoded string
+                        # in some response shapes — normalise to a dict if so.
+                        if isinstance(_args_raw, str):
+                            try:
+                                _parsed_args = json.loads(_args_raw)
+                                if isinstance(_parsed_args, dict):
+                                    _args_raw = _parsed_args
+                            except (ValueError, TypeError):
+                                pass
                         arguments = json.dumps(_args_raw, indent=2)
                         try:
                             args_json = json.loads(arguments)
