@@ -725,6 +725,7 @@ async def send_message(
             thinking=request.thinking,
             output_config=request.output_config,
             task_id=request.task_id,
+            latency_optimisation_flow=request.latencyOptimisationFlow,
         )
     else:
         result = await server.send_message_to_agent(
