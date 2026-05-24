@@ -114,18 +114,24 @@ async def _trace_error_handler(_request: Request, exc: Exception) -> JSONRespons
             },
         )
 
-    # Also write the full traceback to the regular logger so it shows up in Loki
-    # (span events alone are easy to miss and require digging through the tracing
-    # backend). Only log 5xx errors with traceback; 4xx are usually expected.
+    # Also write the full traceback to the regular logger AND stdout so it shows up
+    # in Loki. Span events alone are easy to miss; an `exc_info=` traceback can be
+    # stored in a separate structured field that some collectors hide by default.
+    # We format the traceback into the message text so it is impossible to miss.
     if status_code >= 500:
-        logger.error(
-            "[UNHANDLED_EXCEPTION] %s: %s (path=%s method=%s)",
-            type(exc).__name__,
-            error_msg,
-            getattr(_request, "url", "?"),
-            getattr(_request, "method", "?"),
-            exc_info=exc,
+        import traceback as _tb
+        _tb_text = "".join(_tb.format_exception(type(exc), exc, exc.__traceback__))
+        _path = getattr(_request, "url", "?")
+        _method = getattr(_request, "method", "?")
+        _full_msg = (
+            f"[UNHANDLED_EXCEPTION] {type(exc).__name__}: {error_msg} "
+            f"(path={_path} method={_method})\n{_tb_text}"
         )
+        # logger.error so structured-log collectors pick it up
+        logger.error(_full_msg)
+        # print to stdout as a backup — guaranteed to land in container logs even
+        # if structured logging is misconfigured for this logger name.
+        print(_full_msg, flush=True)
 
     return JSONResponse(status_code=status_code, content={"detail": error_msg, "trace_id": get_trace_id() or ""})
 
