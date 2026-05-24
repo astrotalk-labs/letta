@@ -481,14 +481,23 @@ class LettaAgent(BaseAgent):
         )
 
         # Resolve the Haiku model name for this provider (used when latency_optimisation_flow=True).
-        # The model name is provider-specific; Bedrock requires an explicit ARN env var.
+        # Hardcoded provider→model mapping; Bedrock uses an ARN application inference profile.
         _haiku_model: Optional[str] = None
         if latency_optimisation_flow:
             _haiku_model = _HAIKU_MODEL_BY_PROVIDER.get(agent_state.llm_config.model_endpoint_type)
-            if not _haiku_model:
+            if _haiku_model:
                 logger.warning(
-                    f"[HAIKU_CASCADE] latencyOptimisationFlow=True but no Haiku model mapped "
-                    f"for provider={agent_state.llm_config.model_endpoint_type}; skipping cascade."
+                    f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} ENABLED "
+                    f"provider={agent_state.llm_config.model_endpoint_type} "
+                    f"primary_model={agent_state.llm_config.model} "
+                    f"haiku_model={_haiku_model} "
+                    f"memory_tools={sorted(_MEMORY_TOOL_NAMES)}"
+                )
+            else:
+                logger.warning(
+                    f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} DISABLED_NO_MODEL "
+                    f"latencyOptimisationFlow=True but no Haiku model mapped "
+                    f"for provider={agent_state.llm_config.model_endpoint_type}; using primary model for all steps."
                 )
 
         # span for request
@@ -498,6 +507,15 @@ class LettaAgent(BaseAgent):
         stop_reason = None
         usage = LettaUsageStatistics()
         _prev_tool_name: Optional[str] = None  # tracks the tool called in the previous step for cascade decisions
+
+        # Cascade usage counters (only meaningful when latency_optimisation_flow=True)
+        _haiku_step_count: int = 0
+        _sonnet_step_count: int = 0
+        _haiku_prompt_tokens: int = 0
+        _haiku_completion_tokens: int = 0
+        _sonnet_prompt_tokens: int = 0
+        _sonnet_completion_tokens: int = 0
+
         for i in range(max_steps):
             step_id = generate_step_id()
             step_start = get_utc_timestamp_ns()
@@ -506,12 +524,25 @@ class LettaAgent(BaseAgent):
 
             # Cascade to Haiku for memory-tool follow-up steps (step 0 always uses full model).
             _original_model: Optional[str] = None
+            _step_used_haiku: bool = False
             if _haiku_model and i > 0 and _prev_tool_name in _MEMORY_TOOL_NAMES:
                 _original_model = agent_state.llm_config.model
                 agent_state.llm_config.model = _haiku_model
+                _step_used_haiku = True
                 logger.warning(
-                    f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} step={i} "
+                    f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} step={i} SWITCH "
                     f"prev_tool={_prev_tool_name} model={_original_model} -> {_haiku_model}"
+                )
+            elif latency_optimisation_flow and _haiku_model:
+                # Flag is on but we stuck with the primary model — log why for debuggability.
+                _skip_reason = (
+                    "step_0"
+                    if i == 0
+                    else f"prev_tool={_prev_tool_name}_not_memory"
+                )
+                logger.warning(
+                    f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} step={i} KEEP_PRIMARY "
+                    f"reason={_skip_reason} model={agent_state.llm_config.model}"
                 )
 
             _llm_start = get_utc_timestamp_ns() if task_id else None
@@ -542,6 +573,16 @@ class LettaAgent(BaseAgent):
             MetricRegistry().message_output_tokens.record(
                 response.usage.completion_tokens, dict(get_ctx_attributes(), **{"model.name": agent_state.llm_config.model})
             )
+
+            # Accumulate per-model usage for the cascade summary
+            if _step_used_haiku:
+                _haiku_step_count += 1
+                _haiku_prompt_tokens += response.usage.prompt_tokens
+                _haiku_completion_tokens += response.usage.completion_tokens
+            else:
+                _sonnet_step_count += 1
+                _sonnet_prompt_tokens += response.usage.prompt_tokens
+                _sonnet_completion_tokens += response.usage.completion_tokens
 
             if not response.choices[0].message.tool_calls:
                 text = response.choices[0].message.content
@@ -593,6 +634,20 @@ class LettaAgent(BaseAgent):
             new_in_context_messages.extend(persisted_messages)
             initial_messages = None
             _prev_tool_name = tool_call.function.name  # used by next iteration for cascade decision
+
+            # Per-step usage log — useful when latency_optimisation_flow is on to confirm which
+            # model handled each step and how many tokens it cost.
+            if latency_optimisation_flow:
+                logger.warning(
+                    f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} step={i} USAGE "
+                    f"used_haiku={_step_used_haiku} "
+                    f"model={_haiku_model if _step_used_haiku else agent_state.llm_config.model} "
+                    f"tool={_prev_tool_name} "
+                    f"prompt_tokens={response.usage.prompt_tokens} "
+                    f"completion_tokens={response.usage.completion_tokens} "
+                    f"total_tokens={response.usage.total_tokens}"
+                )
+
             log_event("agent.step.llm_response.processed")  # [4^]
 
             # log step time
@@ -644,6 +699,23 @@ class LettaAgent(BaseAgent):
             logger.warning(f"[TASK_LATENCY] task_id={task_id} phase=ctx_rebuild duration_ms={ns_to_ms(get_utc_timestamp_ns() - _ctx_rebuild_start)}")
         if task_id and request_start_timestamp_ns:
             logger.warning(f"[TASK_LATENCY] task_id={task_id} phase=total_request duration_ms={ns_to_ms(get_utc_timestamp_ns() - request_start_timestamp_ns)}")
+
+        # Cascade SUMMARY — fires whenever the flag was requested, even if the cascade was
+        # disabled mid-flight (so we can see "asked for it but got zero haiku steps" cases).
+        if latency_optimisation_flow:
+            _total_steps = _haiku_step_count + _sonnet_step_count
+            _haiku_total_tokens = _haiku_prompt_tokens + _haiku_completion_tokens
+            _sonnet_total_tokens = _sonnet_prompt_tokens + _sonnet_completion_tokens
+            _haiku_step_pct = (100.0 * _haiku_step_count / _total_steps) if _total_steps else 0.0
+            logger.warning(
+                f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} SUMMARY "
+                f"total_steps={_total_steps} "
+                f"haiku_steps={_haiku_step_count} sonnet_steps={_sonnet_step_count} "
+                f"haiku_pct={_haiku_step_pct:.1f} "
+                f"haiku_tokens={_haiku_total_tokens} (prompt={_haiku_prompt_tokens} completion={_haiku_completion_tokens}) "
+                f"sonnet_tokens={_sonnet_total_tokens} (prompt={_sonnet_prompt_tokens} completion={_sonnet_completion_tokens}) "
+                f"haiku_model={_haiku_model or 'N/A'}"
+            )
 
         return current_in_context_messages, new_in_context_messages, usage, stop_reason
 
