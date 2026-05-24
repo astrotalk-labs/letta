@@ -114,6 +114,19 @@ async def _trace_error_handler(_request: Request, exc: Exception) -> JSONRespons
             },
         )
 
+    # Also write the full traceback to the regular logger so it shows up in Loki
+    # (span events alone are easy to miss and require digging through the tracing
+    # backend). Only log 5xx errors with traceback; 4xx are usually expected.
+    if status_code >= 500:
+        logger.error(
+            "[UNHANDLED_EXCEPTION] %s: %s (path=%s method=%s)",
+            type(exc).__name__,
+            error_msg,
+            getattr(_request, "url", "?"),
+            getattr(_request, "method", "?"),
+            exc_info=exc,
+        )
+
     return JSONResponse(status_code=status_code, content={"detail": error_msg, "trace_id": get_trace_id() or ""})
 
 
