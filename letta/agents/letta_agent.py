@@ -564,6 +564,7 @@ class LettaAgent(BaseAgent):
 
             _original_model: Optional[str] = None
             _step_used_haiku: bool = False
+            _step_was_retried: bool = False  # flipped to True if the gate forces a primary retry
             if _haiku_model and i > 0:
                 _original_model = agent_state.llm_config.model
                 agent_state.llm_config.model = _haiku_model
@@ -660,6 +661,7 @@ class LettaAgent(BaseAgent):
                     MetricRegistry().haiku_cascade_wasted_tokens_histogram.record(
                         response.usage.total_tokens, _retry_attrs
                     )
+                    _step_was_retried = True
 
                     # Re-run on the primary model with the full tool list (no exclusions).
                     # The model is already restored above; the pre-call message snapshot avoids
@@ -783,6 +785,24 @@ class LettaAgent(BaseAgent):
             agent_step_span.add_event(name="step_ms", attributes={"duration_ms": ns_to_ms(step_ns)})
             if task_id:
                 logger.warning(f"[TASK_LATENCY] task_id={task_id} step={i} phase=total_step duration_ms={ns_to_ms(step_ns)}")
+
+            # OTel: per-step latency tagged with cascade outcome. Lets us answer
+            # "how long do Haiku-kept steps take vs primary-retried steps?".
+            if latency_optimisation_flow:
+                if _step_used_haiku:
+                    _step_outcome = "haiku_kept"
+                elif _step_was_retried:
+                    _step_outcome = "primary_retried"
+                elif _haiku_model and i == 0:
+                    _step_outcome = "primary_step0"
+                elif not _haiku_model:
+                    _step_outcome = "primary_no_haiku_model"
+                else:
+                    _step_outcome = "primary_kept"
+                MetricRegistry().haiku_cascade_step_ms_histogram.record(
+                    ns_to_ms(step_ns), _cascade_attrs(outcome=_step_outcome)
+                )
+
             agent_step_span.end()
 
             # Log LLM Trace
@@ -849,12 +869,34 @@ class LettaAgent(BaseAgent):
 
             # OTel: per-request histograms so the cascade is observable in Grafana
             # without scraping log lines. `had_retry` lets the request counter slice
-            # be partitioned by whether a retry fired.
-            _summary_attrs = _cascade_attrs(had_retry=str(_haiku_retried_step_count > 0).lower())
+            # be partitioned by whether a retry fired. `total_steps_bucket` bins
+            # the step count so dashboards can split p50/p95 latency by workload
+            # shape without needing a heatmap.
+            def _bucket(n: int) -> str:
+                if n <= 1:
+                    return "1"
+                if n == 2:
+                    return "2"
+                if n <= 5:
+                    return "3-5"
+                return "6+"
+
+            _summary_attrs = _cascade_attrs(
+                had_retry=str(_haiku_retried_step_count > 0).lower(),
+                total_steps_bucket=_bucket(_total_steps),
+            )
             MetricRegistry().haiku_cascade_total_steps_histogram.record(_total_steps, _summary_attrs)
             MetricRegistry().haiku_cascade_haiku_pct_histogram.record(_haiku_step_pct, _summary_attrs)
             MetricRegistry().haiku_cascade_haiku_tokens_histogram.record(_haiku_total_tokens, _summary_attrs)
             MetricRegistry().haiku_cascade_primary_tokens_histogram.record(_primary_total_tokens, _summary_attrs)
+
+            # The headline cascade metric: total end-to-end latency for cascade-enabled
+            # requests, partitioned by had_retry and total_steps_bucket. Use this to
+            # prove "the cascade made things faster" by comparing percentiles vs the
+            # same time window before the cascade went live.
+            if request_start_timestamp_ns:
+                _request_ms = ns_to_ms(get_utc_timestamp_ns() - request_start_timestamp_ns)
+                MetricRegistry().haiku_cascade_request_ms_histogram.record(_request_ms, _summary_attrs)
 
         return current_in_context_messages, new_in_context_messages, usage, stop_reason
 

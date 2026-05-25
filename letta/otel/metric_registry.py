@@ -255,3 +255,35 @@ class MetricRegistry:
                 unit="1",
             ),
         )
+
+    # Per-request total latency in ms — this is the headline cascade metric.
+    # Compare percentiles vs non-cascade traffic to quantify the latency win.
+    # Attributes include `had_retry` so we can split "ideal path" vs "retry path"
+    # and `total_steps_bucket` (1 | 2 | 3-5 | 6+) so the multi-step economics
+    # are visible at a glance without needing the histogram heatmap.
+    @property
+    def haiku_cascade_request_ms_histogram(self) -> Histogram:
+        return self._get_or_create_metric(
+            "hist_haiku_cascade_request_ms",
+            partial(
+                self._meter.create_histogram,
+                name="hist_haiku_cascade_request_ms",
+                description="End-to-end request latency (ms) when the Haiku cascade is enabled.",
+                unit="ms",
+            ),
+        )
+
+    # Per-step latency in ms, tagged with outcome so we can see e.g. "Haiku kept
+    # steps average X ms, primary retried steps average Y ms". Complements the
+    # existing hist_step_execution_time_ms (which has no cascade-outcome label).
+    @property
+    def haiku_cascade_step_ms_histogram(self) -> Histogram:
+        return self._get_or_create_metric(
+            "hist_haiku_cascade_step_ms",
+            partial(
+                self._meter.create_histogram,
+                name="hist_haiku_cascade_step_ms",
+                description="Per-step latency (ms) when the Haiku cascade is enabled, partitioned by outcome.",
+                unit="ms",
+            ),
+        )
