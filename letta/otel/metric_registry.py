@@ -158,3 +158,100 @@ class MetricRegistry:
                 unit="1",
             ),
         )
+
+    # --- Haiku cascade (latencyOptimisationFlow) metrics ---
+    # All attributes use low cardinality:
+    #   - provider  : anthropic | anthropic_vertex | anthropic_bedrock
+    #   - primary_model : the agent's primary model name (e.g. claude-sonnet-4-5-20250929)
+    #   - outcome   : (step counter only) haiku_kept | primary_step0 | primary_retried | primary_no_haiku_model
+
+    # Per-request counter — one tick per request with cascade enabled, plus a `had_retry` flag.
+    @property
+    def haiku_cascade_request_counter(self) -> Counter:
+        return self._get_or_create_metric(
+            "count_haiku_cascade_request",
+            partial(
+                self._meter.create_counter,
+                name="count_haiku_cascade_request",
+                description="Counts requests handled with the Haiku cascade (latencyOptimisationFlow=true)",
+                unit="1",
+            ),
+        )
+
+    # Per-step counter — one tick per step, with `outcome` attribute classifying the resolution.
+    @property
+    def haiku_cascade_step_counter(self) -> Counter:
+        return self._get_or_create_metric(
+            "count_haiku_cascade_step",
+            partial(
+                self._meter.create_counter,
+                name="count_haiku_cascade_step",
+                description="Counts agent loop steps when the Haiku cascade is active, partitioned by outcome.",
+                unit="1",
+            ),
+        )
+
+    # Per-request histogram of total step count (lets us see workload distribution).
+    @property
+    def haiku_cascade_total_steps_histogram(self) -> Histogram:
+        return self._get_or_create_metric(
+            "hist_haiku_cascade_total_steps",
+            partial(
+                self._meter.create_histogram,
+                name="hist_haiku_cascade_total_steps",
+                description="Total number of steps per Haiku-cascade request",
+                unit="1",
+            ),
+        )
+
+    # Per-request histogram of % of steps that ran on Haiku.
+    @property
+    def haiku_cascade_haiku_pct_histogram(self) -> Histogram:
+        return self._get_or_create_metric(
+            "hist_haiku_cascade_haiku_pct",
+            partial(
+                self._meter.create_histogram,
+                name="hist_haiku_cascade_haiku_pct",
+                description="Percentage of steps that ran on Haiku per Haiku-cascade request",
+                unit="1",
+            ),
+        )
+
+    # Per-retry histogram of wasted Haiku token counts (helps quantify the cost of the gate).
+    @property
+    def haiku_cascade_wasted_tokens_histogram(self) -> Histogram:
+        return self._get_or_create_metric(
+            "hist_haiku_cascade_wasted_tokens",
+            partial(
+                self._meter.create_histogram,
+                name="hist_haiku_cascade_wasted_tokens",
+                description="Wasted Haiku tokens per retried step (Haiku call discarded, primary re-run).",
+                unit="1",
+            ),
+        )
+
+    # Per-request histogram of total Haiku tokens used (kept + wasted) — feeds spend dashboards.
+    @property
+    def haiku_cascade_haiku_tokens_histogram(self) -> Histogram:
+        return self._get_or_create_metric(
+            "hist_haiku_cascade_haiku_tokens",
+            partial(
+                self._meter.create_histogram,
+                name="hist_haiku_cascade_haiku_tokens",
+                description="Total Haiku tokens used per Haiku-cascade request (kept Haiku steps only, not retries).",
+                unit="1",
+            ),
+        )
+
+    # Per-request histogram of total primary tokens used — pair with Haiku to compute savings.
+    @property
+    def haiku_cascade_primary_tokens_histogram(self) -> Histogram:
+        return self._get_or_create_metric(
+            "hist_haiku_cascade_primary_tokens",
+            partial(
+                self._meter.create_histogram,
+                name="hist_haiku_cascade_primary_tokens",
+                description="Total primary-model tokens used per Haiku-cascade request.",
+                unit="1",
+            ),
+        )

@@ -482,6 +482,16 @@ class LettaAgent(BaseAgent):
         # Resolve the Haiku model name for this provider (used when latency_optimisation_flow=True).
         # Hardcoded provider→model mapping; Bedrock uses an ARN application inference profile.
         _haiku_model: Optional[str] = None
+        # Pre-build attribute dicts for the cascade metrics. Low cardinality only —
+        # provider + primary_model + (outcome on the step counter). Wrapped in a
+        # local helper so we never silently mutate the request context attributes.
+        def _cascade_attrs(**extra) -> dict:
+            base = dict(get_ctx_attributes())
+            base["provider"] = agent_state.llm_config.model_endpoint_type
+            base["primary_model"] = agent_state.llm_config.model
+            base.update(extra)
+            return base
+
         if latency_optimisation_flow:
             _haiku_model = _HAIKU_MODEL_BY_PROVIDER.get(agent_state.llm_config.model_endpoint_type)
             if _haiku_model:
@@ -494,12 +504,14 @@ class LettaAgent(BaseAgent):
                     f"primary_reserved_tools={sorted(_PRIMARY_RESERVED_TOOLS)} "
                     f"strategy=skip_step0_plus_tool_list_restriction_plus_post_call_gate"
                 )
+                MetricRegistry().haiku_cascade_request_counter.add(1, _cascade_attrs(state="enabled"))
             else:
                 logger.warning(
                     f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} DISABLED_NO_MODEL "
                     f"latencyOptimisationFlow=True but no Haiku model mapped "
                     f"for provider={agent_state.llm_config.model_endpoint_type}; using primary model for all steps."
                 )
+                MetricRegistry().haiku_cascade_request_counter.add(1, _cascade_attrs(state="disabled_no_model"))
 
         # span for request
         request_span = tracer.start_span("time_to_first_token")
@@ -565,6 +577,10 @@ class LettaAgent(BaseAgent):
                     f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} step={i} KEEP_PRIMARY "
                     f"reason=step_0_always_uses_primary_to_avoid_single_step_request_tax"
                 )
+                MetricRegistry().haiku_cascade_step_counter.add(1, _cascade_attrs(outcome="primary_step0"))
+            elif not _haiku_model and latency_optimisation_flow:
+                # Cascade requested but no Haiku model mapped — record so we can detect misconfigs.
+                MetricRegistry().haiku_cascade_step_counter.add(1, _cascade_attrs(outcome="primary_no_haiku_model"))
 
             # For Haiku attempts, strip _PRIMARY_RESERVED_TOOLS (currently {send_message})
             # from the tool list so Haiku is literally unable to be asked to generate the
@@ -634,6 +650,16 @@ class LettaAgent(BaseAgent):
                     _haiku_retried_step_count += 1
                     _haiku_wasted_prompt_tokens += response.usage.prompt_tokens
                     _haiku_wasted_completion_tokens += response.usage.completion_tokens
+
+                    # OTel: count this retry and record how many tokens we wasted.
+                    _retry_attrs = _cascade_attrs(
+                        outcome="primary_retried",
+                        retry_reason=("text_response" if _haiku_tool_call_name is None else "primary_reserved_tool"),
+                    )
+                    MetricRegistry().haiku_cascade_step_counter.add(1, _retry_attrs)
+                    MetricRegistry().haiku_cascade_wasted_tokens_histogram.record(
+                        response.usage.total_tokens, _retry_attrs
+                    )
 
                     # Re-run on the primary model with the full tool list (no exclusions).
                     # The model is already restored above; the pre-call message snapshot avoids
@@ -739,6 +765,15 @@ class LettaAgent(BaseAgent):
                     f"completion_tokens={response.usage.completion_tokens} "
                     f"total_tokens={response.usage.total_tokens}"
                 )
+                # OTel: count this step's resolution. If this step ran Haiku (and the gate
+                # didn't fire), `outcome=haiku_kept`. If it ran primary because of step 0
+                # the primary_step0 counter was already added above; here we only emit
+                # primary_kept for steps that ran primary for some other reason (e.g. the
+                # cascade was disabled mid-run). The retry path emits its own outcome above.
+                if _step_used_haiku:
+                    MetricRegistry().haiku_cascade_step_counter.add(
+                        1, _cascade_attrs(outcome="haiku_kept", tool=_prev_tool_name)
+                    )
 
             log_event("agent.step.llm_response.processed")  # [4^]
 
@@ -811,6 +846,15 @@ class LettaAgent(BaseAgent):
                 f"wasted_haiku_tokens={_haiku_wasted_total_tokens} (prompt={_haiku_wasted_prompt_tokens} completion={_haiku_wasted_completion_tokens}) "
                 f"haiku_model={_haiku_model or 'N/A'}"
             )
+
+            # OTel: per-request histograms so the cascade is observable in Grafana
+            # without scraping log lines. `had_retry` lets the request counter slice
+            # be partitioned by whether a retry fired.
+            _summary_attrs = _cascade_attrs(had_retry=str(_haiku_retried_step_count > 0).lower())
+            MetricRegistry().haiku_cascade_total_steps_histogram.record(_total_steps, _summary_attrs)
+            MetricRegistry().haiku_cascade_haiku_pct_histogram.record(_haiku_step_pct, _summary_attrs)
+            MetricRegistry().haiku_cascade_haiku_tokens_histogram.record(_haiku_total_tokens, _summary_attrs)
+            MetricRegistry().haiku_cascade_primary_tokens_histogram.record(_primary_total_tokens, _summary_attrs)
 
         return current_in_context_messages, new_in_context_messages, usage, stop_reason
 
@@ -1078,42 +1122,22 @@ class LettaAgent(BaseAgent):
                 # Used by the latencyOptimisationFlow Haiku cascade to ensure Haiku is
                 # never even attempted on send_message — if Haiku has no other tool to call
                 # it returns a text response, which signals the cascade to hand off to the
-                # primary model for the actual send_message.
-                # Wrapped in try/except so any structural surprise in request_data surfaces
-                # as a clear log line rather than a bare TypeError up the stack.
+                # primary model for the actual send_message. The isinstance guards here
+                # defend against the rare shapes we've seen in production where the
+                # request_data structure was non-standard.
                 if excluded_tool_names:
-                    try:
-                        logger.warning(
-                            f"[HAIKU_CASCADE_DBG] entering tool-restriction block; "
-                            f"excluded={sorted(excluded_tool_names)} "
-                            f"request_data_type={type(request_data).__name__} "
-                            f"tools_type={type(request_data.get('tools')).__name__ if isinstance(request_data, dict) else 'N/A'} "
-                            f"tool_choice_type={type(request_data.get('tool_choice')).__name__ if isinstance(request_data, dict) else 'N/A'}"
-                        )
-                        if isinstance(request_data, dict) and isinstance(request_data.get("tools"), list):
-                            _orig_tool_count = len(request_data["tools"])
-                            request_data["tools"] = [
-                                t for t in request_data["tools"]
-                                if isinstance(t, dict) and t.get("name") not in excluded_tool_names
-                            ]
-                            logger.warning(
-                                f"[HAIKU_CASCADE_DBG] tools filtered: {_orig_tool_count} -> {len(request_data['tools'])}"
-                            )
-                        if isinstance(valid_tool_names, list):
-                            valid_tool_names = [n for n in valid_tool_names if n not in excluded_tool_names]
-                        # Let the model return text if no tool fits — it must not be forced to
-                        # call a tool when send_message has been stripped out.
-                        _tc = request_data.get("tool_choice") if isinstance(request_data, dict) else None
-                        if isinstance(_tc, dict) and _tc.get("type") in ("any", "tool"):
-                            request_data["tool_choice"] = {"type": "auto", "disable_parallel_tool_use": True}
-                            logger.warning(f"[HAIKU_CASCADE_DBG] tool_choice downgraded to auto")
-                    except Exception as _exc:
-                        import traceback as _tb
-                        logger.warning(
-                            f"[HAIKU_CASCADE_DBG] tool-restriction block raised {type(_exc).__name__}: {_exc}\n"
-                            f"{_tb.format_exc()}"
-                        )
-                        raise
+                    if isinstance(request_data, dict) and isinstance(request_data.get("tools"), list):
+                        request_data["tools"] = [
+                            t for t in request_data["tools"]
+                            if isinstance(t, dict) and t.get("name") not in excluded_tool_names
+                        ]
+                    if isinstance(valid_tool_names, list):
+                        valid_tool_names = [n for n in valid_tool_names if n not in excluded_tool_names]
+                    # Let the model return text if no tool fits — it must not be forced
+                    # to call a tool when send_message has been stripped out.
+                    _tc = request_data.get("tool_choice") if isinstance(request_data, dict) else None
+                    if isinstance(_tc, dict) and _tc.get("type") in ("any", "tool"):
+                        request_data["tool_choice"] = {"type": "auto", "disable_parallel_tool_use": True}
 
                 # Inject per-request thinking overrides (gated)
                 if self.at_user_id in _THINKING_GATED_USER_IDS:
