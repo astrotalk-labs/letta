@@ -490,9 +490,9 @@ class LettaAgent(BaseAgent):
                     f"provider={agent_state.llm_config.model_endpoint_type} "
                     f"primary_model={agent_state.llm_config.model} "
                     f"haiku_model={_haiku_model} "
-                    f"rule=tool_calls_on_haiku_send_message_never_on_haiku "
+                    f"rule=step0_on_primary_then_tool_calls_on_haiku_send_message_never_on_haiku "
                     f"primary_reserved_tools={sorted(_PRIMARY_RESERVED_TOOLS)} "
-                    f"strategy=tool_list_restriction"
+                    f"strategy=skip_step0_plus_tool_list_restriction_plus_post_call_gate"
                 )
             else:
                 logger.warning(
@@ -528,23 +528,42 @@ class LettaAgent(BaseAgent):
             agent_step_span = tracer.start_span("agent_step", start_time=step_start)
             agent_step_span.set_attributes({"step_id": step_id})
 
-            # Cascade rule: try Haiku for every step. The quality gate after the LLM call
-            # will re-run the step on the primary model if Haiku picks send_message (or any
-            # other tool in _PRIMARY_RESERVED_TOOLS), guaranteeing that the user-facing reply
-            # is always produced by the primary model.
+            # Cascade rule: attempt Haiku from step 1 onwards.
+            #
+            # Why we DON'T attempt Haiku at step 0:
+            #   For short user messages the agent often goes straight to send_message
+            #   in a single step. Attempting Haiku for that step:
+            #     - costs the full system prompt as uncached Haiku tokens (~6k for
+            #       this agent), and
+            #     - the quality gate must then retry on primary anyway because Haiku
+            #       either returns text or hallucinates send_message.
+            #   Production traces showed ~6k wasted Haiku tokens + ~3s extra latency
+            #   per single-step request, with zero compensating savings.
+            #
+            # For multi-step flows the savings come from steps i>0: those are tool
+            # calls that Haiku handles well and where prompt caching keeps the
+            # follow-up Haiku tokens cheap. So skip step 0, run step 1+ on Haiku.
+            # The quality gate still catches Haiku picking send_message and retries
+            # on primary, preserving user-facing response quality.
+            #
             # Snapshot the pre-call message state so we can re-run cleanly if the gate fires.
             _pre_call_current_messages = current_in_context_messages
             _pre_call_new_messages = new_in_context_messages
 
             _original_model: Optional[str] = None
             _step_used_haiku: bool = False
-            if _haiku_model:
+            if _haiku_model and i > 0:
                 _original_model = agent_state.llm_config.model
                 agent_state.llm_config.model = _haiku_model
                 _step_used_haiku = True
                 logger.warning(
                     f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} step={i} ATTEMPT_HAIKU "
                     f"model={_original_model} -> {_haiku_model}"
+                )
+            elif _haiku_model and i == 0:
+                logger.warning(
+                    f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} step={i} KEEP_PRIMARY "
+                    f"reason=step_0_always_uses_primary_to_avoid_single_step_request_tax"
                 )
 
             # For Haiku attempts, strip _PRIMARY_RESERVED_TOOLS (currently {send_message})
