@@ -493,25 +493,37 @@ class LettaAgent(BaseAgent):
             return base
 
         if latency_optimisation_flow:
-            _haiku_model = _HAIKU_MODEL_BY_PROVIDER.get(agent_state.llm_config.model_endpoint_type)
-            if _haiku_model:
+            # Guard: if the effective primary model is already a Haiku variant the
+            # cascade would route Haiku→Haiku, wasting tokens with no latency benefit.
+            # This can happen when model_override passes a Haiku model name or ARN.
+            if "haiku" in (agent_state.llm_config.model or "").lower():
                 logger.warning(
-                    f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} ENABLED "
-                    f"provider={agent_state.llm_config.model_endpoint_type} "
-                    f"primary_model={agent_state.llm_config.model} "
-                    f"haiku_model={_haiku_model} "
-                    f"rule=step0_on_primary_then_tool_calls_on_haiku_send_message_never_on_haiku "
-                    f"primary_reserved_tools={sorted(_PRIMARY_RESERVED_TOOLS)} "
-                    f"strategy=skip_step0_plus_tool_list_restriction_plus_post_call_gate"
+                    f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} DISABLED_PRIMARY_IS_HAIKU "
+                    f"primary_model={agent_state.llm_config.model} — "
+                    f"cascade skipped (Haiku→Haiku is a no-op)"
                 )
-                MetricRegistry().haiku_cascade_request_counter.add(1, _cascade_attrs(state="enabled"))
+                MetricRegistry().haiku_cascade_request_counter.add(1, _cascade_attrs(state="disabled_primary_is_haiku"))
+                latency_optimisation_flow = False
             else:
-                logger.warning(
-                    f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} DISABLED_NO_MODEL "
-                    f"latencyOptimisationFlow=True but no Haiku model mapped "
-                    f"for provider={agent_state.llm_config.model_endpoint_type}; using primary model for all steps."
-                )
-                MetricRegistry().haiku_cascade_request_counter.add(1, _cascade_attrs(state="disabled_no_model"))
+                _haiku_model = _HAIKU_MODEL_BY_PROVIDER.get(agent_state.llm_config.model_endpoint_type)
+                if _haiku_model:
+                    logger.warning(
+                        f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} ENABLED "
+                        f"provider={agent_state.llm_config.model_endpoint_type} "
+                        f"primary_model={agent_state.llm_config.model} "
+                        f"haiku_model={_haiku_model} "
+                        f"rule=step0_on_primary_then_tool_calls_on_haiku_send_message_never_on_haiku "
+                        f"primary_reserved_tools={sorted(_PRIMARY_RESERVED_TOOLS)} "
+                        f"strategy=skip_step0_plus_tool_list_restriction_plus_post_call_gate"
+                    )
+                    MetricRegistry().haiku_cascade_request_counter.add(1, _cascade_attrs(state="enabled"))
+                else:
+                    logger.warning(
+                        f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} DISABLED_NO_MODEL "
+                        f"latencyOptimisationFlow=True but no Haiku model mapped "
+                        f"for provider={agent_state.llm_config.model_endpoint_type}; using primary model for all steps."
+                    )
+                    MetricRegistry().haiku_cascade_request_counter.add(1, _cascade_attrs(state="disabled_no_model"))
 
         # span for request
         request_span = tracer.start_span("time_to_first_token")
@@ -590,25 +602,30 @@ class LettaAgent(BaseAgent):
             _excluded_for_haiku = _PRIMARY_RESERVED_TOOLS if _step_used_haiku else None
 
             _llm_start = get_utc_timestamp_ns() if task_id else None
-            request_data, response_data, current_in_context_messages, new_in_context_messages, valid_tool_names = (
-                await self._build_and_request_from_llm(
-                    current_in_context_messages, new_in_context_messages, agent_state, llm_client, tool_rules_solver, agent_step_span,
-                    use_vertex_experiment=use_vertex_experiment, use_bedrock_experiment=use_bedrock_experiment, step_index=i,
-                    thinking=thinking, output_config=output_config,
-                    excluded_tool_names=_excluded_for_haiku,
+            try:
+                request_data, response_data, current_in_context_messages, new_in_context_messages, valid_tool_names = (
+                    await self._build_and_request_from_llm(
+                        current_in_context_messages, new_in_context_messages, agent_state, llm_client, tool_rules_solver, agent_step_span,
+                        use_vertex_experiment=use_vertex_experiment, use_bedrock_experiment=use_bedrock_experiment, step_index=i,
+                        thinking=thinking, output_config=output_config,
+                        excluded_tool_names=_excluded_for_haiku,
+                    )
                 )
-            )
-            if task_id and _llm_start:
-                logger.warning(f"[TASK_LATENCY] task_id={task_id} step={i} phase=llm_call duration_ms={ns_to_ms(get_utc_timestamp_ns() - _llm_start)}")
-            in_context_messages = current_in_context_messages + new_in_context_messages
+                if task_id and _llm_start:
+                    logger.warning(f"[TASK_LATENCY] task_id={task_id} step={i} phase=llm_call duration_ms={ns_to_ms(get_utc_timestamp_ns() - _llm_start)}")
+                in_context_messages = current_in_context_messages + new_in_context_messages
 
-            log_event("agent.step.llm_response.received")  # [3^]
+                log_event("agent.step.llm_response.received")  # [3^]
 
-            response = llm_client.convert_response_to_chat_completion(response_data, in_context_messages, agent_state.llm_config)
-
-            # Restore original model now that the Haiku-cascaded request + response parse is complete
-            if _original_model is not None:
-                agent_state.llm_config.model = _original_model
+                response = llm_client.convert_response_to_chat_completion(response_data, in_context_messages, agent_state.llm_config)
+            finally:
+                # Always restore the primary model — even if the LLM call or response
+                # parsing raises. Without this, a failed Haiku step would leave
+                # agent_state.llm_config.model pointing at the Haiku model for every
+                # subsequent step (and for future requests sharing this agent state).
+                if _original_model is not None:
+                    agent_state.llm_config.model = _original_model
+                    _original_model = None  # prevent any accidental double-restore below
 
             # Quality gate — defence in depth against the manager's rule
             # "send_message must never run on Haiku":
