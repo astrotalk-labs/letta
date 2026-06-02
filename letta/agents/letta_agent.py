@@ -604,27 +604,20 @@ class LettaAgent(BaseAgent):
                 # Cascade requested but no Haiku model mapped — record so we can detect misconfigs.
                 MetricRegistry().haiku_cascade_step_counter.add(1, _cascade_attrs(outcome="primary_no_haiku_model"))
 
-            # Haiku tool restriction strategy:
+            # Haiku gets the full tool list (including send_message).
+            # The post-call quality gate below is the sole defence that enforces
+            # "send_message never runs on Haiku": if Haiku picks send_message the
+            # gate discards the response and re-runs on the primary model.
             #
-            # Strip send_message (and any other _PRIMARY_RESERVED_TOOLS) from
-            # Haiku's tool list so it cannot pick them directly. We keep
-            # tool_choice="any" (forced tool call) — NOT "auto" — so Haiku must
-            # still call *some* memory/context tool; it just cannot call
-            # send_message.
-            #
-            # This replaces the previous "gate-only" approach which left
-            # send_message in Haiku's tool list. In production (task_id=299450461,
-            # 8-step flow) gate-only produced retried_steps=4 and
-            # wasted_haiku_tokens=45510, because Haiku prematurely picked
-            # send_message at intermediate steps. By stripping send_message we
-            # expect retried_steps→0 and wasted tokens→0 on those flows.
-            #
-            # The gate below is kept as a safety net (catches regressions /
-            # edge-cases), but it should almost never fire with this strategy.
-            #
-            # IMPORTANT: do NOT downgrade tool_choice to "auto" here — that was
-            # the original bug that let Haiku return plain text on ~75% of steps.
-            _excluded_for_haiku: Optional[frozenset] = _PRIMARY_RESERVED_TOOLS if _step_used_haiku else None
+            # We intentionally do NOT strip send_message from the tool list.
+            # Earlier versions did so (and downgraded tool_choice from "any" to
+            # "auto" to allow a text response when no tools remained). In
+            # production that caused Haiku to return a plain text response on
+            # ~75% of steps instead of calling a memory tool, triggering the gate
+            # on every step and making the cascade slower than no cascade at all.
+            # With send_message restored and tool_choice kept at "any", Haiku is
+            # forced to make a tool call; it only hits the gate on the final
+            # send_message step (1 retry vs. 3).
 
             _llm_start = get_utc_timestamp_ns() if task_id else None
             _haiku_timed_out: bool = False
@@ -1230,7 +1223,6 @@ class LettaAgent(BaseAgent):
         step_index: int = 0,
         thinking: Optional[dict] = None,
         output_config: Optional[dict] = None,
-        excluded_tool_names: Optional[frozenset] = None,
     ) -> Tuple[Dict, Dict, List[Message], List[Message], List[str]] | None:
         for attempt in range(self.max_summarization_retries + 1):
             try:
@@ -1280,6 +1272,7 @@ class LettaAgent(BaseAgent):
                             f"reason={'empty_after_filter' if not _filtered_tools else 'forced_call_stripped'} "
                             f"tool_choice_name={_tc_name} — gate will handle"
                         )
+
 
                 # Inject per-request thinking overrides (gated)
                 if self.at_user_id in _THINKING_GATED_USER_IDS:
