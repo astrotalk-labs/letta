@@ -239,10 +239,15 @@ class AnthropicClient(LLMClientBase):
             aws_session_token = os.getenv('AWS_SESSION_TOKEN')
 
             # Determine model ID priority order:
-            #   1. If the requested model is already a full Bedrock ARN, trust it directly
-            #      (used by the latencyOptimisationFlow cascade which passes a hardcoded
-            #      Haiku ARN — the ARN profile-ID has no "haiku" substring so the env-var
-            #      lookup below would mis-route to the default Sonnet ARN).
+            #   1. If the requested model is already a full Bedrock ARN or an AWS
+            #      system inference profile ID, trust it directly.
+            #      Full ARN:    "arn:aws:bedrock:..."
+            #      System profile IDs use geo-prefix notation: "global.", "apac.",
+            #      "us.", "eu." — e.g. "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+            #      These are passed explicitly by the latencyOptimisationFlow cascade
+            #      so the caller already chose the exact profile; env-var lookup must
+            #      NOT override them (env vars point to the old single-region AIP which
+            #      we only want for non-cascade traffic).
             #   2. Cohort-based ARN for gated users
             #   3. Model-name → env-var lookup (existing substring matching)
             #   4. Raw model name as last resort
@@ -250,8 +255,9 @@ class AnthropicClient(LLMClientBase):
             requested_model = requested_model_raw.lower()
             logger.info("[GEO_KEY_BEDROCK] request_async at_user_id=%s user_cohort=%s", getattr(self, "at_user_id", None), getattr(self, "user_cohort", None))
 
-            if requested_model_raw.startswith("arn:aws:bedrock:"):
-                # Direct ARN passed by the caller — use it verbatim.
+            _BEDROCK_DIRECT_PREFIXES = ("arn:aws:bedrock:", "global.", "apac.", "us.", "eu.")
+            if requested_model_raw.startswith(_BEDROCK_DIRECT_PREFIXES):
+                # Full ARN or system inference profile ID — use verbatim, skip env-var lookup.
                 bedrock_inference_profile = requested_model_raw
             else:
                 cohort_arn = _resolve_bedrock_arn_from_cohort(
