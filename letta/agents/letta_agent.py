@@ -628,6 +628,7 @@ class LettaAgent(BaseAgent):
 
             _llm_start = get_utc_timestamp_ns() if task_id else None
             _haiku_timed_out: bool = False
+            response = None  # always initialised — assigned in try block (normal) or timeout fallback
             try:
                 _haiku_coro = self._build_and_request_from_llm(
                     current_in_context_messages, new_in_context_messages, agent_state, llm_client, tool_rules_solver, agent_step_span,
@@ -693,6 +694,16 @@ class LettaAgent(BaseAgent):
                     )
                 in_context_messages = current_in_context_messages + new_in_context_messages
                 response = llm_client.convert_response_to_chat_completion(response_data, in_context_messages, agent_state.llm_config)
+
+            # Safety: response must be assigned by this point (either the normal LLM path
+            # or the timeout fallback). If it is still None something unexpected happened
+            # (e.g. _build_and_request_from_llm returned None without raising); raise early
+            # rather than get a cryptic AttributeError inside the gate block below.
+            if response is None:
+                raise RuntimeError(
+                    f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} step={i}: "
+                    f"response is None after LLM call — haiku_timed_out={_haiku_timed_out}"
+                )
 
             # Quality gate — the sole enforcement of "send_message never runs on Haiku".
             #
