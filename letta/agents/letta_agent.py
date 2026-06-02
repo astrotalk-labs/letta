@@ -191,31 +191,24 @@ class LettaAgent(BaseAgent):
         # so that downstream (e.g. Bedrock ARN selection based on model substring) sees the
         # overridden model.
         if model_override:
-            print(f"DEBUG: [provider_switch] Overriding model: {agent_state.llm_config.model} -> {model_override}")
             agent_state.llm_config.model = model_override
 
         original_endpoint_type = agent_state.llm_config.model_endpoint_type
         original_model = agent_state.llm_config.model
 
         if use_bedrock_experiment and original_endpoint_type == "anthropic":
-            print(f"DEBUG: [provider_switch] Switching from anthropic to anthropic_bedrock")
             agent_state.llm_config.model_endpoint_type = "anthropic_bedrock"
         elif use_vertex_experiment and original_endpoint_type == "anthropic":
-            print(f"DEBUG: [provider_switch] Switching from anthropic to anthropic_vertex")
             agent_state.llm_config.model_endpoint_type = "anthropic_vertex"
             if '-' in original_model and '@' not in original_model:
                 parts = original_model.rsplit('-', 1)
                 if len(parts) == 2 and parts[1].isdigit():
                     agent_state.llm_config.model = f"{parts[0]}@{parts[1]}"
-                    print(f"DEBUG: [provider_switch] Converted model: {original_model} -> {agent_state.llm_config.model}")
         elif not use_vertex_experiment and original_endpoint_type == "anthropic_vertex":
-            print(f"DEBUG: [provider_switch] Switching from anthropic_vertex to anthropic")
             agent_state.llm_config.model_endpoint_type = "anthropic"
             if '@' in original_model:
                 agent_state.llm_config.model = original_model.replace('@', '-')
-                print(f"DEBUG: [provider_switch] Converted model: {original_model} -> {agent_state.llm_config.model}")
         elif not use_bedrock_experiment and original_endpoint_type == "anthropic_bedrock":
-            print(f"DEBUG: [provider_switch] Switching from anthropic_bedrock to anthropic")
             agent_state.llm_config.model_endpoint_type = "anthropic"
 
     @trace_method
@@ -469,7 +462,6 @@ class LettaAgent(BaseAgent):
             3. Fetches a response from the LLM
             4. Processes the response
         """
-        print(f"DEBUG: [_step] Received use_vertex_experiment={use_vertex_experiment}, use_bedrock_experiment={use_bedrock_experiment}, model_override={model_override}")
 
         # Handle provider switching based on experiment flags
         self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override)
@@ -529,7 +521,8 @@ class LettaAgent(BaseAgent):
                         f"haiku_model={_haiku_model} "
                         f"rule=step0_on_primary_then_tool_calls_on_haiku_send_message_never_on_haiku "
                         f"primary_reserved_tools={sorted(_PRIMARY_RESERVED_TOOLS)} "
-                        f"strategy=skip_step0_plus_tool_list_restriction_plus_post_call_gate"
+                        f"strategy=skip_step0_plus_tool_list_restriction_plus_post_call_gate "
+                        f"timeout_s={_HAIKU_TIMEOUT_SECONDS}"
                     )
                     MetricRegistry().haiku_cascade_request_counter.add(1, _cascade_attrs(state="enabled"))
                 else:
@@ -597,7 +590,7 @@ class LettaAgent(BaseAgent):
                 _original_model = agent_state.llm_config.model
                 agent_state.llm_config.model = _haiku_model
                 _step_used_haiku = True
-                logger.warning(
+                logger.info(
                     f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} step={i} ATTEMPT_HAIKU "
                     f"model={_original_model} -> {_haiku_model}"
                 )
@@ -1290,11 +1283,9 @@ class LettaAgent(BaseAgent):
                 # output_config flows to all users unconditionally
                 if output_config is not None:
                     request_data["output_config"] = output_config
-                    print(f"DEBUG: [_build_and_request_from_llm] output_config injected: {output_config}")
 
                 async with AsyncTimer() as timer:
                     # Attempt LLM request
-                    print(f"DEBUG: [_build_and_request_from_llm] Calling llm_client.request_async with use_vertex_experiment={use_vertex_experiment}, use_bedrock_experiment={use_bedrock_experiment}")
                     response = await llm_client.request_async(request_data, agent_state.llm_config, use_vertex_experiment=use_vertex_experiment, use_bedrock_experiment=use_bedrock_experiment)
                 MetricRegistry().llm_execution_time_ms_histogram.record(
                     timer.elapsed_ms,
@@ -1365,7 +1356,6 @@ class LettaAgent(BaseAgent):
                 # output_config flows to all users unconditionally
                 if output_config is not None:
                     request_data["output_config"] = output_config
-                    print(f"DEBUG: [_build_and_request_from_llm_streaming] output_config injected: {output_config}")
 
                 provider_request_start_timestamp_ns = get_utc_timestamp_ns()
                 if first_chunk and ttft_span is not None:
