@@ -94,14 +94,14 @@ _PRIMARY_RESERVED_TOOLS: frozenset = frozenset({
 _HAIKU_MODEL_ANTHROPIC: str = "claude-haiku-4-5-20251001"
 _HAIKU_MODEL_VERTEX: str = "claude-haiku-4-5@20251001"
 _HAIKU_MODEL_BEDROCK_ARN: str = (
-    # AstroTalk ap-south-1 Application Inference Profile for Claude Haiku 4.5.
-    # Note: no APAC cross-region system profile exists for Haiku 4.5 yet —
-    # AWS has only released cross-region up to Claude 3.5 Sonnet / Sonnet 4 in APAC.
-    # When AWS adds `apac.anthropic.claude-haiku-4-5-*`, switch to that to get
-    # automatic burst routing and eliminate the throttle risk entirely.
-    # Until then, quota increase (requested) + 8s timeout circuit-breaker
-    # (_HAIKU_TIMEOUT_SECONDS) are the protections against throttle events.
-    "arn:aws:bedrock:ap-south-1:441618926843:application-inference-profile/8y2dovlqcwlc"
+    # Global system inference profile for Claude Haiku 4.5.
+    # Routes worldwide (us-east-1, eu-west-1, ap-northeast-1, etc.) when
+    # ap-south-1 is degraded — eliminates the Jun 1 2026 incident where the
+    # old single-region AIP (8y2dovlqcwlc) slowed from 1.2s to 24s/call and
+    # caused 5-min end-to-end spikes.
+    # Confirmed ACTIVE via list_inference_profiles; latency ~848ms vs ~1238ms
+    # for the old AIP. No account-specific quota — uses AWS managed capacity.
+    "global.anthropic.claude-haiku-4-5-20251001-v1:0"
 )
 
 _HAIKU_MODEL_BY_PROVIDER: dict = {
