@@ -94,6 +94,13 @@ _PRIMARY_RESERVED_TOOLS: frozenset = frozenset({
 _HAIKU_MODEL_ANTHROPIC: str = "claude-haiku-4-5-20251001"
 _HAIKU_MODEL_VERTEX: str = "claude-haiku-4-5@20251001"
 _HAIKU_MODEL_BEDROCK_ARN: str = (
+    # AstroTalk ap-south-1 Application Inference Profile for Claude Haiku 4.5.
+    # Note: no APAC cross-region system profile exists for Haiku 4.5 yet —
+    # AWS has only released cross-region up to Claude 3.5 Sonnet / Sonnet 4 in APAC.
+    # When AWS adds `apac.anthropic.claude-haiku-4-5-*`, switch to that to get
+    # automatic burst routing and eliminate the throttle risk entirely.
+    # Until then, quota increase (requested) + 8s timeout circuit-breaker
+    # (_HAIKU_TIMEOUT_SECONDS) are the protections against throttle events.
     "arn:aws:bedrock:ap-south-1:441618926843:application-inference-profile/8y2dovlqcwlc"
 )
 
