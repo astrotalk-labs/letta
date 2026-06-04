@@ -123,20 +123,29 @@ def setup_metrics(
     if is_pytest_environment():
         return
 
-    # The in-process Prometheus pull endpoint serves only THIS process. With multiple
-    # uvicorn workers each worker is a separate process: only one could bind the port,
-    # and it would expose partial, misleading metrics (~1/N of traffic). Refuse to start
-    # it and tell the operator how to get complete metrics, rather than mislead them.
-    prometheus_active = prometheus_enabled
-    if prometheus_enabled and settings.uvicorn_workers > 1:
+    from letta.otel import prom_multiprocess
+
+    prom_port = settings.otel_metrics_prometheus_port
+    prom_addr = settings.otel_metrics_prometheus_addr
+
+    # Multi-worker aggregation path: when PROMETHEUS_MULTIPROC_DIR is set, the scrape
+    # endpoint is served by native prometheus_client instruments via a MultiProcessCollector
+    # (see prom_multiprocess.py), which aggregates across ALL uvicorn workers. This runs
+    # alongside OTel; the OTel instruments/OTLP push below are unaffected.
+    use_multiprocess = prometheus_enabled and prom_multiprocess.multiprocess_enabled()
+
+    # In-process OTel pull endpoint serves only THIS process. It's valid at a single worker;
+    # with >1 worker (and no multiprocess dir) only one worker could bind the port and would
+    # expose partial, misleading metrics, so we refuse to start it and explain the options.
+    otel_pull_active = prometheus_enabled and not use_multiprocess
+    if otel_pull_active and settings.uvicorn_workers > 1:
         logger.warning(
-            f"Prometheus metrics endpoint DISABLED: the in-process pull endpoint cannot aggregate "
-            f"across {settings.uvicorn_workers} uvicorn workers (each is a separate process; only one "
-            f"could bind port {settings.otel_metrics_prometheus_port}, exposing partial/misleading metrics). "
-            f"For complete metrics: run with LETTA_UVICORN_WORKERS=1, or set LETTA_OTEL_EXPORTER_OTLP_ENDPOINT "
-            f"to push to a collector that re-exposes aggregated metrics."
+            f"Prometheus pull endpoint DISABLED: it cannot aggregate across {settings.uvicorn_workers} "
+            f"uvicorn workers (only one could bind port {prom_port}, exposing partial/misleading metrics). "
+            f"For complete multi-worker metrics set PROMETHEUS_MULTIPROC_DIR (native aggregation across "
+            f"workers), or run LETTA_UVICORN_WORKERS=1, or push via LETTA_OTEL_EXPORTER_OTLP_ENDPOINT."
         )
-        prometheus_active = False
+        otel_pull_active = False
 
     metric_readers = []
 
@@ -152,47 +161,45 @@ def setup_metrics(
         )
         metric_readers.append(PeriodicExportingMetricReader(exporter=otlp_metric_exporter))
 
-    if prometheus_active:
+    if otel_pull_active:
         # Registers a collector into the default prometheus_client REGISTRY; the
         # standalone server started below serves that same registry.
         from opentelemetry.exporter.prometheus import PrometheusMetricReader
 
         metric_readers.append(PrometheusMetricReader())
 
-    if not metric_readers:
+    global _is_metrics_initialized, _meter
+
+    # Stand up the OTel MeterProvider if any OTel reader is configured. (In multiprocess mode
+    # with no OTLP endpoint there may be none — that's fine, the native scrape path below still
+    # runs; OTel instruments simply stay no-ops for this process.)
+    if metric_readers:
+        meter_provider = MeterProvider(resource=get_resource(service_name), metric_readers=metric_readers)
+        metrics.set_meter_provider(meter_provider)
+        _meter = metrics.get_meter(__name__)
+        if app:
+            app.middleware("http")(_otel_metric_middleware)
+        _is_metrics_initialized = True
+    elif not use_multiprocess:
         logger.warning("setup_metrics called with no exporter configured (no OTLP endpoint, Prometheus disabled); skipping.")
         return
 
-    global _is_metrics_initialized, _meter
-    meter_provider = MeterProvider(resource=get_resource(service_name), metric_readers=metric_readers)
-    metrics.set_meter_provider(meter_provider)
-    _meter = metrics.get_meter(__name__)
-
-    if app:
-        app.middleware("http")(_otel_metric_middleware)
-
-    if prometheus_active:
-        # Standalone scrape server on a dedicated port (separate from the API port) so
-        # infra can firewall it off from public traffic. Serves the default prometheus
-        # REGISTRY that PrometheusMetricReader populates. Unauthenticated by design —
-        # restrict reachability at the network layer.
+    # Start the dedicated-port scrape server. Unauthenticated by design — restrict
+    # reachability at the network layer.
+    if use_multiprocess:
+        if prom_multiprocess.start_multiprocess_metrics_server(prom_port, prom_addr):
+            logger.info(
+                f"Prometheus multiprocess metrics server listening on {prom_addr}:{prom_port} "
+                f"(path /metrics; aggregates all {settings.uvicorn_workers} workers)"
+            )
+    elif otel_pull_active:
         from prometheus_client import start_http_server
 
-        prom_port = settings.otel_metrics_prometheus_port
-        prom_addr = settings.otel_metrics_prometheus_addr
         try:
             start_http_server(port=prom_port, addr=prom_addr)
             logger.info(f"Prometheus metrics scrape server listening on {prom_addr}:{prom_port} (path /metrics)")
         except OSError as e:
-            # With uvicorn_workers > 1, each worker process tries to bind the same port;
-            # only the first succeeds. Don't crash the worker — log and continue. (Full
-            # multi-worker coverage needs prometheus_client multiprocess mode.)
-            logger.warning(
-                f"Could not bind Prometheus metrics server on {prom_addr}:{prom_port}: {e}. "
-                "This is expected when uvicorn_workers > 1; metrics for this worker won't be scrapeable."
-            )
-
-    _is_metrics_initialized = True
+            logger.warning(f"Could not bind Prometheus metrics server on {prom_addr}:{prom_port}: {e}.")
 
 
 def get_letta_meter() -> Meter:
