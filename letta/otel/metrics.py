@@ -102,32 +102,63 @@ def _record_endpoint_metrics(
 
 
 def setup_metrics(
-    endpoint: str,
+    endpoint: str | None = None,
     app: FastAPI | None = None,
     service_name: str = "memgpt-server",
+    prometheus_enabled: bool = False,
 ) -> None:
+    """Initialise the metrics pipeline.
+
+    Two independent readers may be attached to the MeterProvider:
+      - OTLP push exporter (when `endpoint` is set) — ships metrics to a collector.
+      - Prometheus pull reader (when `prometheus_enabled`) — exposes a /metrics
+        scrape endpoint on `app`. Cumulative temporality is forced by the reader,
+        as Prometheus requires; this is independent of otel_preferred_temporality.
+
+    At least one of `endpoint` / `prometheus_enabled` must be provided, otherwise
+    metrics stay uninitialised (and all MetricRegistry instruments are no-ops).
+    """
     if is_pytest_environment():
         return
-    assert endpoint
+
+    metric_readers = []
+
+    if endpoint:
+        preferred_temporality = AggregationTemporality(settings.otel_preferred_temporality)
+        otlp_metric_exporter = OTLPMetricExporter(
+            endpoint=endpoint,
+            preferred_temporality={
+                # Add more as needed here.
+                Counter: preferred_temporality,
+                Histogram: preferred_temporality,
+            },
+        )
+        metric_readers.append(PeriodicExportingMetricReader(exporter=otlp_metric_exporter))
+
+    if prometheus_enabled:
+        # Registers a collector into the default prometheus_client REGISTRY; the
+        # /metrics ASGI app mounted below serves that same registry.
+        from opentelemetry.exporter.prometheus import PrometheusMetricReader
+
+        metric_readers.append(PrometheusMetricReader())
+
+    if not metric_readers:
+        logger.warning("setup_metrics called with no exporter configured (no OTLP endpoint, Prometheus disabled); skipping.")
+        return
 
     global _is_metrics_initialized, _meter
-    preferred_temporality = AggregationTemporality(settings.otel_preferred_temporality)
-    otlp_metric_exporter = OTLPMetricExporter(
-        endpoint=endpoint,
-        preferred_temporality={
-            # Add more as needed here.
-            Counter: preferred_temporality,
-            Histogram: preferred_temporality,
-        },
-    )
-    metric_reader = PeriodicExportingMetricReader(exporter=otlp_metric_exporter)
-
-    meter_provider = MeterProvider(resource=get_resource(service_name), metric_readers=[metric_reader])
+    meter_provider = MeterProvider(resource=get_resource(service_name), metric_readers=metric_readers)
     metrics.set_meter_provider(meter_provider)
     _meter = metrics.get_meter(__name__)
 
     if app:
         app.middleware("http")(_otel_metric_middleware)
+        if prometheus_enabled:
+            from prometheus_client import make_asgi_app
+
+            # Private scrape endpoint — restrict access at the infra/network layer.
+            app.mount("/metrics", make_asgi_app())
+            logger.info("Prometheus metrics scrape endpoint mounted at /metrics")
 
     _is_metrics_initialized = True
 

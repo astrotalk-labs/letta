@@ -221,6 +221,10 @@ class Settings(BaseSettings):
     otel_preferred_temporality: Optional[int] = Field(
         default=1, ge=0, le=2, description="Exported metric temporality. {0: UNSPECIFIED, 1: DELTA, 2: CUMULATIVE}"
     )
+    # When True, exposes a Prometheus scrape endpoint at /metrics (cumulative temporality,
+    # independent of the OTLP push exporter). Intended to be scraped by a private/internal
+    # Prometheus — restrict network access at the infra layer. Works without an OTLP collector.
+    otel_metrics_prometheus_enabled: bool = False
     disable_tracing: bool = False
     llm_api_logging: bool = True
 
