@@ -275,7 +275,7 @@ def create_application() -> "FastAPI":
         from letta.otel.metrics import setup_metrics
 
         if settings.otel_metrics_prometheus_enabled:
-            print("▶ Exposing Prometheus metrics at /metrics")
+            print(f"▶ Exposing Prometheus metrics on dedicated port {settings.otel_metrics_prometheus_port} (path /metrics)")
         setup_metrics(
             endpoint=otlp_endpoint if tracing_enabled else None,
             app=app,

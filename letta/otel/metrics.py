@@ -111,9 +111,11 @@ def setup_metrics(
 
     Two independent readers may be attached to the MeterProvider:
       - OTLP push exporter (when `endpoint` is set) — ships metrics to a collector.
-      - Prometheus pull reader (when `prometheus_enabled`) — exposes a /metrics
-        scrape endpoint on `app`. Cumulative temporality is forced by the reader,
-        as Prometheus requires; this is independent of otel_preferred_temporality.
+      - Prometheus pull reader (when `prometheus_enabled`) — serves /metrics from a
+        standalone HTTP server on its OWN dedicated port (settings.otel_metrics_prometheus_port),
+        NOT the API port, so infra can firewall it independently of public traffic.
+        Cumulative temporality is forced by the reader, as Prometheus requires;
+        this is independent of otel_preferred_temporality.
 
     At least one of `endpoint` / `prometheus_enabled` must be provided, otherwise
     metrics stay uninitialised (and all MetricRegistry instruments are no-ops).
@@ -153,12 +155,27 @@ def setup_metrics(
 
     if app:
         app.middleware("http")(_otel_metric_middleware)
-        if prometheus_enabled:
-            from prometheus_client import make_asgi_app
 
-            # Private scrape endpoint — restrict access at the infra/network layer.
-            app.mount("/metrics", make_asgi_app())
-            logger.info("Prometheus metrics scrape endpoint mounted at /metrics")
+    if prometheus_enabled:
+        # Standalone scrape server on a dedicated port (separate from the API port) so
+        # infra can firewall it off from public traffic. Serves the default prometheus
+        # REGISTRY that PrometheusMetricReader populates. Unauthenticated by design —
+        # restrict reachability at the network layer.
+        from prometheus_client import start_http_server
+
+        prom_port = settings.otel_metrics_prometheus_port
+        prom_addr = settings.otel_metrics_prometheus_addr
+        try:
+            start_http_server(port=prom_port, addr=prom_addr)
+            logger.info(f"Prometheus metrics scrape server listening on {prom_addr}:{prom_port} (path /metrics)")
+        except OSError as e:
+            # With uvicorn_workers > 1, each worker process tries to bind the same port;
+            # only the first succeeds. Don't crash the worker — log and continue. (Full
+            # multi-worker coverage needs prometheus_client multiprocess mode.)
+            logger.warning(
+                f"Could not bind Prometheus metrics server on {prom_addr}:{prom_port}: {e}. "
+                "This is expected when uvicorn_workers > 1; metrics for this worker won't be scrapeable."
+            )
 
     _is_metrics_initialized = True
 
