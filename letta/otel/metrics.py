@@ -102,95 +102,32 @@ def _record_endpoint_metrics(
 
 
 def setup_metrics(
-    endpoint: str | None = None,
+    endpoint: str,
     app: FastAPI | None = None,
     service_name: str = "memgpt-server",
-    prometheus_enabled: bool = False,
 ) -> None:
-    """Initialise the metrics pipeline.
-
-    Two independent readers may be attached to the MeterProvider:
-      - OTLP push exporter (when `endpoint` is set) — ships metrics to a collector.
-      - Prometheus pull reader (when `prometheus_enabled`) — serves /metrics from a
-        standalone HTTP server on its OWN dedicated port (settings.otel_metrics_prometheus_port),
-        NOT the API port, so infra can firewall it independently of public traffic.
-        Cumulative temporality is forced by the reader, as Prometheus requires;
-        this is independent of otel_preferred_temporality.
-
-    At least one of `endpoint` / `prometheus_enabled` must be provided, otherwise
-    metrics stay uninitialised (and all MetricRegistry instruments are no-ops).
-    """
     if is_pytest_environment():
         return
-
-    # The in-process Prometheus pull endpoint serves only THIS process. With multiple
-    # uvicorn workers each worker is a separate process: only one could bind the port,
-    # and it would expose partial, misleading metrics (~1/N of traffic). Refuse to start
-    # it and tell the operator how to get complete metrics, rather than mislead them.
-    prometheus_active = prometheus_enabled
-    if prometheus_enabled and settings.uvicorn_workers > 1:
-        logger.warning(
-            f"Prometheus metrics endpoint DISABLED: the in-process pull endpoint cannot aggregate "
-            f"across {settings.uvicorn_workers} uvicorn workers (each is a separate process; only one "
-            f"could bind port {settings.otel_metrics_prometheus_port}, exposing partial/misleading metrics). "
-            f"For complete metrics: run with LETTA_UVICORN_WORKERS=1, or set LETTA_OTEL_EXPORTER_OTLP_ENDPOINT "
-            f"to push to a collector that re-exposes aggregated metrics."
-        )
-        prometheus_active = False
-
-    metric_readers = []
-
-    if endpoint:
-        preferred_temporality = AggregationTemporality(settings.otel_preferred_temporality)
-        otlp_metric_exporter = OTLPMetricExporter(
-            endpoint=endpoint,
-            preferred_temporality={
-                # Add more as needed here.
-                Counter: preferred_temporality,
-                Histogram: preferred_temporality,
-            },
-        )
-        metric_readers.append(PeriodicExportingMetricReader(exporter=otlp_metric_exporter))
-
-    if prometheus_active:
-        # Registers a collector into the default prometheus_client REGISTRY; the
-        # standalone server started below serves that same registry.
-        from opentelemetry.exporter.prometheus import PrometheusMetricReader
-
-        metric_readers.append(PrometheusMetricReader())
-
-    if not metric_readers:
-        logger.warning("setup_metrics called with no exporter configured (no OTLP endpoint, Prometheus disabled); skipping.")
-        return
+    assert endpoint
 
     global _is_metrics_initialized, _meter
-    meter_provider = MeterProvider(resource=get_resource(service_name), metric_readers=metric_readers)
+    preferred_temporality = AggregationTemporality(settings.otel_preferred_temporality)
+    otlp_metric_exporter = OTLPMetricExporter(
+        endpoint=endpoint,
+        preferred_temporality={
+            # Add more as needed here.
+            Counter: preferred_temporality,
+            Histogram: preferred_temporality,
+        },
+    )
+    metric_reader = PeriodicExportingMetricReader(exporter=otlp_metric_exporter)
+
+    meter_provider = MeterProvider(resource=get_resource(service_name), metric_readers=[metric_reader])
     metrics.set_meter_provider(meter_provider)
     _meter = metrics.get_meter(__name__)
 
     if app:
         app.middleware("http")(_otel_metric_middleware)
-
-    if prometheus_active:
-        # Standalone scrape server on a dedicated port (separate from the API port) so
-        # infra can firewall it off from public traffic. Serves the default prometheus
-        # REGISTRY that PrometheusMetricReader populates. Unauthenticated by design —
-        # restrict reachability at the network layer.
-        from prometheus_client import start_http_server
-
-        prom_port = settings.otel_metrics_prometheus_port
-        prom_addr = settings.otel_metrics_prometheus_addr
-        try:
-            start_http_server(port=prom_port, addr=prom_addr)
-            logger.info(f"Prometheus metrics scrape server listening on {prom_addr}:{prom_port} (path /metrics)")
-        except OSError as e:
-            # With uvicorn_workers > 1, each worker process tries to bind the same port;
-            # only the first succeeds. Don't crash the worker — log and continue. (Full
-            # multi-worker coverage needs prometheus_client multiprocess mode.)
-            logger.warning(
-                f"Could not bind Prometheus metrics server on {prom_addr}:{prom_port}: {e}. "
-                "This is expected when uvicorn_workers > 1; metrics for this worker won't be scrapeable."
-            )
 
     _is_metrics_initialized = True
 

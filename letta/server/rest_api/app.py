@@ -253,13 +253,12 @@ def create_application() -> "FastAPI":
 
     # Set up OpenTelemetry tracing
     otlp_endpoint = settings.otel_exporter_otlp_endpoint
-    tracing_enabled = bool(otlp_endpoint) and not settings.disable_tracing
-    env_name_suffix = os.getenv("ENV_NAME")
-    service_name = f"letta-server-{env_name_suffix.lower()}" if env_name_suffix else "letta-server"
-
-    if tracing_enabled:
+    if otlp_endpoint and not settings.disable_tracing:
         print(f"▶ Using OTLP tracing with endpoint: {otlp_endpoint}")
+        env_name_suffix = os.getenv("ENV_NAME")
+        service_name = f"letta-server-{env_name_suffix.lower()}" if env_name_suffix else "letta-server"
         from letta.otel.logging import setup_logging
+        from letta.otel.metrics import setup_metrics
         from letta.otel.tracing import setup_tracing
 
         setup_tracing(
@@ -267,27 +266,8 @@ def create_application() -> "FastAPI":
             app=app,
             service_name=service_name,
         )
+        setup_metrics(endpoint=otlp_endpoint, app=app, service_name=service_name)
         setup_logging(endpoint=otlp_endpoint, service_name=service_name)
-
-    # Metrics init independently of tracing: enabled by an OTLP push endpoint and/or a
-    # Prometheus scrape endpoint. This lets us expose /metrics without running a collector.
-    if tracing_enabled or settings.otel_metrics_prometheus_enabled:
-        from letta.otel.metrics import setup_metrics
-
-        if settings.otel_metrics_prometheus_enabled:
-            if settings.uvicorn_workers > 1:
-                print(
-                    f"▶ Prometheus metrics endpoint DISABLED with {settings.uvicorn_workers} uvicorn workers "
-                    f"(would expose partial metrics) — use LETTA_UVICORN_WORKERS=1 or push via OTLP. See logs."
-                )
-            else:
-                print(f"▶ Exposing Prometheus metrics on dedicated port {settings.otel_metrics_prometheus_port} (path /metrics)")
-        setup_metrics(
-            endpoint=otlp_endpoint if tracing_enabled else None,
-            app=app,
-            service_name=service_name,
-            prometheus_enabled=settings.otel_metrics_prometheus_enabled,
-        )
 
     for route in v1_routes:
         app.include_router(route, prefix=API_PREFIX)

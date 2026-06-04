@@ -221,13 +221,6 @@ class Settings(BaseSettings):
     otel_preferred_temporality: Optional[int] = Field(
         default=1, ge=0, le=2, description="Exported metric temporality. {0: UNSPECIFIED, 1: DELTA, 2: CUMULATIVE}"
     )
-    # When True, starts a standalone Prometheus scrape server on its OWN port (not the API
-    # port), serving /metrics with cumulative temporality, independent of the OTLP push
-    # exporter. Runs on a dedicated port so infra can firewall it off from public traffic
-    # while letting an internal Prometheus scrape it. Works without an OTLP collector.
-    otel_metrics_prometheus_enabled: bool = False
-    otel_metrics_prometheus_port: int = 9464  # OpenTelemetry's conventional Prometheus exporter port
-    otel_metrics_prometheus_addr: str = "0.0.0.0"  # bind address; restrict reachability at the network layer
     disable_tracing: bool = False
     llm_api_logging: bool = True
 
