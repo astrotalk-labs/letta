@@ -123,6 +123,21 @@ def setup_metrics(
     if is_pytest_environment():
         return
 
+    # The in-process Prometheus pull endpoint serves only THIS process. With multiple
+    # uvicorn workers each worker is a separate process: only one could bind the port,
+    # and it would expose partial, misleading metrics (~1/N of traffic). Refuse to start
+    # it and tell the operator how to get complete metrics, rather than mislead them.
+    prometheus_active = prometheus_enabled
+    if prometheus_enabled and settings.uvicorn_workers > 1:
+        logger.warning(
+            f"Prometheus metrics endpoint DISABLED: the in-process pull endpoint cannot aggregate "
+            f"across {settings.uvicorn_workers} uvicorn workers (each is a separate process; only one "
+            f"could bind port {settings.otel_metrics_prometheus_port}, exposing partial/misleading metrics). "
+            f"For complete metrics: run with LETTA_UVICORN_WORKERS=1, or set LETTA_OTEL_EXPORTER_OTLP_ENDPOINT "
+            f"to push to a collector that re-exposes aggregated metrics."
+        )
+        prometheus_active = False
+
     metric_readers = []
 
     if endpoint:
@@ -137,9 +152,9 @@ def setup_metrics(
         )
         metric_readers.append(PeriodicExportingMetricReader(exporter=otlp_metric_exporter))
 
-    if prometheus_enabled:
+    if prometheus_active:
         # Registers a collector into the default prometheus_client REGISTRY; the
-        # /metrics ASGI app mounted below serves that same registry.
+        # standalone server started below serves that same registry.
         from opentelemetry.exporter.prometheus import PrometheusMetricReader
 
         metric_readers.append(PrometheusMetricReader())
@@ -156,7 +171,7 @@ def setup_metrics(
     if app:
         app.middleware("http")(_otel_metric_middleware)
 
-    if prometheus_enabled:
+    if prometheus_active:
         # Standalone scrape server on a dedicated port (separate from the API port) so
         # infra can firewall it off from public traffic. Serves the default prometheus
         # REGISTRY that PrometheusMetricReader populates. Unauthenticated by design —

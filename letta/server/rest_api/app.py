@@ -275,7 +275,13 @@ def create_application() -> "FastAPI":
         from letta.otel.metrics import setup_metrics
 
         if settings.otel_metrics_prometheus_enabled:
-            print(f"▶ Exposing Prometheus metrics on dedicated port {settings.otel_metrics_prometheus_port} (path /metrics)")
+            if settings.uvicorn_workers > 1:
+                print(
+                    f"▶ Prometheus metrics endpoint DISABLED with {settings.uvicorn_workers} uvicorn workers "
+                    f"(would expose partial metrics) — use LETTA_UVICORN_WORKERS=1 or push via OTLP. See logs."
+                )
+            else:
+                print(f"▶ Exposing Prometheus metrics on dedicated port {settings.otel_metrics_prometheus_port} (path /metrics)")
         setup_metrics(
             endpoint=otlp_endpoint if tracing_enabled else None,
             app=app,
