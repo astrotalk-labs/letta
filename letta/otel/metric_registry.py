@@ -159,6 +159,27 @@ class MetricRegistry:
             ),
         )
 
+    # Headline metric for comparing the two /messages flows. Recorded inside the
+    # send_message route handler (NOT the ASGI middleware) because the
+    # latencyOptimisationFlow flag lives in the request body and is only known
+    # there — the middleware runs the handler in a separate task, so a context
+    # attribute set in the handler never propagates back up to it.
+    # Attributes (all low cardinality):
+    #   - latency_optimisation_flow : "true" | "false"
+    #   - status_code               : HTTP status of the response
+    #   plus the base ctx attributes (organization.id, project.id, agent.id, ...)
+    @property
+    def messages_endpoint_e2e_ms_histogram(self) -> Histogram:
+        return self._get_or_create_metric(
+            "hist_messages_endpoint_e2e_ms",
+            partial(
+                self._meter.create_histogram,
+                name="hist_messages_endpoint_e2e_ms",
+                description="End-to-end latency (ms) of POST /v1/agents/{id}/messages, partitioned by latency_optimisation_flow.",
+                unit="ms",
+            ),
+        )
+
     # --- Haiku cascade (latencyOptimisationFlow) metrics ---
     # All attributes use low cardinality:
     #   - provider  : anthropic | anthropic_vertex | anthropic_bedrock

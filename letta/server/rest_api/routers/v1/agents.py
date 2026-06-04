@@ -14,10 +14,10 @@ from starlette.responses import Response, StreamingResponse
 from letta.agents.letta_agent import LettaAgent
 from letta.constants import DEFAULT_MAX_STEPS, DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG
 from letta.groups.sleeptime_multi_agent_v2 import SleeptimeMultiAgentV2
-from letta.helpers.datetime_helpers import get_utc_timestamp_ns
+from letta.helpers.datetime_helpers import get_utc_timestamp_ns, ns_to_ms
 from letta.log import get_logger
 from letta.orm.errors import NoResultFound
-from letta.otel.context import get_ctx_attributes
+from letta.otel.context import add_ctx_attribute, get_ctx_attributes
 from letta.otel.metric_registry import MetricRegistry
 from letta.schemas.agent import AgentState, AgentType, CreateAgent, UpdateAgent
 from letta.schemas.block import Block, BlockUpdate
@@ -677,74 +677,97 @@ async def send_message(
     request_start_timestamp_ns = get_utc_timestamp_ns()
     MetricRegistry().user_message_counter.add(1, get_ctx_attributes())
 
+    # Tag the OTel request context with the flow flag so it propagates DOWN into
+    # the agent loop and labels every nested metric (step / llm / ttft / tokens /
+    # cost) by flow. This lets the obs dashboard slice the existing histograms by
+    # latency_optimisation_flow without any new metrics. Stored as a string so the
+    # two flows render as discrete series ("true" / "false") in group-by queries.
+    _lof_attr = str(bool(request.latencyOptimisationFlow)).lower()
+    add_ctx_attribute("latency_optimisation_flow", _lof_attr)
+
     logger.warning(f"[SEND_MESSAGE] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}, model_override={request.model_override}")
 
+    # Headline end-to-end latency for the two flows, recorded here (not the ASGI
+    # middleware) because the flag is only known inside the handler.
+    status_code = 200
+    try:
+        actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
+        # TODO: This is redundant, remove soon
+        agent = await server.agent_manager.get_agent_by_id_async(agent_id, actor, include_relationships=["multi_agent_group"])
+        agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type in ["sleeptime", "voice_sleeptime"]
+        model_compatible = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "together", "google_ai", "google_vertex"]
 
-    actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
-    # TODO: This is redundant, remove soon
-    agent = await server.agent_manager.get_agent_by_id_async(agent_id, actor, include_relationships=["multi_agent_group"])
-    agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type in ["sleeptime", "voice_sleeptime"]
-    model_compatible = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "together", "google_ai", "google_vertex"]
+        if agent_eligible and model_compatible:
+            if agent.enable_sleeptime and agent.agent_type != AgentType.voice_convo_agent:
+                agent_loop = SleeptimeMultiAgentV2(
+                    agent_id=agent_id,
+                    message_manager=server.message_manager,
+                    agent_manager=server.agent_manager,
+                    block_manager=server.block_manager,
+                    passage_manager=server.passage_manager,
+                    group_manager=server.group_manager,
+                    job_manager=server.job_manager,
+                    actor=actor,
+                    group=agent.multi_agent_group,
+                )
+            else:
+                agent_loop = LettaAgent(
+                    agent_id=agent_id,
+                    message_manager=server.message_manager,
+                    agent_manager=server.agent_manager,
+                    block_manager=server.block_manager,
+                    passage_manager=server.passage_manager,
+                    actor=actor,
+                    step_manager=server.step_manager,
+                    telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
+                    at_user_id=at_user_id,
+                )
 
-    if agent_eligible and model_compatible:
-        if agent.enable_sleeptime and agent.agent_type != AgentType.voice_convo_agent:
-            agent_loop = SleeptimeMultiAgentV2(
-                agent_id=agent_id,
-                message_manager=server.message_manager,
-                agent_manager=server.agent_manager,
-                block_manager=server.block_manager,
-                passage_manager=server.passage_manager,
-                group_manager=server.group_manager,
-                job_manager=server.job_manager,
-                actor=actor,
-                group=agent.multi_agent_group,
+            result = await agent_loop.step(
+                request.messages,
+                max_steps=request.max_steps,
+                use_assistant_message=request.use_assistant_message,
+                request_start_timestamp_ns=request_start_timestamp_ns,
+                include_return_message_types=request.include_return_message_types,
+                use_vertex_experiment=request.use_vertex_experiment,
+                use_bedrock_experiment=request.use_bedrock_experiment,
+                model_override=request.model_override,
+                user_cohort=request.user_cohort,
+                thinking=request.thinking,
+                output_config=request.output_config,
+                task_id=request.task_id,
+                latency_optimisation_flow=request.latencyOptimisationFlow,
             )
         else:
-            agent_loop = LettaAgent(
+            result = await server.send_message_to_agent(
                 agent_id=agent_id,
-                message_manager=server.message_manager,
-                agent_manager=server.agent_manager,
-                block_manager=server.block_manager,
-                passage_manager=server.passage_manager,
                 actor=actor,
-                step_manager=server.step_manager,
-                telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
-                at_user_id=at_user_id,
+                input_messages=request.messages,
+                stream_steps=False,
+                stream_tokens=False,
+                # Support for AssistantMessage
+                use_assistant_message=request.use_assistant_message,
+                assistant_message_tool_name=request.assistant_message_tool_name,
+                assistant_message_tool_kwarg=request.assistant_message_tool_kwarg,
+                include_return_message_types=request.include_return_message_types,
+                use_vertex_experiment=request.use_vertex_experiment,
+                use_bedrock_experiment=request.use_bedrock_experiment,
+                model_override=request.model_override,
+                user_cohort=request.user_cohort,
             )
-
-        result = await agent_loop.step(
-            request.messages,
-            max_steps=request.max_steps,
-            use_assistant_message=request.use_assistant_message,
-            request_start_timestamp_ns=request_start_timestamp_ns,
-            include_return_message_types=request.include_return_message_types,
-            use_vertex_experiment=request.use_vertex_experiment,
-            use_bedrock_experiment=request.use_bedrock_experiment,
-            model_override=request.model_override,
-            user_cohort=request.user_cohort,
-            thinking=request.thinking,
-            output_config=request.output_config,
-            task_id=request.task_id,
-            latency_optimisation_flow=request.latencyOptimisationFlow,
-        )
-    else:
-        result = await server.send_message_to_agent(
-            agent_id=agent_id,
-            actor=actor,
-            input_messages=request.messages,
-            stream_steps=False,
-            stream_tokens=False,
-            # Support for AssistantMessage
-            use_assistant_message=request.use_assistant_message,
-            assistant_message_tool_name=request.assistant_message_tool_name,
-            assistant_message_tool_kwarg=request.assistant_message_tool_kwarg,
-            include_return_message_types=request.include_return_message_types,
-            use_vertex_experiment=request.use_vertex_experiment,
-            use_bedrock_experiment=request.use_bedrock_experiment,
-            model_override=request.model_override,
-            user_cohort=request.user_cohort,
-        )
-    return result
+        return result
+    except Exception as e:
+        status_code = getattr(e, "status_code", 500)
+        raise
+    finally:
+        e2e_ms = ns_to_ms(get_utc_timestamp_ns() - request_start_timestamp_ns)
+        try:
+            MetricRegistry().messages_endpoint_e2e_ms_histogram.record(
+                e2e_ms,
+                {"latency_optimisation_flow": _lof_attr, "status_code": status_code, **get_ctx_attributes()},
+            )
+        except Exception as metric_exc:
+            logger.warning(f"Failed to record messages endpoint e2e metric: {metric_exc}")
 
 
 @router.post(
