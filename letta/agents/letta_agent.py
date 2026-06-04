@@ -463,15 +463,18 @@ class LettaAgent(BaseAgent):
         # Handle provider switching based on experiment flags
         self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override)
 
-        # Cascade gate: restrict latencyOptimisationFlow to validated user IDs while we
-        # confirm improvement in production. Expand _CASCADE_GATED_USER_IDS once metrics
-        # show consistent latency reduction.
-        if latency_optimisation_flow and self.at_user_id not in _CASCADE_GATED_USER_IDS:
+        # _cascade_v2: True only for gated user IDs.
+        # The existing cascade (gate-only strategy) continues running for ALL
+        # latencyOptimisationFlow=True users unchanged. Only the NEW behaviours
+        # introduced in this PR — tool restriction and timeout circuit-breaker —
+        # are restricted to _CASCADE_GATED_USER_IDS until validated in production.
+        _cascade_v2: bool = latency_optimisation_flow and self.at_user_id in _CASCADE_GATED_USER_IDS
+        if latency_optimisation_flow and not _cascade_v2:
             logger.info(
-                f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} GATED_OFF "
-                f"user_id={self.at_user_id} — cascade restricted to {sorted(_CASCADE_GATED_USER_IDS)}"
+                f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} CASCADE_V2_GATED_OFF "
+                f"user_id={self.at_user_id} — tool_restriction+timeout restricted to {sorted(_CASCADE_GATED_USER_IDS)}, "
+                f"running gate-only strategy"
             )
-            latency_optimisation_flow = False
 
         _ctx_prep_start = get_utc_timestamp_ns() if task_id else None
         async with AsyncTimer() as _t:
@@ -617,7 +620,10 @@ class LettaAgent(BaseAgent):
             # Gate below is kept as a safety net for edge cases.
             # IMPORTANT: do NOT downgrade tool_choice to "auto" — that was the original
             # bug that let Haiku return plain text on ~75% of steps.
-            _excluded_for_haiku: Optional[frozenset] = _PRIMARY_RESERVED_TOOLS if _step_used_haiku else None
+            # Tool restriction only for v2-gated users (until validated).
+            _excluded_for_haiku: Optional[frozenset] = (
+                _PRIMARY_RESERVED_TOOLS if (_step_used_haiku and _cascade_v2) else None
+            )
 
             _llm_start = get_utc_timestamp_ns() if task_id else None
             _haiku_timed_out: bool = False
@@ -630,9 +636,9 @@ class LettaAgent(BaseAgent):
                     thinking=thinking, output_config=output_config,
                     excluded_tool_names=_excluded_for_haiku,
                 )
-                # Timeout circuit-breaker: if Haiku is slower than _HAIKU_TIMEOUT_SECONDS
-                # (Bedrock degradation), fall through to primary instead of blocking.
-                if _step_used_haiku:
+                # Timeout circuit-breaker (v2-gated users only): if Haiku is slower than
+                # _HAIKU_TIMEOUT_SECONDS (Bedrock degradation), fall through to primary.
+                if _step_used_haiku and _cascade_v2:
                     try:
                         result = await asyncio.wait_for(_haiku_coro, timeout=_HAIKU_TIMEOUT_SECONDS)
                     except asyncio.TimeoutError:
