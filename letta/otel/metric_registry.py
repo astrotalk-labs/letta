@@ -177,6 +177,14 @@ class MetricRegistry:
                 name="hist_messages_endpoint_e2e_ms",
                 description="End-to-end latency (ms) of POST /v1/agents/{id}/messages, partitioned by latency_optimisation_flow.",
                 unit="ms",
+                # Explicit buckets extend to ~2min (default OTel buckets cap at 10s, which
+                # clips p99/max for multi-step LLM requests). Finer steps in the 1-30s band
+                # where /messages latency actually lives, so high percentiles (spike signal)
+                # resolve instead of pinning to the 10s ceiling.
+                explicit_bucket_boundaries_advisory=[
+                    100, 250, 500, 1000, 2000, 3000, 5000, 7500, 10000,
+                    15000, 20000, 30000, 45000, 60000, 90000, 120000,
+                ],
             ),
         )
 
