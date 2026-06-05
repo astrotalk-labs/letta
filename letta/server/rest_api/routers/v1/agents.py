@@ -19,7 +19,6 @@ from letta.log import get_logger
 from letta.orm.errors import NoResultFound
 from letta.otel.context import add_ctx_attribute, get_ctx_attributes
 from letta.otel.metric_registry import MetricRegistry
-from letta.otel.prom_multiprocess import record_messages_e2e
 from letta.schemas.agent import AgentState, AgentType, CreateAgent, UpdateAgent
 from letta.schemas.block import Block, BlockUpdate
 from letta.schemas.group import Group
@@ -769,10 +768,6 @@ async def send_message(
             )
         except Exception as metric_exc:
             logger.warning(f"Failed to record messages endpoint e2e metric: {metric_exc}")
-        # Mirror onto the native prometheus_client multiprocess metric (no-op unless
-        # PROMETHEUS_MULTIPROC_DIR is set). This is what aggregates across uvicorn workers;
-        # it runs alongside the OTel recording above and never raises.
-        record_messages_e2e(e2e_ms, _lof_attr, status_code)
 
 
 @router.post(
