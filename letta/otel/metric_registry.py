@@ -180,6 +180,34 @@ class MetricRegistry:
             ),
         )
 
+    # Per-LLM-call latency — the duration of a single provider request_async() call
+    # ONLY (not the whole /messages endpoint, not memory rebuild / persistence / tool
+    # execution). Recorded once per LLM call at every step of the agent loop.
+    # Use this to compare provider latency in isolation, e.g. Bedrock vs the direct
+    # Anthropic/inference proxy, independently of the rest of the request.
+    # Attributes (all low cardinality):
+    #   - use_bedrock_experiment : "true" | "false"  (Bedrock vs inference.memgpt.ai)
+    #   - model.name             : the model that served this call
+    #   plus the base ctx attributes (organization.id, project.id, agent.id, ...)
+    @property
+    def llm_call_ms_histogram(self) -> Histogram:
+        return self._get_or_create_metric(
+            "hist_llm_call_ms",
+            partial(
+                self._meter.create_histogram,
+                name="hist_llm_call_ms",
+                description="Latency (ms) of a single LLM provider call, partitioned by use_bedrock_experiment.",
+                unit="ms",
+                # Single-call latency lives in the 0.5-30s band (Haiku ~0.5-2s, Sonnet
+                # ~2-8s, degraded Bedrock up to ~30s). Default OTel buckets cap at 10s
+                # and would clip the degraded tail we specifically want to see.
+                explicit_bucket_boundaries_advisory=[
+                    100, 250, 500, 1000, 2000, 3000, 5000, 7500, 10000,
+                    15000, 20000, 30000, 45000, 60000,
+                ],
+            ),
+        )
+
     # --- Haiku cascade (latencyOptimisationFlow) metrics ---
     # All attributes use low cardinality:
     #   - provider  : anthropic | anthropic_vertex | anthropic_bedrock
