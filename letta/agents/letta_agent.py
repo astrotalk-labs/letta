@@ -81,10 +81,10 @@ _THINKING_GATED_USER_IDS: frozenset = frozenset({"92744418"})
 
 # Haiku cascade rollout. _CASCADE_ROLLOUT_PCT is the percentage of users (bucketed
 # deterministically by user_id % 100) for whom latencyOptimisationFlow is honored.
-# Ramp 50 -> 100 as production metrics confirm latency improvement; set to 0 for an
-# instant full rollback. The always-on test user is honored regardless of the percentage.
+# Ramp 10 -> 50 -> 100 as production metrics confirm latency improvement; set to 0 for
+# an instant full rollback. The always-on test user is honored regardless of the percentage.
 _CASCADE_ALWAYS_ON_USER_ID: str = "92744418"
-_CASCADE_ROLLOUT_PCT: int = 50
+_CASCADE_ROLLOUT_PCT: int = 10
 
 
 def _cascade_enabled_for_user(at_user_id: Optional[str]) -> bool:
