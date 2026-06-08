@@ -48,6 +48,7 @@ class BaseAgent(ABC):
         self.passage_manager = PassageManager()
         self.actor = actor
         self.logger = get_logger(agent_id)
+        self._task_id: Optional[str] = None  # set per-request by step(); used to gate latency logs
 
     @abstractmethod
     async def step(self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS) -> LettaResponse:
@@ -102,7 +103,8 @@ class BaseAgent(ABC):
             curr_memory_str = agent_state.memory.compile()
             curr_system_message_text = curr_system_message.content[0].text
             if curr_memory_str in curr_system_message_text:
-                logger.info(f"[REBUILD_TIMING] agent_id={agent_state.id} refresh_ms={_refresh_ms} changed=false")
+                if self._task_id:
+                    logger.info(f"[REBUILD_TIMING] task_id={self._task_id} agent_id={agent_state.id} refresh_ms={_refresh_ms} changed=false")
                 return in_context_messages
 
             memory_edit_timestamp = get_utc_time()
@@ -192,17 +194,19 @@ class BaseAgent(ABC):
                     curr_system_message.id, message_update=MessageUpdate(content=new_system_message_str), actor=self.actor
                 )
                 _write_ms = ns_to_ms(get_utc_timestamp_ns() - _t_write)
-                logger.info(
-                    f"[REBUILD_TIMING] agent_id={agent_state.id} refresh_ms={_refresh_ms} "
-                    f"counts_ms={_counts_ms} sysmsg_write_ms={_write_ms} changed=true"
-                )
+                if self._task_id:
+                    logger.info(
+                        f"[REBUILD_TIMING] task_id={self._task_id} agent_id={agent_state.id} refresh_ms={_refresh_ms} "
+                        f"counts_ms={_counts_ms} sysmsg_write_ms={_write_ms} changed=true"
+                    )
                 return [new_system_message] + in_context_messages[1:]
 
             else:
-                logger.info(
-                    f"[REBUILD_TIMING] agent_id={agent_state.id} refresh_ms={_refresh_ms} "
-                    f"counts_ms={_counts_ms} sysmsg_write_ms=0 changed=false_nodiff"
-                )
+                if self._task_id:
+                    logger.info(
+                        f"[REBUILD_TIMING] task_id={self._task_id} agent_id={agent_state.id} refresh_ms={_refresh_ms} "
+                        f"counts_ms={_counts_ms} sysmsg_write_ms=0 changed=false_nodiff"
+                    )
                 return in_context_messages
         except:
             logger.exception(f"Failed to rebuild memory for agent id={agent_state.id} and actor=({self.actor.id}, {self.actor.name})")

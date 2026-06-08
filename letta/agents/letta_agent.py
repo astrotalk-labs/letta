@@ -459,6 +459,10 @@ class LettaAgent(BaseAgent):
         # Handle provider switching based on experiment flags
         self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override)
 
+        # Stash task_id on the instance so agent-internal helpers (_rebuild_memory_async,
+        # _rebuild_context_window) can tag their latency logs. Agent is per-request, so safe.
+        self._task_id = task_id
+
         _ctx_prep_start = get_utc_timestamp_ns() if task_id else None
         async with AsyncTimer() as _t:
             current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
@@ -1366,9 +1370,11 @@ class LettaAgent(BaseAgent):
         await self.agent_manager.set_in_context_messages_async(
             agent_id=self.agent_id, message_ids=[m.id for m in new_in_context_messages], actor=self.actor
         )
-        logger.info(
-            f"[CTXWIN_TIMING] agent_id={self.agent_id} set_in_context_ms={ns_to_ms(get_utc_timestamp_ns() - _t_setctx)} summarized={updated}"
-        )
+        if self._task_id:
+            logger.info(
+                f"[CTXWIN_TIMING] task_id={self._task_id} agent_id={self.agent_id} "
+                f"set_in_context_ms={ns_to_ms(get_utc_timestamp_ns() - _t_setctx)} summarized={updated}"
+            )
 
         return new_in_context_messages
 

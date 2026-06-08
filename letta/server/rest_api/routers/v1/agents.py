@@ -696,12 +696,13 @@ async def send_message(
         # TODO: This is redundant, remove soon
         _t_agent = get_utc_timestamp_ns()
         agent = await server.agent_manager.get_agent_by_id_async(agent_id, actor, include_relationships=["multi_agent_group"])
-        logger.warning(
-            f"[TASK_LATENCY] task_id={request.task_id or 'N/A'} phase=actor_load duration_ms={ns_to_ms(_t_agent - _t_actor)}"
-        )
-        logger.warning(
-            f"[TASK_LATENCY] task_id={request.task_id or 'N/A'} phase=agent_load duration_ms={ns_to_ms(get_utc_timestamp_ns() - _t_agent)}"
-        )
+        if request.task_id:
+            logger.warning(
+                f"[TASK_LATENCY] task_id={request.task_id} phase=actor_load duration_ms={ns_to_ms(_t_agent - _t_actor)}"
+            )
+            logger.warning(
+                f"[TASK_LATENCY] task_id={request.task_id} phase=agent_load duration_ms={ns_to_ms(get_utc_timestamp_ns() - _t_agent)}"
+            )
         agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type in ["sleeptime", "voice_sleeptime"]
         model_compatible = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "together", "google_ai", "google_vertex"]
 
