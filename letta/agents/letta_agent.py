@@ -1046,6 +1046,17 @@ class LettaAgent(BaseAgent):
                 llm_request_ms,
                 dict(get_ctx_attributes(), **{"model.name": agent_state.llm_config.model}),
             )
+            # Per-LLM-call latency, partitioned by Bedrock vs non-Bedrock provider.
+            MetricRegistry().llm_call_ms_histogram.record(
+                llm_request_ms,
+                dict(
+                    get_ctx_attributes(),
+                    **{
+                        "model.name": agent_state.llm_config.model,
+                        "use_bedrock_experiment": str(use_bedrock_experiment).lower(),
+                    },
+                ),
+            )
 
             # Process resulting stream content
             try:
@@ -1199,6 +1210,17 @@ class LettaAgent(BaseAgent):
                 MetricRegistry().llm_execution_time_ms_histogram.record(
                     timer.elapsed_ms,
                     dict(get_ctx_attributes(), **{"model.name": agent_state.llm_config.model}),
+                )
+                # Per-LLM-call latency, partitioned by Bedrock vs non-Bedrock provider.
+                MetricRegistry().llm_call_ms_histogram.record(
+                    timer.elapsed_ms,
+                    dict(
+                        get_ctx_attributes(),
+                        **{
+                            "model.name": agent_state.llm_config.model,
+                            "use_bedrock_experiment": str(use_bedrock_experiment).lower(),
+                        },
+                    ),
                 )
                 agent_step_span.add_event(name="llm_request_ms", attributes={"duration_ms": timer.elapsed_ms})
                 _log_step_timing("llm_call", timer.elapsed_ms,
