@@ -119,7 +119,11 @@ _PRIMARY_RESERVED_TOOLS: frozenset = frozenset({
 _HAIKU_MODEL_ANTHROPIC: str = "claude-haiku-4-5-20251001"
 _HAIKU_MODEL_VERTEX: str = "claude-haiku-4-5@20251001"
 _HAIKU_MODEL_BEDROCK_ARN: str = (
-    "arn:aws:bedrock:ap-south-1:441618926843:application-inference-profile/8y2dovlqcwlc"
+    # Global system inference profile for Claude Haiku 4.5.
+    # Routes worldwide when ap-south-1 is degraded — eliminates the Jun 1 2026
+    # incident where the single-region AIP (8y2dovlqcwlc) slowed to 24s/call.
+    # Confirmed ACTIVE via list_inference_profiles; latency ~850ms vs ~1240ms.
+    "global.anthropic.claude-haiku-4-5-20251001-v1:0"
 )
 
 _HAIKU_MODEL_BY_PROVIDER: dict = {
@@ -127,6 +131,11 @@ _HAIKU_MODEL_BY_PROVIDER: dict = {
     "anthropic_vertex": _HAIKU_MODEL_VERTEX,
     "anthropic_bedrock": _HAIKU_MODEL_BEDROCK_ARN,
 }
+
+# Hard cap on how long we'll wait for a Haiku LLM call before falling back to primary.
+# When Bedrock degrades (observed: p95 >24s during ap-south-1 service event Jun 2026),
+# the timeout bounds the damage to ≤8s per step instead of 24s+ per step.
+_HAIKU_TIMEOUT_SECONDS: float = 8.0
 
 
 class LettaAgent(BaseAgent):
@@ -201,31 +210,24 @@ class LettaAgent(BaseAgent):
         # so that downstream (e.g. Bedrock ARN selection based on model substring) sees the
         # overridden model.
         if model_override:
-            print(f"DEBUG: [provider_switch] Overriding model: {agent_state.llm_config.model} -> {model_override}")
             agent_state.llm_config.model = model_override
 
         original_endpoint_type = agent_state.llm_config.model_endpoint_type
         original_model = agent_state.llm_config.model
 
         if use_bedrock_experiment and original_endpoint_type == "anthropic":
-            print(f"DEBUG: [provider_switch] Switching from anthropic to anthropic_bedrock")
             agent_state.llm_config.model_endpoint_type = "anthropic_bedrock"
         elif use_vertex_experiment and original_endpoint_type == "anthropic":
-            print(f"DEBUG: [provider_switch] Switching from anthropic to anthropic_vertex")
             agent_state.llm_config.model_endpoint_type = "anthropic_vertex"
             if '-' in original_model and '@' not in original_model:
                 parts = original_model.rsplit('-', 1)
                 if len(parts) == 2 and parts[1].isdigit():
                     agent_state.llm_config.model = f"{parts[0]}@{parts[1]}"
-                    print(f"DEBUG: [provider_switch] Converted model: {original_model} -> {agent_state.llm_config.model}")
         elif not use_vertex_experiment and original_endpoint_type == "anthropic_vertex":
-            print(f"DEBUG: [provider_switch] Switching from anthropic_vertex to anthropic")
             agent_state.llm_config.model_endpoint_type = "anthropic"
             if '@' in original_model:
                 agent_state.llm_config.model = original_model.replace('@', '-')
-                print(f"DEBUG: [provider_switch] Converted model: {original_model} -> {agent_state.llm_config.model}")
         elif not use_bedrock_experiment and original_endpoint_type == "anthropic_bedrock":
-            print(f"DEBUG: [provider_switch] Switching from anthropic_bedrock to anthropic")
             agent_state.llm_config.model_endpoint_type = "anthropic"
 
     @trace_method
@@ -479,8 +481,6 @@ class LettaAgent(BaseAgent):
             3. Fetches a response from the LLM
             4. Processes the response
         """
-        print(f"DEBUG: [_step] Received use_vertex_experiment={use_vertex_experiment}, use_bedrock_experiment={use_bedrock_experiment}, model_override={model_override}")
-
         # Handle provider switching based on experiment flags
         self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override)
 
@@ -553,7 +553,8 @@ class LettaAgent(BaseAgent):
                         f"haiku_model={_haiku_model} "
                         f"rule=step0_on_primary_then_tool_calls_on_haiku_send_message_never_on_haiku "
                         f"primary_reserved_tools={sorted(_PRIMARY_RESERVED_TOOLS)} "
-                        f"strategy=skip_step0_plus_post_call_gate_only"
+                        f"strategy=skip_step0_plus_tool_list_restriction_plus_post_call_gate "
+                        f"timeout_s={_HAIKU_TIMEOUT_SECONDS}"
                     )
                     MetricRegistry().haiku_cascade_request_counter.add(1, _cascade_attrs(state="enabled"))
                 else:
@@ -575,6 +576,7 @@ class LettaAgent(BaseAgent):
         # Cascade usage counters (only meaningful when latency_optimisation_flow=True)
         _haiku_step_count: int = 0
         _primary_step_count: int = 0
+        _haiku_timeout_step_count: int = 0  # steps where Haiku timed out → fell back to primary
         _haiku_prompt_tokens: int = 0
         _haiku_completion_tokens: int = 0
         _primary_prompt_tokens: int = 0
@@ -620,7 +622,7 @@ class LettaAgent(BaseAgent):
                 _original_model = agent_state.llm_config.model
                 agent_state.llm_config.model = _haiku_model
                 _step_used_haiku = True
-                logger.warning(
+                logger.info(
                     f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} step={i} ATTEMPT_HAIKU "
                     f"model={_original_model} -> {_haiku_model}"
                 )
@@ -634,45 +636,83 @@ class LettaAgent(BaseAgent):
                 # Cascade requested but no Haiku model mapped — record so we can detect misconfigs.
                 MetricRegistry().haiku_cascade_step_counter.add(1, _cascade_attrs(outcome="primary_no_haiku_model"))
 
-            # Haiku gets the full tool list (including send_message).
-            # The post-call quality gate below is the sole defence that enforces
-            # "send_message never runs on Haiku": if Haiku picks send_message the
-            # gate discards the response and re-runs on the primary model.
-            #
-            # We intentionally do NOT strip send_message from the tool list.
-            # Earlier versions did so (and downgraded tool_choice from "any" to
-            # "auto" to allow a text response when no tools remained). In
-            # production that caused Haiku to return a plain text response on
-            # ~75% of steps instead of calling a memory tool, triggering the gate
-            # on every step and making the cascade slower than no cascade at all.
-            # With send_message restored and tool_choice kept at "any", Haiku is
-            # forced to make a tool call; it only hits the gate on the final
-            # send_message step (1 retry vs. 3).
+            # Haiku tool restriction: strip send_message from Haiku's tool list so it
+            # cannot pick it prematurely. tool_choice stays "any" (forced tool call) —
+            # Haiku must call a memory/context tool and cannot call send_message.
+            # Gate below is kept as a safety net for edge cases.
+            # IMPORTANT: do NOT downgrade tool_choice to "auto" — that was the original
+            # bug that let Haiku return plain text on ~75% of steps.
+            _excluded_for_haiku: Optional[frozenset] = _PRIMARY_RESERVED_TOOLS if _step_used_haiku else None
 
             _llm_start = get_utc_timestamp_ns() if task_id else None
+            _haiku_timed_out: bool = False
+            response = None  # always initialised — assigned in try block or timeout fallback
             try:
+                _haiku_coro = self._build_and_request_from_llm(
+                    current_in_context_messages, new_in_context_messages, agent_state, llm_client, tool_rules_solver, agent_step_span,
+                    use_vertex_experiment=use_vertex_experiment, use_bedrock_experiment=use_bedrock_experiment, step_index=i,
+                    thinking=thinking, output_config=output_config,
+                    excluded_tool_names=_excluded_for_haiku,
+                )
+                # Timeout circuit-breaker: if Haiku is slower than _HAIKU_TIMEOUT_SECONDS
+                # (Bedrock degradation), fall through to primary instead of blocking.
+                if _step_used_haiku:
+                    try:
+                        result = await asyncio.wait_for(_haiku_coro, timeout=_HAIKU_TIMEOUT_SECONDS)
+                    except asyncio.TimeoutError:
+                        _haiku_timed_out = True
+                        _elapsed_ms = ns_to_ms(get_utc_timestamp_ns() - _llm_start) if _llm_start else 0
+                        logger.warning(
+                            f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} step={i} TIMEOUT_SKIP_TO_PRIMARY "
+                            f"elapsed_ms={_elapsed_ms} timeout_s={_HAIKU_TIMEOUT_SECONDS} "
+                            f"— falling back to primary model"
+                        )
+                        MetricRegistry().haiku_cascade_step_counter.add(
+                            1, _cascade_attrs(outcome="primary_haiku_timeout")
+                        )
+                        result = None
+                else:
+                    result = await _haiku_coro
+
+                if result is not None:
+                    request_data, response_data, current_in_context_messages, new_in_context_messages, valid_tool_names = result
+                    if task_id and _llm_start:
+                        logger.warning(f"[TASK_LATENCY] task_id={task_id} step={i} phase=llm_call duration_ms={ns_to_ms(get_utc_timestamp_ns() - _llm_start)}")
+                    in_context_messages = current_in_context_messages + new_in_context_messages
+                    log_event("agent.step.llm_response.received")  # [3^]
+                    response = llm_client.convert_response_to_chat_completion(response_data, in_context_messages, agent_state.llm_config)
+            finally:
+                # Always restore the primary model — even if the LLM call raises.
+                if _original_model is not None:
+                    agent_state.llm_config.model = _original_model
+                    _original_model = None
+
+            # Haiku timed out → run on primary immediately (no gate needed).
+            if _haiku_timed_out:
+                _haiku_timeout_step_count += 1
+                _step_used_haiku = False
+                _llm_timeout_retry_start = get_utc_timestamp_ns() if task_id else None
                 request_data, response_data, current_in_context_messages, new_in_context_messages, valid_tool_names = (
                     await self._build_and_request_from_llm(
-                        current_in_context_messages, new_in_context_messages, agent_state, llm_client, tool_rules_solver, agent_step_span,
+                        _pre_call_current_messages, _pre_call_new_messages, agent_state, llm_client, tool_rules_solver, agent_step_span,
                         use_vertex_experiment=use_vertex_experiment, use_bedrock_experiment=use_bedrock_experiment, step_index=i,
                         thinking=thinking, output_config=output_config,
                     )
                 )
-                if task_id and _llm_start:
-                    logger.warning(f"[TASK_LATENCY] task_id={task_id} step={i} phase=llm_call duration_ms={ns_to_ms(get_utc_timestamp_ns() - _llm_start)}")
+                if task_id and _llm_timeout_retry_start:
+                    logger.warning(
+                        f"[TASK_LATENCY] task_id={task_id} step={i} phase=llm_call_timeout_fallback "
+                        f"duration_ms={ns_to_ms(get_utc_timestamp_ns() - _llm_timeout_retry_start)}"
+                    )
                 in_context_messages = current_in_context_messages + new_in_context_messages
-
-                log_event("agent.step.llm_response.received")  # [3^]
-
                 response = llm_client.convert_response_to_chat_completion(response_data, in_context_messages, agent_state.llm_config)
-            finally:
-                # Always restore the primary model — even if the LLM call or response
-                # parsing raises. Without this, a failed Haiku step would leave
-                # agent_state.llm_config.model pointing at the Haiku model for every
-                # subsequent step (and for future requests sharing this agent state).
-                if _original_model is not None:
-                    agent_state.llm_config.model = _original_model
-                    _original_model = None  # prevent any accidental double-restore below
+
+            # Safety guard — response must be assigned by this point.
+            if response is None:
+                raise RuntimeError(
+                    f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} step={i}: "
+                    f"response is None after LLM call — haiku_timed_out={_haiku_timed_out}"
+                )
 
             # Quality gate — the sole enforcement of "send_message never runs on Haiku".
             #
@@ -920,6 +960,7 @@ class LettaAgent(BaseAgent):
                 f"haiku_tokens={_haiku_total_tokens} (prompt={_haiku_prompt_tokens} completion={_haiku_completion_tokens}) "
                 f"primary_tokens={_primary_total_tokens} (prompt={_primary_prompt_tokens} completion={_primary_completion_tokens}) "
                 f"retried_steps={_haiku_retried_step_count} "
+                f"timeout_steps={_haiku_timeout_step_count} "
                 f"wasted_haiku_tokens={_haiku_wasted_total_tokens} (prompt={_haiku_wasted_prompt_tokens} completion={_haiku_wasted_completion_tokens}) "
                 f"haiku_model={_haiku_model or 'N/A'}"
             )
@@ -1209,6 +1250,7 @@ class LettaAgent(BaseAgent):
         step_index: int = 0,
         thinking: Optional[dict] = None,
         output_config: Optional[dict] = None,
+        excluded_tool_names: Optional[frozenset] = None,
     ) -> Tuple[Dict, Dict, List[Message], List[Message], List[str]] | None:
         for attempt in range(self.max_summarization_retries + 1):
             try:
@@ -1227,6 +1269,26 @@ class LettaAgent(BaseAgent):
                                  step_idx=step_index, model=agent_state.llm_config.model)
                 log_event("agent.stream_no_tokens.llm_request.created")
 
+                # Haiku tool restriction: strip primary-reserved tools so Haiku cannot
+                # pick send_message directly. Keep tool_choice="any" (NOT "auto") so
+                # Haiku must still call *some* tool.
+                # Guard: skip if filtering would empty the list or break a forced call.
+                if excluded_tool_names and request_data.get("tools"):
+                    _filtered_tools = [
+                        t for t in request_data["tools"] if t.get("name") not in excluded_tool_names
+                    ]
+                    _tc_name = (request_data.get("tool_choice") or {}).get("name")
+                    _forced_call_stripped = bool(_tc_name and _tc_name in excluded_tool_names)
+                    if _filtered_tools and not _forced_call_stripped:
+                        request_data["tools"] = _filtered_tools
+                        valid_tool_names = [n for n in valid_tool_names if n not in excluded_tool_names]
+                    else:
+                        logger.warning(
+                            f"[HAIKU_CASCADE] step={step_index} SKIP_TOOL_RESTRICTION "
+                            f"reason={'empty_after_filter' if not _filtered_tools else 'forced_call_stripped'} "
+                            f"tool_choice_name={_tc_name} — gate will handle"
+                        )
+
                 # Inject per-request thinking overrides (gated)
                 if self.at_user_id in _THINKING_GATED_USER_IDS:
                     if thinking is not None:
@@ -1240,11 +1302,9 @@ class LettaAgent(BaseAgent):
                 # output_config flows to all users unconditionally
                 if output_config is not None:
                     request_data["output_config"] = output_config
-                    print(f"DEBUG: [_build_and_request_from_llm] output_config injected: {output_config}")
 
                 async with AsyncTimer() as timer:
                     # Attempt LLM request
-                    print(f"DEBUG: [_build_and_request_from_llm] Calling llm_client.request_async with use_vertex_experiment={use_vertex_experiment}, use_bedrock_experiment={use_bedrock_experiment}")
                     response = await llm_client.request_async(request_data, agent_state.llm_config, use_vertex_experiment=use_vertex_experiment, use_bedrock_experiment=use_bedrock_experiment)
                 MetricRegistry().llm_execution_time_ms_histogram.record(
                     timer.elapsed_ms,
@@ -1326,7 +1386,6 @@ class LettaAgent(BaseAgent):
                 # output_config flows to all users unconditionally
                 if output_config is not None:
                     request_data["output_config"] = output_config
-                    print(f"DEBUG: [_build_and_request_from_llm_streaming] output_config injected: {output_config}")
 
                 provider_request_start_timestamp_ns = get_utc_timestamp_ns()
                 if first_chunk and ttft_span is not None:
