@@ -5,7 +5,7 @@ import openai
 
 from letta.constants import DEFAULT_MAX_STEPS
 from letta.helpers import ToolRulesSolver
-from letta.helpers.datetime_helpers import get_utc_time
+from letta.helpers.datetime_helpers import get_utc_time, get_utc_timestamp_ns, ns_to_ms
 from letta.log import get_logger
 from letta.schemas.agent import AgentState
 from letta.schemas.enums import MessageStreamStatus
@@ -93,26 +93,28 @@ class BaseAgent(ABC):
         """
         try:
             # [DB Call] loading blocks (modifies: agent_state.memory.blocks)
+            _t_refresh = get_utc_timestamp_ns()
             await self.agent_manager.refresh_memory_async(agent_state=agent_state, actor=self.actor)
+            _refresh_ms = ns_to_ms(get_utc_timestamp_ns() - _t_refresh)
 
             # TODO: This is a pretty brittle pattern established all over our code, need to get rid of this
             curr_system_message = in_context_messages[0]
             curr_memory_str = agent_state.memory.compile()
             curr_system_message_text = curr_system_message.content[0].text
             if curr_memory_str in curr_system_message_text:
-                logger.debug(
-                    f"Memory hasn't changed for agent id={agent_state.id} and actor=({self.actor.id}, {self.actor.name}), skipping system prompt rebuild"
-                )
+                logger.info(f"[REBUILD_TIMING] agent_id={agent_state.id} refresh_ms={_refresh_ms} changed=false")
                 return in_context_messages
 
             memory_edit_timestamp = get_utc_time()
 
             # [DB Call] size of messages and archival memories
             # todo: blocking for now
+            _t_counts = get_utc_timestamp_ns()
             if num_messages is None:
                 num_messages = await self.message_manager.size_async(actor=self.actor, agent_id=agent_state.id)
             if num_archival_memories is None:
                 num_archival_memories = await self.passage_manager.agent_passage_size_async(actor=self.actor, agent_id=agent_state.id)
+            _counts_ms = ns_to_ms(get_utc_timestamp_ns() - _t_counts)
 
             new_system_message_str = compile_system_message(
                 system_prompt=agent_state.system,
@@ -185,12 +187,22 @@ class BaseAgent(ABC):
                     return in_context_messages
 
                 # [DB Call] Update Messages
+                _t_write = get_utc_timestamp_ns()
                 new_system_message = await self.message_manager.update_message_by_id_async(
                     curr_system_message.id, message_update=MessageUpdate(content=new_system_message_str), actor=self.actor
+                )
+                _write_ms = ns_to_ms(get_utc_timestamp_ns() - _t_write)
+                logger.info(
+                    f"[REBUILD_TIMING] agent_id={agent_state.id} refresh_ms={_refresh_ms} "
+                    f"counts_ms={_counts_ms} sysmsg_write_ms={_write_ms} changed=true"
                 )
                 return [new_system_message] + in_context_messages[1:]
 
             else:
+                logger.info(
+                    f"[REBUILD_TIMING] agent_id={agent_state.id} refresh_ms={_refresh_ms} "
+                    f"counts_ms={_counts_ms} sysmsg_write_ms=0 changed=false_nodiff"
+                )
                 return in_context_messages
         except:
             logger.exception(f"Failed to rebuild memory for agent id={agent_state.id} and actor=({self.actor.id}, {self.actor.name})")

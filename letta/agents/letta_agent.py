@@ -1362,8 +1362,12 @@ class LettaAgent(BaseAgent):
             new_in_context_messages, updated = self.summarizer.summarize(
                 in_context_messages=in_context_messages, new_letta_messages=new_letta_messages
             )
+        _t_setctx = get_utc_timestamp_ns()
         await self.agent_manager.set_in_context_messages_async(
             agent_id=self.agent_id, message_ids=[m.id for m in new_in_context_messages], actor=self.actor
+        )
+        logger.info(
+            f"[CTXWIN_TIMING] agent_id={self.agent_id} set_in_context_ms={ns_to_ms(get_utc_timestamp_ns() - _t_setctx)} summarized={updated}"
         )
 
         return new_in_context_messages
