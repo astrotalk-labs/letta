@@ -193,6 +193,8 @@ class AnthropicClient(LLMClientBase):
         # Check if we should use Vertex AI based on model_endpoint_type
         # (This happens when use_vertex_experiment changes the endpoint type in _step)
         if llm_config.model_endpoint_type == "anthropic_vertex":
+            print(f"DEBUG: [AnthropicClient] Using Vertex AI client (model_endpoint_type=anthropic_vertex)")
+            print(f"DEBUG: [AnthropicClient] Request data model: {request_data.get('model')}")
             from anthropic import AsyncAnthropicVertex
             from letta.settings import model_settings
             import os
@@ -201,6 +203,8 @@ class AnthropicClient(LLMClientBase):
             project_id = model_settings.google_cloud_project
             # Use 'global' region for newer Claude models
             region = os.getenv('GOOGLE_CLOUD_LOCATION') or os.getenv('ANTHROPIC_VERTEX_REGION') or 'global'
+
+            print(f"DEBUG: [AnthropicClient] Creating AsyncAnthropicVertex with project={project_id}, region={region}")
 
             if not project_id:
                 raise ValueError("GOOGLE_CLOUD_PROJECT must be set for Vertex AI")
@@ -215,7 +219,12 @@ class AnthropicClient(LLMClientBase):
                 base_url=base_url,
             )
 
+            print(f"DEBUG: [AnthropicClient] AsyncAnthropicVertex client created: {type(client)}")
+            print(f"DEBUG: [AnthropicClient] Client base_url: {getattr(client, 'base_url', 'N/A')}")
+            print(f"DEBUG: [AnthropicClient] Client _base_url: {getattr(client, '_base_url', 'N/A')}")
+
             # Vertex doesn't support beta features
+            print(f"DEBUG: [AnthropicClient] Calling client.messages.create with model={request_data.get('model')}")
             _vertex_extra_body = {}
             _vertex_sdk_data = {}
             for k, v in request_data.items():
@@ -224,7 +233,10 @@ class AnthropicClient(LLMClientBase):
                 else:
                     _vertex_sdk_data[k] = v
             response = await client.messages.create(**_vertex_sdk_data, **({"extra_body": _vertex_extra_body} if _vertex_extra_body else {}))
+            print(f"DEBUG: [AnthropicClient] Response received successfully")
         elif llm_config.model_endpoint_type == "anthropic_bedrock":
+            print(f"DEBUG: [AnthropicClient] Using AWS Bedrock client via boto3 (model_endpoint_type=anthropic_bedrock)")
+            print(f"DEBUG: [AnthropicClient] Request data model: {request_data.get('model')}")
             import os
             import json
             import asyncio
@@ -237,12 +249,10 @@ class AnthropicClient(LLMClientBase):
             aws_session_token = os.getenv('AWS_SESSION_TOKEN')
 
             # Determine model ID priority order:
-            #   1. Full Bedrock ARN or AWS system inference profile ID — use verbatim.
-            #      ARN:    "arn:aws:bedrock:..."
-            #      System profile IDs use geo-prefix notation: "global.", "apac.", "us.", "eu."
-            #      e.g. "global.anthropic.claude-haiku-4-5-20251001-v1:0"
-            #      The cascade passes one of these explicitly — env-var lookup must NOT
-            #      override them (env vars point to cohort AIPs for non-cascade traffic).
+            #   1. If the requested model is already a full Bedrock ARN, trust it directly
+            #      (used by the latencyOptimisationFlow cascade which passes a hardcoded
+            #      Haiku ARN — the ARN profile-ID has no "haiku" substring so the env-var
+            #      lookup below would mis-route to the default Sonnet ARN).
             #   2. Cohort-based ARN for gated users
             #   3. Model-name → env-var lookup (existing substring matching)
             #   4. Raw model name as last resort
@@ -250,10 +260,10 @@ class AnthropicClient(LLMClientBase):
             requested_model = requested_model_raw.lower()
             logger.info("[GEO_KEY_BEDROCK] request_async at_user_id=%s user_cohort=%s", getattr(self, "at_user_id", None), getattr(self, "user_cohort", None))
 
-            _BEDROCK_DIRECT_PREFIXES = ("arn:aws:bedrock:", "global.", "apac.", "us.", "eu.")
-            if requested_model_raw.startswith(_BEDROCK_DIRECT_PREFIXES):
-                # Full ARN or system inference profile ID — use verbatim, skip env-var lookup.
+            if requested_model_raw.startswith("arn:aws:bedrock:"):
+                # Direct ARN passed by the caller — use it verbatim.
                 bedrock_inference_profile = requested_model_raw
+                print(f"DEBUG: [AnthropicClient] Using direct ARN from requested_model: {bedrock_inference_profile}")
             else:
                 cohort_arn = _resolve_bedrock_arn_from_cohort(
                     getattr(self, "at_user_id", None),
@@ -269,7 +279,11 @@ class AnthropicClient(LLMClientBase):
                         bedrock_inference_profile = os.getenv('BEDROCK_SONNET_4_6_INFERENCE_PROFILE_ARN') or default_arn
                     else:
                         bedrock_inference_profile = default_arn
+                print(f"DEBUG: [AnthropicClient] Selected inference profile for model='{requested_model}': {bedrock_inference_profile}")
             model_id = bedrock_inference_profile if bedrock_inference_profile else request_data.get('model')
+
+            print(f"DEBUG: [AnthropicClient] Creating boto3 bedrock-runtime client with region={aws_region}")
+            print(f"DEBUG: [AnthropicClient] Using model_id={model_id}")
 
             client_kwargs = {
                 "service_name": "bedrock-runtime",
@@ -321,6 +335,8 @@ class AnthropicClient(LLMClientBase):
             if "output_config" in request_data:
                 bedrock_body["output_config"] = request_data["output_config"]
 
+            print(f"DEBUG: [AnthropicClient] Calling bedrock invoke_model with modelId={model_id}")
+
             # Run synchronous boto3 call in a thread to avoid blocking the event loop
             def _invoke():
                 resp = bedrock_client.invoke_model(
@@ -332,6 +348,7 @@ class AnthropicClient(LLMClientBase):
                 return json.loads(resp["body"].read())
 
             result = await asyncio.to_thread(_invoke)
+            print(f"DEBUG: [AnthropicClient] Bedrock response received successfully")
 
             # Convert Bedrock response to match Anthropic SDK response format
             # Bedrock returns the same format as Anthropic Messages API
@@ -353,6 +370,7 @@ class AnthropicClient(LLMClientBase):
             )
             return response_dict
         else:
+            print(f"DEBUG: [AnthropicClient] Using standard Anthropic client (model_endpoint_type={llm_config.model_endpoint_type})")
             client = await self._get_anthropic_client_async(llm_config, async_client=True)
             _extra_body = {}
             _sdk_data = {}

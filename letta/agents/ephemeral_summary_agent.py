@@ -4,7 +4,6 @@ from typing import AsyncGenerator, List, Optional
 
 import anthropic
 from openai import AzureOpenAI
-from sqlalchemy.exc import IntegrityError
 
 from letta.agents.base_agent import BaseAgent
 from letta.constants import DEFAULT_MAX_STEPS
@@ -89,19 +88,7 @@ class EphemeralSummaryAgent(BaseAgent):
                 ),
                 actor=self.actor,
             )
-            try:
-                await self.agent_manager.attach_block_async(agent_id=self.agent_id, block_id=block.id, actor=self.actor)
-            except IntegrityError:
-                # Race condition: a concurrent summarizer attached a conversation_summary
-                # block between our get_block_with_label_async (NoResultFound) and our
-                # attach_block_async. Re-fetch the winner block instead of crashing.
-                logger.warning(
-                    f"[SUMMARIZER] attach_block race condition for agent={self.agent_id} "
-                    f"label={self.target_block_label} — re-fetching existing block"
-                )
-                block = await self.agent_manager.get_block_with_label_async(
-                    agent_id=self.agent_id, block_label=self.target_block_label, actor=self.actor
-                )
+            await self.agent_manager.attach_block_async(agent_id=self.agent_id, block_id=block.id, actor=self.actor)
 
         if block.value:
             input_message = input_messages[0]
