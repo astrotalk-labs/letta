@@ -553,7 +553,7 @@ class LettaAgent(BaseAgent):
                         f"haiku_model={_haiku_model} "
                         f"rule=step0_on_primary_then_tool_calls_on_haiku_send_message_never_on_haiku "
                         f"primary_reserved_tools={sorted(_PRIMARY_RESERVED_TOOLS)} "
-                        f"strategy=skip_step0_plus_tool_list_restriction_plus_post_call_gate "
+                        f"strategy=skip_step0_plus_post_call_gate_only_plus_timeout "
                         f"timeout_s={_HAIKU_TIMEOUT_SECONDS}"
                     )
                     MetricRegistry().haiku_cascade_request_counter.add(1, _cascade_attrs(state="enabled"))
@@ -636,13 +636,17 @@ class LettaAgent(BaseAgent):
                 # Cascade requested but no Haiku model mapped — record so we can detect misconfigs.
                 MetricRegistry().haiku_cascade_step_counter.add(1, _cascade_attrs(outcome="primary_no_haiku_model"))
 
-            # Haiku tool restriction: strip send_message from Haiku's tool list so it
-            # cannot pick it prematurely. tool_choice stays "any" (forced tool call) —
-            # Haiku must call a memory/context tool and cannot call send_message.
-            # Gate below is kept as a safety net for edge cases.
-            # IMPORTANT: do NOT downgrade tool_choice to "auto" — that was the original
-            # bug that let Haiku return plain text on ~75% of steps.
-            _excluded_for_haiku: Optional[frozenset] = _PRIMARY_RESERVED_TOOLS if _step_used_haiku else None
+            # Strategy: gate-only (NOT tool-list restriction).
+            #
+            # Haiku gets the FULL tool list (including send_message). The post-call gate
+            # below enforces "send_message runs on primary": if Haiku picks send_message,
+            # we discard and re-run the step on the primary model.
+            #
+            # We do NOT strip send_message from Haiku. Stripping it removed the only
+            # trigger for the primary handoff (the gate only fires when Haiku picks
+            # send_message), so the agent could never terminate on a Haiku step and looped
+            # to max_steps (prod task 323737721: 42+ archival_memory_insert steps, ~150s).
+            _excluded_for_haiku: Optional[frozenset] = None
 
             _llm_start = get_utc_timestamp_ns() if task_id else None
             _haiku_timed_out: bool = False
