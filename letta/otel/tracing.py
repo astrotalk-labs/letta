@@ -145,7 +145,7 @@ async def _trace_error_handler(_request: Request, exc: Exception) -> JSONRespons
 def setup_tracing(
     endpoint: str,
     app: Optional[FastAPI] = None,
-    service_name: str = "memgpt-server",
+    service_name: str = "memgpt-server-x",
 ) -> None:
     if is_pytest_environment():
         return

@@ -8,6 +8,7 @@ from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExp
 from opentelemetry.metrics import Meter, NoOpMeter
 from opentelemetry.sdk.metrics import Counter, Histogram, MeterProvider
 from opentelemetry.sdk.metrics.export import AggregationTemporality, PeriodicExportingMetricReader
+from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View
 
 from letta.helpers.datetime_helpers import ns_to_ms
 from letta.log import get_logger
@@ -19,6 +20,27 @@ logger = get_logger(__name__)
 
 _meter: Meter = NoOpMeter("noop")
 _is_metrics_initialized: bool = False
+
+# v2 observability: OTel's DEFAULT explicit-bucket histogram boundaries top out at 10_000 ms,
+# so request/LLM latency silently caps at 10s. Advisory per-instrument boundaries are IGNORED
+# unless a View sets them — so we register explicit-bucket Views extending to ~120s.
+_LATENCY_BUCKET_BOUNDARIES_MS = [5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000, 10000, 20000, 30000, 45000, 60000, 90000, 120000]
+_LATENCY_HISTOGRAM_NAMES = [
+    "hist_endpoint_e2e_ms",  # per /messages end-to-end (REQUIRED deliverable)
+    "hist_llm_execution_time_ms",  # per-LLM-call (REQUIRED deliverable)
+    "hist_ttft_ms",  # time-to-first-token
+    "hist_step_execution_time_ms",  # per agent step
+]
+
+
+def _latency_histogram_views() -> List[View]:
+    return [
+        View(
+            instrument_name=name,
+            aggregation=ExplicitBucketHistogramAggregation(boundaries=_LATENCY_BUCKET_BOUNDARIES_MS),
+        )
+        for name in _LATENCY_HISTOGRAM_NAMES
+    ]
 
 # Endpoints to include in endpoint metrics tracking (opt-in) vs tracing.py opt-out
 _included_v1_endpoints_regex: List[str] = [
@@ -104,7 +126,7 @@ def _record_endpoint_metrics(
 def setup_metrics(
     endpoint: str,
     app: FastAPI | None = None,
-    service_name: str = "memgpt-server",
+    service_name: str = "memgpt-server-x",
 ) -> None:
     if is_pytest_environment():
         return
@@ -122,7 +144,11 @@ def setup_metrics(
     )
     metric_reader = PeriodicExportingMetricReader(exporter=otlp_metric_exporter)
 
-    meter_provider = MeterProvider(resource=get_resource(service_name), metric_readers=[metric_reader])
+    meter_provider = MeterProvider(
+        resource=get_resource(service_name),
+        metric_readers=[metric_reader],
+        views=_latency_histogram_views(),
+    )
     metrics.set_meter_provider(meter_provider)
     _meter = metrics.get_meter(__name__)
 
