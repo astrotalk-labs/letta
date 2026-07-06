@@ -804,7 +804,7 @@ def _prepare_anthropic_request(
     # NOTE: cannot prefill with tools for opus or Claude 4.6+:
     # Prefilling assistant messages is NOT supported on Claude 4.6 models (returns 400 error)
     model_name = data["model"]
-    prefill_blocked = "opus" in model_name or "claude-sonnet-4-6" in model_name or "claude-opus-4-6" in model_name
+    prefill_blocked = "opus" in model_name or "claude-sonnet-4-6" in model_name or "claude-opus-4-6" in model_name or "sonnet-5" in model_name
     if prefix_fill and not put_inner_thoughts_in_kwargs and not prefill_blocked:
         if not bedrock:  # not support for bedrock
             data["messages"].append(
