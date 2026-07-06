@@ -25,6 +25,7 @@ from letta.errors import (
     LLMUnprocessableEntityError,
 )
 from letta.helpers.datetime_helpers import get_utc_time_int
+from letta.llm_api.bedrock_inference_profiles import COHORT_INFERENCE_PROFILES, MODEL_INFERENCE_PROFILES
 from letta.llm_api.helpers import add_inner_thoughts_to_functions, unpack_all_inner_thoughts_from_kwargs
 from letta.llm_api.llm_client_base import LLMClientBase
 from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION
@@ -123,13 +124,7 @@ _COHORT_TO_KEY_ENV: dict = {
     "LUMUS":      "ABC2_LUMUS_ANTHROPIC_KEY",
 }
 
-_COHORT_TO_BEDROCK_ARN: dict = {
-    "AT_NATIVE":  "v9a7gf6hhoqm",
-    "AT_FOREIGN": "ngef7rrnxwrh",
-    "INDIAN_AT":  "rg76qwszdgvo",
-    "PANDITJI":   "18c7gtd1mst5",
-    "LUMUS":      "9gx7yplss61x",
-}
+_COHORT_TO_BEDROCK_ARN = COHORT_INFERENCE_PROFILES
 
 
 def _build_bedrock_arn(profile_id: str) -> str:
@@ -268,7 +263,7 @@ class AnthropicClient(LLMClientBase):
                     elif "sonnet-4-6" in requested_model or "sonnet-4.6" in requested_model:
                         bedrock_inference_profile = os.getenv('BEDROCK_SONNET_4_6_INFERENCE_PROFILE_ARN') or default_arn
                     elif "sonnet-5" in requested_model:
-                        bedrock_inference_profile = os.getenv('BEDROCK_SONNET_5_INFERENCE_PROFILE_ARN') or default_arn
+                        bedrock_inference_profile = _build_bedrock_arn(MODEL_INFERENCE_PROFILES["sonnet-5"])
                     else:
                         bedrock_inference_profile = default_arn
             model_id = bedrock_inference_profile if bedrock_inference_profile else request_data.get('model')
