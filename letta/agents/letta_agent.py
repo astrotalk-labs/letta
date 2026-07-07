@@ -76,8 +76,16 @@ def _log_step_timing(step: str, elapsed_ms: float, **kwargs) -> None:
 
 
 # Per-request thinking/output_config forwarding is gated to these user IDs.
-# Expand once validated.
+# Expand once validated. Sonnet 5 is exempt from the gate below since it only
+# supports adaptive thinking (no budget_tokens mode), so client-supplied thinking
+# must always be honored for that model regardless of user id.
 _THINKING_GATED_USER_IDS: frozenset = frozenset({"92744418"})
+
+
+def _thinking_override_allowed(at_user_id: Optional[str], model: Optional[str]) -> bool:
+    if at_user_id in _THINKING_GATED_USER_IDS:
+        return True
+    return "sonnet-5" in (model or "").lower()
 
 # Haiku cascade rollout. _CASCADE_ROLLOUT_PCT is the percentage of users (bucketed
 # deterministically by user_id % 100) for whom latencyOptimisationFlow is honored.
@@ -1293,8 +1301,8 @@ class LettaAgent(BaseAgent):
                             f"tool_choice_name={_tc_name} — gate will handle"
                         )
 
-                # Inject per-request thinking overrides (gated)
-                if self.at_user_id in _THINKING_GATED_USER_IDS:
+                # Inject per-request thinking overrides (gated, except Sonnet 5 which is always exempt)
+                if _thinking_override_allowed(self.at_user_id, agent_state.llm_config.model):
                     if thinking is not None:
                         request_data["thinking"] = thinking
                         request_data["temperature"] = 1.0
@@ -1377,8 +1385,8 @@ class LettaAgent(BaseAgent):
                 )
                 log_event("agent.stream.llm_request.created")  # [2^]
 
-                # Inject per-request thinking overrides (gated)
-                if self.at_user_id in _THINKING_GATED_USER_IDS:
+                # Inject per-request thinking overrides (gated, except Sonnet 5 which is always exempt)
+                if _thinking_override_allowed(self.at_user_id, agent_state.llm_config.model):
                     if thinking is not None:
                         request_data["thinking"] = thinking
                         request_data["temperature"] = 1.0
