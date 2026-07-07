@@ -319,7 +319,12 @@ class AnthropicClient(LLMClientBase):
                         _requested_model,
                     )
             if "output_config" in request_data:
-                bedrock_body["output_config"] = request_data["output_config"]
+                # Bedrock's InvokeModel schema rejects output_config outright
+                # (ValidationException: output_config.effort: Extra inputs are not permitted),
+                # unlike the direct Anthropic API and Vertex — drop it rather than 400 the call.
+                logger.warning(
+                    "[BEDROCK] Dropping output_config field — Bedrock does not support it yet"
+                )
 
             # Run synchronous boto3 call in a thread to avoid blocking the event loop
             def _invoke():
