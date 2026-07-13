@@ -322,8 +322,9 @@ class AnthropicClient(LLMClientBase):
                 bedrock_body["output_config"] = request_data["output_config"]
 
             logger.info(
-                "[BEDROCK] Final request — model_id=%s thinking=%s max_tokens=%s temperature=%s "
+                "[BEDROCK] Final request — user_id=%s model_id=%s thinking=%s max_tokens=%s temperature=%s "
                 "output_config=%s tool_choice=%s num_messages=%s num_tools=%s",
+                getattr(self, "at_user_id", None),
                 model_id,
                 bedrock_body.get("thinking"),
                 bedrock_body.get("max_tokens"),
