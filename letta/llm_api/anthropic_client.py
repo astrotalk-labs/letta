@@ -321,6 +321,19 @@ class AnthropicClient(LLMClientBase):
             if "output_config" in request_data:
                 bedrock_body["output_config"] = request_data["output_config"]
 
+            logger.info(
+                "[BEDROCK] Final request — model_id=%s thinking=%s max_tokens=%s temperature=%s "
+                "output_config=%s tool_choice=%s num_messages=%s num_tools=%s",
+                model_id,
+                bedrock_body.get("thinking"),
+                bedrock_body.get("max_tokens"),
+                bedrock_body.get("temperature"),
+                bedrock_body.get("output_config"),
+                bedrock_body.get("tool_choice"),
+                len(bedrock_body.get("messages", [])),
+                len(bedrock_body.get("tools", [])),
+            )
+
             # Run synchronous boto3 call in a thread to avoid blocking the event loop
             def _invoke():
                 resp = bedrock_client.invoke_model(
