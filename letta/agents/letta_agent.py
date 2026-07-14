@@ -1346,6 +1346,16 @@ class LettaAgent(BaseAgent):
                     if "config" in request_data:
                         request_data["config"]["thinking_config"] = {"thinking_budget": budget}
 
+                if agent_state.llm_config.model_endpoint_type in ("google_ai", "google_vertex"):
+                    logger.warning(
+                        f"[GEMINI_REQUEST] at_user_id={self.at_user_id} model={agent_state.llm_config.model} "
+                        f"endpoint_type={agent_state.llm_config.model_endpoint_type} "
+                        f"thinking_config_in={thinking_config} "
+                        f"thinking_config_sent={request_data.get('config', {}).get('thinking_config')} "
+                        f"temperature={request_data.get('config', {}).get('temperature')} "
+                        f"max_output_tokens={request_data.get('config', {}).get('max_output_tokens')}"
+                    )
+
                 async with AsyncTimer() as timer:
                     # Attempt LLM request
                     response = await llm_client.request_async(request_data, agent_state.llm_config, use_vertex_experiment=use_vertex_experiment, use_bedrock_experiment=use_bedrock_experiment)
