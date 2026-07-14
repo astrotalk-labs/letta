@@ -743,9 +743,11 @@ async def send_message(
                 model_override=request.model_override,
                 user_cohort=request.user_cohort,
                 thinking=request.thinking,
+                thinking_config=request.thinking_config,
                 output_config=request.output_config,
                 task_id=request.task_id,
                 latency_optimisation_flow=request.latencyOptimisationFlow,
+                llm_provider=request.llm_provider,
             )
         else:
             result = await server.send_message_to_agent(
@@ -861,7 +863,9 @@ async def send_message_streaming(
                     model_override=request.model_override,
                     user_cohort=request.user_cohort,
                     thinking=request.thinking,
+                    thinking_config=request.thinking_config,
                     output_config=request.output_config,
+                    llm_provider=request.llm_provider,
                 ),
                 media_type="text/event-stream",
             )
@@ -878,7 +882,9 @@ async def send_message_streaming(
                     model_override=request.model_override,
                     user_cohort=request.user_cohort,
                     thinking=request.thinking,
+                    thinking_config=request.thinking_config,
                     output_config=request.output_config,
+                    llm_provider=request.llm_provider,
                 ),
                 media_type="text/event-stream",
             )
