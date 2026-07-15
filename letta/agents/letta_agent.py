@@ -229,7 +229,8 @@ class LettaAgent(BaseAgent):
             agent_state.llm_config.model = model_override
 
         # Explicit provider override takes precedence over vertex/bedrock experiment flags.
-        if llm_provider == "google":
+        # Also auto-detect Gemini models by name so callers don't need to set llm_provider explicitly.
+        if llm_provider == "google" or (agent_state.llm_config.model or "").startswith("gemini"):
             agent_state.llm_config.model_endpoint_type = "google_ai"
             return
 
