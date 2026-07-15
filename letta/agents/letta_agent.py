@@ -76,8 +76,23 @@ def _log_step_timing(step: str, elapsed_ms: float, **kwargs) -> None:
 
 
 # Per-request thinking/output_config forwarding is gated to these user IDs.
-# Expand once validated.
+# Expand once validated. Sonnet 5 is exempt from the gate below since it only
+# supports adaptive thinking (no budget_tokens mode), so client-supplied thinking
+# must always be honored for that model regardless of user id.
 _THINKING_GATED_USER_IDS: frozenset = frozenset({"92744418"})
+
+# Gemini thinking level → approximate token budget
+_GEMINI_THINKING_LEVEL_TO_BUDGET: dict = {
+    "low": 1024,
+    "medium": 8192,
+    "high": 24576,
+}
+
+
+def _thinking_override_allowed(at_user_id: Optional[str], model: Optional[str]) -> bool:
+    if at_user_id in _THINKING_GATED_USER_IDS:
+        return True
+    return "sonnet-5" in (model or "").lower()
 
 # Haiku cascade rollout. _CASCADE_ROLLOUT_PCT is the percentage of users (bucketed
 # deterministically by user_id % 100) for whom latencyOptimisationFlow is honored.
@@ -204,6 +219,7 @@ class LettaAgent(BaseAgent):
         use_vertex_experiment: bool,
         use_bedrock_experiment: bool,
         model_override: Optional[str] = None,
+        llm_provider: Optional[str] = None,
     ):
         """Apply dynamic provider switching based on experiment flags."""
         # Runtime model override: swap the model name before any endpoint-type remapping
@@ -211,6 +227,12 @@ class LettaAgent(BaseAgent):
         # overridden model.
         if model_override:
             agent_state.llm_config.model = model_override
+
+        # Explicit provider override takes precedence over vertex/bedrock experiment flags.
+        # Also auto-detect Gemini models by name so callers don't need to set llm_provider explicitly.
+        if llm_provider == "google" or (agent_state.llm_config.model or "").startswith("gemini"):
+            agent_state.llm_config.model_endpoint_type = "google_ai"
+            return
 
         original_endpoint_type = agent_state.llm_config.model_endpoint_type
         original_model = agent_state.llm_config.model
@@ -243,9 +265,11 @@ class LettaAgent(BaseAgent):
         model_override: Optional[str] = None,
         user_cohort: Optional[str] = None,
         thinking: Optional[dict] = None,
+        thinking_config: Optional[dict] = None,
         output_config: Optional[dict] = None,
         task_id: Optional[str] = None,
         latency_optimisation_flow: bool = False,
+        llm_provider: Optional[str] = None,
     ) -> LettaResponse:
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
@@ -260,9 +284,11 @@ class LettaAgent(BaseAgent):
             model_override=model_override,
             user_cohort=user_cohort,
             thinking=thinking,
+            thinking_config=thinking_config,
             output_config=output_config,
             task_id=task_id,
             latency_optimisation_flow=latency_optimisation_flow,
+            llm_provider=llm_provider,
         )
         return _create_letta_response(
             new_in_context_messages=new_in_context_messages,
@@ -285,14 +311,16 @@ class LettaAgent(BaseAgent):
         model_override: Optional[str] = None,
         user_cohort: Optional[str] = None,
         thinking: Optional[dict] = None,
+        thinking_config: Optional[dict] = None,
         output_config: Optional[dict] = None,
+        llm_provider: Optional[str] = None,
     ):
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
         )
 
         # Handle provider switching based on experiment flags
-        self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override)
+        self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override, llm_provider=llm_provider)
 
         async with AsyncTimer() as _t:
             current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
@@ -335,6 +363,7 @@ class LettaAgent(BaseAgent):
                     use_bedrock_experiment=use_bedrock_experiment,
                     step_index=i,
                     thinking=thinking,
+                    thinking_config=thinking_config,
                     output_config=output_config,
                 )
             )
@@ -470,9 +499,11 @@ class LettaAgent(BaseAgent):
         model_override: Optional[str] = None,
         user_cohort: Optional[str] = None,
         thinking: Optional[dict] = None,
+        thinking_config: Optional[dict] = None,
         output_config: Optional[dict] = None,
         task_id: Optional[str] = None,
         latency_optimisation_flow: bool = False,
+        llm_provider: Optional[str] = None,
     ) -> Tuple[List[Message], List[Message], Optional[LettaStopReason], LettaUsageStatistics]:
         """
         Carries out an invocation of the agent loop. In each step, the agent
@@ -482,7 +513,7 @@ class LettaAgent(BaseAgent):
             4. Processes the response
         """
         # Handle provider switching based on experiment flags
-        self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override)
+        self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override, llm_provider=llm_provider)
 
         # Stash task_id on the instance so agent-internal helpers (_rebuild_memory_async,
         # _rebuild_context_window) can tag their latency logs. Agent is per-request, so safe.
@@ -651,7 +682,7 @@ class LettaAgent(BaseAgent):
                 _haiku_coro = self._build_and_request_from_llm(
                     current_in_context_messages, new_in_context_messages, agent_state, llm_client, tool_rules_solver, agent_step_span,
                     use_vertex_experiment=use_vertex_experiment, use_bedrock_experiment=use_bedrock_experiment, step_index=i,
-                    thinking=thinking, output_config=output_config,
+                    thinking=thinking, thinking_config=thinking_config, output_config=output_config,
                     excluded_tool_names=_excluded_for_haiku,
                 )
                 # Timeout circuit-breaker: if Haiku is slower than _HAIKU_TIMEOUT_SECONDS
@@ -696,7 +727,7 @@ class LettaAgent(BaseAgent):
                     await self._build_and_request_from_llm(
                         _pre_call_current_messages, _pre_call_new_messages, agent_state, llm_client, tool_rules_solver, agent_step_span,
                         use_vertex_experiment=use_vertex_experiment, use_bedrock_experiment=use_bedrock_experiment, step_index=i,
-                        thinking=thinking, output_config=output_config,
+                        thinking=thinking, thinking_config=thinking_config, output_config=output_config,
                     )
                 )
                 if task_id and _llm_timeout_retry_start:
@@ -769,7 +800,7 @@ class LettaAgent(BaseAgent):
                         await self._build_and_request_from_llm(
                             _pre_call_current_messages, _pre_call_new_messages, agent_state, llm_client, tool_rules_solver, agent_step_span,
                             use_vertex_experiment=use_vertex_experiment, use_bedrock_experiment=use_bedrock_experiment, step_index=i,
-                            thinking=thinking, output_config=output_config,
+                            thinking=thinking, thinking_config=thinking_config, output_config=output_config,
                         )
                     )
                     if task_id and _llm_retry_start:
@@ -1011,7 +1042,9 @@ class LettaAgent(BaseAgent):
         model_override: Optional[str] = None,
         user_cohort: Optional[str] = None,
         thinking: Optional[dict] = None,
+        thinking_config: Optional[dict] = None,
         output_config: Optional[dict] = None,
+        llm_provider: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Carries out an invocation of the agent loop in a streaming fashion that yields partial tokens.
@@ -1026,7 +1059,7 @@ class LettaAgent(BaseAgent):
         )
 
         # Handle provider switching based on experiment flags
-        self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override)
+        self._apply_provider_switching(agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override, llm_provider=llm_provider)
 
         current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
             input_messages, agent_state, self.message_manager, self.actor
@@ -1072,6 +1105,7 @@ class LettaAgent(BaseAgent):
                 tool_rules_solver,
                 step_index=i,
                 thinking=thinking,
+                thinking_config=thinking_config,
                 output_config=output_config,
             )
             log_event("agent.stream.llm_response.received")  # [3^]
@@ -1249,6 +1283,7 @@ class LettaAgent(BaseAgent):
         use_bedrock_experiment: bool = False,
         step_index: int = 0,
         thinking: Optional[dict] = None,
+        thinking_config: Optional[dict] = None,
         output_config: Optional[dict] = None,
         excluded_tool_names: Optional[frozenset] = None,
     ) -> Tuple[Dict, Dict, List[Message], List[Message], List[str]] | None:
@@ -1289,8 +1324,8 @@ class LettaAgent(BaseAgent):
                             f"tool_choice_name={_tc_name} — gate will handle"
                         )
 
-                # Inject per-request thinking overrides (gated)
-                if self.at_user_id in _THINKING_GATED_USER_IDS:
+                # Inject per-request thinking overrides (gated, except Sonnet 5 which is always exempt)
+                if _thinking_override_allowed(self.at_user_id, agent_state.llm_config.model):
                     if thinking is not None:
                         request_data["thinking"] = thinking
                         request_data["temperature"] = 1.0
@@ -1302,6 +1337,22 @@ class LettaAgent(BaseAgent):
                 # output_config flows to all users unconditionally
                 if output_config is not None:
                     request_data["output_config"] = output_config
+                # Inject Gemini thinking_config: maps {"level": "low"|"medium"|"high"} → thinking_budget
+                if thinking_config is not None and agent_state.llm_config.model_endpoint_type in ("google_ai", "google_vertex"):
+                    level = thinking_config.get("level", "low")
+                    budget = _GEMINI_THINKING_LEVEL_TO_BUDGET.get(level, _GEMINI_THINKING_LEVEL_TO_BUDGET["low"])
+                    if "config" in request_data:
+                        request_data["config"]["thinking_config"] = {"thinking_budget": budget}
+
+                if agent_state.llm_config.model_endpoint_type in ("google_ai", "google_vertex"):
+                    logger.warning(
+                        f"[GEMINI_REQUEST] at_user_id={self.at_user_id} model={agent_state.llm_config.model} "
+                        f"endpoint_type={agent_state.llm_config.model_endpoint_type} "
+                        f"thinking_config_in={thinking_config} "
+                        f"thinking_config_sent={request_data.get('config', {}).get('thinking_config')} "
+                        f"temperature={request_data.get('config', {}).get('temperature')} "
+                        f"max_output_tokens={request_data.get('config', {}).get('max_output_tokens')}"
+                    )
 
                 async with AsyncTimer() as timer:
                     # Attempt LLM request
@@ -1373,8 +1424,8 @@ class LettaAgent(BaseAgent):
                 )
                 log_event("agent.stream.llm_request.created")  # [2^]
 
-                # Inject per-request thinking overrides (gated)
-                if self.at_user_id in _THINKING_GATED_USER_IDS:
+                # Inject per-request thinking overrides (gated, except Sonnet 5 which is always exempt)
+                if _thinking_override_allowed(self.at_user_id, agent_state.llm_config.model):
                     if thinking is not None:
                         request_data["thinking"] = thinking
                         request_data["temperature"] = 1.0
