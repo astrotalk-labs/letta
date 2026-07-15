@@ -685,7 +685,7 @@ async def send_message(
     _lof_attr = str(bool(request.latencyOptimisationFlow)).lower()
     add_ctx_attribute("latency_optimisation_flow", _lof_attr)
 
-    logger.warning(f"[SEND_MESSAGE] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}, model_override={request.model_override}")
+    logger.warning(f"[SEND_MESSAGE] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}, model_override={request.model_override}, llm_provider={request.llm_provider}")
 
     # Headline end-to-end latency for the two flows, recorded here (not the ASGI
     # middleware) because the flag is only known inside the handler.
@@ -743,9 +743,11 @@ async def send_message(
                 model_override=request.model_override,
                 user_cohort=request.user_cohort,
                 thinking=request.thinking,
+                thinking_config=request.thinking_config,
                 output_config=request.output_config,
                 task_id=request.task_id,
                 latency_optimisation_flow=request.latencyOptimisationFlow,
+                llm_provider=request.llm_provider,
             )
         else:
             result = await server.send_message_to_agent(
@@ -808,7 +810,7 @@ async def send_message_streaming(
     request_start_timestamp_ns = get_utc_timestamp_ns()
     MetricRegistry().user_message_counter.add(1, get_ctx_attributes())
 
-    logger.warning(f"[SEND_MESSAGE_STREAMING] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}, model_override={request.model_override}")
+    logger.warning(f"[SEND_MESSAGE_STREAMING] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}, model_override={request.model_override}, llm_provider={request.llm_provider}")
 
 
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
@@ -861,7 +863,9 @@ async def send_message_streaming(
                     model_override=request.model_override,
                     user_cohort=request.user_cohort,
                     thinking=request.thinking,
+                    thinking_config=request.thinking_config,
                     output_config=request.output_config,
+                    llm_provider=request.llm_provider,
                 ),
                 media_type="text/event-stream",
             )
@@ -878,7 +882,9 @@ async def send_message_streaming(
                     model_override=request.model_override,
                     user_cohort=request.user_cohort,
                     thinking=request.thinking,
+                    thinking_config=request.thinking_config,
                     output_config=request.output_config,
+                    llm_provider=request.llm_provider,
                 ),
                 media_type="text/event-stream",
             )

@@ -60,9 +60,19 @@ class LettaRequest(BaseModel):
         description="Raw business ID from the order (1=AstroTalk, 10=Panditji, 12=Lumus). 0 when unavailable.",
     )
 
+    llm_provider: Optional[str] = Field(
+        default=None,
+        description="Override the LLM provider for this request. Use 'google' to route to Google AI (Gemini) regardless of the agent's configured endpoint.",
+    )
+
     thinking: Optional[dict] = Field(
         default=None,
         description="Extended thinking config forwarded to the Claude API (e.g. {'type': 'adaptive'}). When set, temperature is forced to 1 and max_tokens is raised to at least 8000.",
+    )
+
+    thinking_config: Optional[dict] = Field(
+        default=None,
+        description="Thinking config forwarded to Google AI / Gemini (e.g. {'level': 'low'}). Maps level ('low'|'medium'|'high') to a thinking_budget token count.",
     )
 
     output_config: Optional[dict] = Field(
