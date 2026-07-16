@@ -8,6 +8,7 @@ from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExp
 from opentelemetry.metrics import Meter, NoOpMeter
 from opentelemetry.sdk.metrics import Counter, Histogram, MeterProvider
 from opentelemetry.sdk.metrics.export import AggregationTemporality, PeriodicExportingMetricReader
+from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View
 
 from letta.helpers.datetime_helpers import ns_to_ms
 from letta.log import get_logger
@@ -148,8 +149,33 @@ def setup_metrics(
         logger.warning("setup_metrics called with no exporter configured (no OTLP endpoint, Prometheus disabled); skipping.")
         return
 
+    # Explicit-bucket Views. The `explicit_bucket_boundaries_advisory` set on the
+    # instruments is only an SDK *hint* and is NOT honored by our SDK version, so
+    # latency histograms fall back to OTel's default buckets (max 10,000 ms) — which
+    # clips every request slower than 10s into the +Inf bucket and pins
+    # histogram_quantile at 10k. These Views force the wide boundaries so p95/p99/max
+    # resolve the real 10–120s tail.
+    _E2E_BUCKETS = [
+        100, 250, 500, 1000, 2000, 3000, 5000, 7500, 10000,
+        15000, 20000, 30000, 45000, 60000, 90000, 120000,
+    ]
+    _LLM_CALL_BUCKETS = [
+        100, 250, 500, 1000, 2000, 3000, 5000, 7500, 10000,
+        15000, 20000, 30000, 45000, 60000,
+    ]
+    views = [
+        View(
+            instrument_name="hist_messages_endpoint_e2e_ms",
+            aggregation=ExplicitBucketHistogramAggregation(_E2E_BUCKETS),
+        ),
+        View(
+            instrument_name="hist_llm_call_ms",
+            aggregation=ExplicitBucketHistogramAggregation(_LLM_CALL_BUCKETS),
+        ),
+    ]
+
     global _is_metrics_initialized, _meter
-    meter_provider = MeterProvider(resource=get_resource(service_name), metric_readers=metric_readers)
+    meter_provider = MeterProvider(resource=get_resource(service_name), metric_readers=metric_readers, views=views)
     metrics.set_meter_provider(meter_provider)
     _meter = metrics.get_meter(__name__)
 

@@ -25,6 +25,7 @@ from letta.errors import (
     LLMUnprocessableEntityError,
 )
 from letta.helpers.datetime_helpers import get_utc_time_int
+from letta.llm_api.bedrock_inference_profiles import COHORT_INFERENCE_PROFILES, MODEL_INFERENCE_PROFILES
 from letta.llm_api.helpers import add_inner_thoughts_to_functions, unpack_all_inner_thoughts_from_kwargs
 from letta.llm_api.llm_client_base import LLMClientBase
 from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION
@@ -123,13 +124,7 @@ _COHORT_TO_KEY_ENV: dict = {
     "LUMUS":      "ABC2_LUMUS_ANTHROPIC_KEY",
 }
 
-_COHORT_TO_BEDROCK_ARN: dict = {
-    "AT_NATIVE":  "v9a7gf6hhoqm",
-    "AT_FOREIGN": "ngef7rrnxwrh",
-    "INDIAN_AT":  "rg76qwszdgvo",
-    "PANDITJI":   "18c7gtd1mst5",
-    "LUMUS":      "9gx7yplss61x",
-}
+_COHORT_TO_BEDROCK_ARN = COHORT_INFERENCE_PROFILES
 
 
 def _build_bedrock_arn(profile_id: str) -> str:
@@ -267,6 +262,8 @@ class AnthropicClient(LLMClientBase):
                         bedrock_inference_profile = os.getenv('BEDROCK_HAIKU_INFERENCE_PROFILE_ARN') or default_arn
                     elif "sonnet-4-6" in requested_model or "sonnet-4.6" in requested_model:
                         bedrock_inference_profile = os.getenv('BEDROCK_SONNET_4_6_INFERENCE_PROFILE_ARN') or default_arn
+                    elif "sonnet-5" in requested_model:
+                        bedrock_inference_profile = _build_bedrock_arn(MODEL_INFERENCE_PROFILES["sonnet-5"])
                     else:
                         bedrock_inference_profile = default_arn
             model_id = bedrock_inference_profile if bedrock_inference_profile else request_data.get('model')
@@ -305,11 +302,14 @@ class AnthropicClient(LLMClientBase):
                 bedrock_body["stop_sequences"] = request_data["stop_sequences"]
             if "thinking" in request_data:
                 _requested_model = (request_data.get("model") or llm_config.model or "").lower()
-                _supports_thinking = "claude-sonnet-4-6" in _requested_model or "claude-opus-4-6" in _requested_model
+                # Sonnet 5 rejects budget_tokens outright (400) on every endpoint, including Bedrock —
+                # thinking must stay adaptive-only and must never be downgraded to enabled+budget_tokens.
+                _adaptive_only_model = "sonnet-5" in _requested_model
+                _supports_thinking = _adaptive_only_model or "claude-sonnet-4-6" in _requested_model or "claude-opus-4-6" in _requested_model
                 if _supports_thinking:
                     _thinking_val = request_data["thinking"]
-                    # Bedrock does not support {"type": "adaptive"} — convert to enabled with a budget
-                    if isinstance(_thinking_val, dict) and _thinking_val.get("type") == "adaptive":
+                    if isinstance(_thinking_val, dict) and _thinking_val.get("type") == "adaptive" and not _adaptive_only_model:
+                        # Bedrock does not support {"type": "adaptive"} on these older models — convert to enabled with a budget
                         _thinking_val = {"type": "enabled", "budget_tokens": 8000}
                         logger.warning("[BEDROCK] Converted adaptive thinking to enabled (budget_tokens=8000) — Bedrock does not support adaptive type")
                     bedrock_body["thinking"] = _thinking_val
@@ -320,6 +320,20 @@ class AnthropicClient(LLMClientBase):
                     )
             if "output_config" in request_data:
                 bedrock_body["output_config"] = request_data["output_config"]
+
+            logger.info(
+                "[BEDROCK] Final request — user_id=%s model_id=%s thinking=%s max_tokens=%s temperature=%s "
+                "output_config=%s tool_choice=%s num_messages=%s num_tools=%s",
+                getattr(self, "at_user_id", None),
+                model_id,
+                bedrock_body.get("thinking"),
+                bedrock_body.get("max_tokens"),
+                bedrock_body.get("temperature"),
+                bedrock_body.get("output_config"),
+                bedrock_body.get("tool_choice"),
+                len(bedrock_body.get("messages", [])),
+                len(bedrock_body.get("tools", [])),
+            )
 
             # Run synchronous boto3 call in a thread to avoid blocking the event loop
             def _invoke():
@@ -513,13 +527,18 @@ class AnthropicClient(LLMClientBase):
         if llm_config.enable_reasoner:
             model_name = llm_config.model or ""
             endpoint_type = llm_config.model_endpoint_type or ""
-            # Bedrock supports adaptive thinking on Sonnet/Opus 4.6 (no `effort` field accepted)
             is_bedrock = endpoint_type == "anthropic_bedrock"
+            # Sonnet 5 has no `budget_tokens` mode at all — {"type": "enabled", "budget_tokens": N}
+            # returns a 400 on every endpoint (direct API, Vertex, and Bedrock alike), so it must
+            # always get adaptive thinking regardless of endpoint.
+            adaptive_only_model = "sonnet-5" in model_name
+            # Bedrock supports adaptive thinking on Sonnet/Opus 4.6 (no `effort` field accepted)
             supports_adaptive_model = (
-                "claude-sonnet-4-6" in model_name
+                adaptive_only_model
+                or "claude-sonnet-4-6" in model_name
                 or "claude-opus-4-6" in model_name
             )
-            if is_bedrock and supports_adaptive_model:
+            if adaptive_only_model or (is_bedrock and supports_adaptive_model):
                 # Bedrock does not support the `effort` field yet — adaptive only
                 data["thinking"] = {"type": "adaptive"}
                 logger.warning(
@@ -663,7 +682,7 @@ class AnthropicClient(LLMClientBase):
         # NOTE: cannot prefill with tools for opus or Claude 4.6+:
         # Prefilling assistant messages is NOT supported on Claude 4.6 models (returns 400 error)
         model_name = data["model"]
-        prefill_blocked = "opus" in model_name or "claude-sonnet-4-6" in model_name or "claude-opus-4-6" in model_name
+        prefill_blocked = "opus" in model_name or "claude-sonnet-4-6" in model_name or "claude-opus-4-6" in model_name or "sonnet-5" in model_name
         if prefix_fill and not llm_config.put_inner_thoughts_in_kwargs and not prefill_blocked:
             data["messages"].append(
                 # Start the thinking process for the assistant
