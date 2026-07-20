@@ -7,6 +7,7 @@ from openai import AzureOpenAI
 from sqlalchemy.exc import IntegrityError
 
 from letta.agents.base_agent import BaseAgent
+from letta.debug_util import debug_log
 from letta.constants import DEFAULT_MAX_STEPS
 from letta.log import get_logger
 from letta.orm.errors import NoResultFound
@@ -134,6 +135,10 @@ class EphemeralSummaryAgent(BaseAgent):
                     messages=[{"role": "system", "content": system}] + messages,
                 )
 
+            debug_log(
+                self.at_user_id,
+                lambda _sys=system, _msgs=messages: f"summarizer AZURE FINAL_CALL model={model_settings.letta_embedding_5_4_mini_deployment} num_messages={len(_msgs)} system_chars={len(_sys)} full_body={__import__('json').dumps([{'role': 'system', 'content': _sys}] + _msgs, default=str)}",
+            )
             response = await asyncio.to_thread(_invoke)
             summary = response.choices[0].message.content.strip()
         else:
@@ -165,6 +170,10 @@ class EphemeralSummaryAgent(BaseAgent):
                     betas=["prompt-caching-2024-07-31"],
                 )
 
+            debug_log(
+                self.at_user_id,
+                lambda _sys=system, _msgs=messages: f"summarizer ANTHROPIC FINAL_CALL model=claude-haiku-4-5 num_messages={len(_msgs)} system_chars={len(_sys)} full_body={__import__('json').dumps({'system': _sys, 'messages': _msgs}, default=str)}",
+            )
             response = await asyncio.to_thread(_invoke)
             summary = response.content[0].text.strip()
 

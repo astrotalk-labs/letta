@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from starlette.responses import Response, StreamingResponse
 
 from letta.agents.letta_agent import LettaAgent
+from letta.debug_util import debug_log, new_debug_request_id
 from letta.constants import DEFAULT_MAX_STEPS, DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG
 from letta.groups.sleeptime_multi_agent_v2 import SleeptimeMultiAgentV2
 from letta.helpers.datetime_helpers import get_utc_timestamp_ns, ns_to_ms
@@ -237,11 +238,16 @@ async def create_agent(
     server: "SyncServer" = Depends(get_letta_server),
     actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
     x_project: Optional[str] = Header(None, alias="X-Project"),  # Only handled by next js middleware
+    at_user_id: Optional[str] = Header(None, alias="x_gb_user_id"),
 ):
     """
     Create a new agent with the specified configuration.
     """
     try:
+        debug_log(
+            at_user_id,
+            lambda: f"[CREATE_AGENT_REQ] at_user_id={at_user_id} actor_id={actor_id} body={__import__('json').dumps(agent.model_dump(mode='json'), default=str)}",
+        )
         actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
         return await server.create_agent_async(agent, actor=actor)
     except Exception as e:
@@ -566,6 +572,25 @@ async def create_passage(
     Insert a memory into an agent's archival memory store.
     """
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
+    try:
+        from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
+        import json as _json
+
+        if _is_user_in_cache_obs_sample(gb_user_id):
+            logger.info(
+                "[CHAIN_OBS] %s",
+                _json.dumps(
+                    {
+                        "phase": "archival_create",
+                        "at_user_id": gb_user_id,
+                        "agent_id": agent_id,
+                        "text_len": len(request.text),
+                    },
+                    default=str,
+                ),
+            )
+    except Exception:
+        pass
     return await server.insert_archival_memory_async(agent_id=agent_id, memory_contents=request.text, actor=actor, gb_user_id=gb_user_id)
 
 
@@ -676,6 +701,7 @@ async def send_message(
     """
     request_start_timestamp_ns = get_utc_timestamp_ns()
     MetricRegistry().user_message_counter.add(1, get_ctx_attributes())
+    new_debug_request_id(at_user_id)
 
     # Tag the OTel request context with the flow flag so it propagates DOWN into
     # the agent loop and labels every nested metric (step / llm / ttft / tokens /
@@ -685,7 +711,31 @@ async def send_message(
     _lof_attr = str(bool(request.latencyOptimisationFlow)).lower()
     add_ctx_attribute("latency_optimisation_flow", _lof_attr)
 
-    logger.warning(f"[SEND_MESSAGE] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}, model_override={request.model_override}, llm_provider={request.llm_provider}")
+    logger.warning(
+        f"[SEND_MESSAGE] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}, model_override={request.model_override}, llm_provider={request.llm_provider}"
+    )
+
+    try:
+        from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
+        import json as _json
+
+        if _is_user_in_cache_obs_sample(at_user_id):
+            logger.info(
+                "[CHAIN_OBS] %s",
+                _json.dumps(
+                    {
+                        "phase": "send_message_entry",
+                        "at_user_id": at_user_id,
+                        "agent_id": agent_id,
+                        "message_count": len(request.messages),
+                        "model_override": request.model_override,
+                        "llm_provider": request.llm_provider,
+                    },
+                    default=str,
+                ),
+            )
+    except Exception:
+        pass
 
     # Headline end-to-end latency for the two flows, recorded here (not the ASGI
     # middleware) because the flag is only known inside the handler.
@@ -697,17 +747,24 @@ async def send_message(
         _t_agent = get_utc_timestamp_ns()
         agent = await server.agent_manager.get_agent_by_id_async(agent_id, actor, include_relationships=["multi_agent_group"])
         if request.task_id:
-            logger.warning(
-                f"[TASK_LATENCY] task_id={request.task_id} phase=actor_load duration_ms={ns_to_ms(_t_agent - _t_actor)}"
-            )
+            logger.warning(f"[TASK_LATENCY] task_id={request.task_id} phase=actor_load duration_ms={ns_to_ms(_t_agent - _t_actor)}")
             logger.warning(
                 f"[TASK_LATENCY] task_id={request.task_id} phase=agent_load duration_ms={ns_to_ms(get_utc_timestamp_ns() - _t_agent)}"
             )
         agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type in ["sleeptime", "voice_sleeptime"]
         model_compatible = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "together", "google_ai", "google_vertex"]
+        debug_log(
+            at_user_id,
+            f"send_message branch: agent_eligible={agent_eligible} model_compatible={model_compatible} endpoint_type={agent.llm_config.model_endpoint_type}",
+        )
 
         if agent_eligible and model_compatible:
+            debug_log(
+                at_user_id,
+                f"send_message: using new agent loop path enable_sleeptime={agent.enable_sleeptime} agent_type={agent.agent_type}",
+            )
             if agent.enable_sleeptime and agent.agent_type != AgentType.voice_convo_agent:
+                debug_log(at_user_id, "send_message: choosing SleeptimeMultiAgentV2")
                 agent_loop = SleeptimeMultiAgentV2(
                     agent_id=agent_id,
                     message_manager=server.message_manager,
@@ -720,6 +777,7 @@ async def send_message(
                     group=agent.multi_agent_group,
                 )
             else:
+                debug_log(at_user_id, "send_message: choosing LettaAgent")
                 agent_loop = LettaAgent(
                     agent_id=agent_id,
                     message_manager=server.message_manager,
@@ -750,6 +808,10 @@ async def send_message(
                 llm_provider=request.llm_provider,
             )
         else:
+            debug_log(
+                at_user_id,
+                f"send_message: falling back to legacy send_message_to_agent agent_eligible={agent_eligible} model_compatible={model_compatible}",
+            )
             result = await server.send_message_to_agent(
                 agent_id=agent_id,
                 actor=actor,
@@ -810,8 +872,9 @@ async def send_message_streaming(
     request_start_timestamp_ns = get_utc_timestamp_ns()
     MetricRegistry().user_message_counter.add(1, get_ctx_attributes())
 
-    logger.warning(f"[SEND_MESSAGE_STREAMING] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}, model_override={request.model_override}, llm_provider={request.llm_provider}")
-
+    logger.warning(
+        f"[SEND_MESSAGE_STREAMING] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}, model_override={request.model_override}, llm_provider={request.llm_provider}"
+    )
 
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
     # TODO: This is redundant, remove soon
