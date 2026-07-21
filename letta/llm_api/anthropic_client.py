@@ -104,8 +104,8 @@ def _is_user_in_v2_cache_bucket(at_user_id):
     # missing/non-numeric ids so unknown traffic defaults to the v1 path (fail-closed).
     if not at_user_id:
         return False
-    if CACHE_OBS_USER_ID and at_user_id == CACHE_OBS_USER_ID:
-        return True
+    # if CACHE_OBS_USER_ID and at_user_id == CACHE_OBS_USER_ID:
+    #     return True
     if V2_CACHE_ROLLOUT_BUCKET_MAX <= 0:
         return False
     if V2_CACHE_ROLLOUT_BUCKET_MAX >= V2_CACHE_ROLLOUT_MOD:
