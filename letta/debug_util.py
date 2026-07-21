@@ -49,6 +49,6 @@ def debug_log(user_id, message: Union[str, Callable[[], str]]) -> None:
             msg = message() if callable(message) else message
             rid = _debug_request_id.get()
             prefix = f"[req={rid}] " if rid else ""
-            logger.info("[DEBUG_USER] %s%s", prefix, msg)
+            logger.info("[DEBUG_USER] user_id=%s %s%s", user_id, prefix, msg)
     except Exception:
         pass
