@@ -27,6 +27,7 @@ from letta.errors import (
 from letta.helpers.datetime_helpers import get_utc_time_int
 from letta.llm_api.bedrock_inference_profiles import COHORT_INFERENCE_PROFILES, MODEL_INFERENCE_PROFILES
 from letta.llm_api.helpers import add_inner_thoughts_to_functions, unpack_all_inner_thoughts_from_kwargs
+from letta.debug_util import _DEBUG_USER_ID, debug_log
 from letta.llm_api.llm_client_base import LLMClientBase
 from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION
 from letta.log import get_logger
@@ -47,7 +48,7 @@ DUMMY_FIRST_USER_MESSAGE = "User initializing bootup sequence."
 # observed (force-included regardless of sampling). Empty string disables the
 # always-on user. The v2 cache-optimization path is controlled by the
 # V2_CACHE_ROLLOUT_* knobs below, not by this constant.
-CACHE_OBS_USER_ID = "92744418"
+CACHE_OBS_USER_ID = _DEBUG_USER_ID
 
 # Broader sampling for cache-observability logs across all v2 traffic.
 # Percentage of users whose (int(at_user_id) % 100) < CACHE_OBS_SAMPLE_PCT
@@ -56,7 +57,7 @@ CACHE_OBS_USER_ID = "92744418"
 # At 1%, on ~22k calls/hour we expect ~220 sampled calls/hour = manageable
 # log volume. We need this to determine the dominant cache-invalidation
 # source in aggregate production traffic (not just one user).
-CACHE_OBS_SAMPLE_PCT = 5
+CACHE_OBS_SAMPLE_PCT = 1
 
 # Cold-miss threshold for CACHE_MISS_DIAG: emit diagnostic only when
 # cache_read == 0 AND cache_creation > this many tokens. Filters out tiny
@@ -187,7 +188,10 @@ class AnthropicClient(LLMClientBase):
     async def request_async(self, request_data: dict, llm_config: LLMConfig, use_vertex_experiment: bool = False, use_bedrock_experiment: bool = False) -> dict:
         # Check if we should use Vertex AI based on model_endpoint_type
         # (This happens when use_vertex_experiment changes the endpoint type in _step)
+        _at_uid = getattr(self, "at_user_id", None)
+        debug_log(_at_uid, f"request_async: endpoint_type={llm_config.model_endpoint_type} model={llm_config.model} use_vertex={use_vertex_experiment} use_bedrock={use_bedrock_experiment}")
         if llm_config.model_endpoint_type == "anthropic_vertex":
+            debug_log(_at_uid, f"request_async: VERTEX branch project={model_settings.google_cloud_project}")
             from anthropic import AsyncAnthropicVertex
             from letta.settings import model_settings
             import os
@@ -218,8 +222,10 @@ class AnthropicClient(LLMClientBase):
                     _vertex_extra_body["output_config"] = v
                 else:
                     _vertex_sdk_data[k] = v
+            debug_log(_at_uid, f"request_async: VERTEX FINAL_CALL model={_vertex_sdk_data.get('model')} region={region} extra_body={bool(_vertex_extra_body)} num_messages={len(_vertex_sdk_data.get('messages', []))} num_tools={len(_vertex_sdk_data.get('tools', []))}")
             response = await client.messages.create(**_vertex_sdk_data, **({"extra_body": _vertex_extra_body} if _vertex_extra_body else {}))
         elif llm_config.model_endpoint_type == "anthropic_bedrock":
+            debug_log(_at_uid, f"request_async: BEDROCK branch model={llm_config.model}")
             import os
             import json
             import asyncio
@@ -249,6 +255,7 @@ class AnthropicClient(LLMClientBase):
             if requested_model_raw.startswith(_BEDROCK_DIRECT_PREFIXES):
                 # Full ARN or system inference profile ID — use verbatim, skip env-var lookup.
                 bedrock_inference_profile = requested_model_raw
+                debug_log(_at_uid, f"request_async: BEDROCK model resolution DIRECT_ARN bedrock_inference_profile={bedrock_inference_profile}")
             else:
                 cohort_arn = _resolve_bedrock_arn_from_cohort(
                     getattr(self, "at_user_id", None),
@@ -256,17 +263,23 @@ class AnthropicClient(LLMClientBase):
                 )
                 if cohort_arn:
                     bedrock_inference_profile = cohort_arn
+                    debug_log(_at_uid, f"request_async: BEDROCK model resolution COHORT_ARN bedrock_inference_profile={bedrock_inference_profile}")
                 else:
                     default_arn = os.getenv('BEDROCK_INFERENCE_PROFILE_ARN')
                     if "haiku" in requested_model:
                         bedrock_inference_profile = os.getenv('BEDROCK_HAIKU_INFERENCE_PROFILE_ARN') or default_arn
+                        debug_log(_at_uid, f"request_async: BEDROCK model resolution HAIKU bedrock_inference_profile={bedrock_inference_profile}")
                     elif "sonnet-4-6" in requested_model or "sonnet-4.6" in requested_model:
                         bedrock_inference_profile = os.getenv('BEDROCK_SONNET_4_6_INFERENCE_PROFILE_ARN') or default_arn
+                        debug_log(_at_uid, f"request_async: BEDROCK model resolution SONNET_4_6 bedrock_inference_profile={bedrock_inference_profile}")
                     elif "sonnet-5" in requested_model:
                         bedrock_inference_profile = _build_bedrock_arn(MODEL_INFERENCE_PROFILES["sonnet-5"])
+                        debug_log(_at_uid, f"request_async: BEDROCK model resolution SONNET_5 bedrock_inference_profile={bedrock_inference_profile}")
                     else:
                         bedrock_inference_profile = default_arn
+                        debug_log(_at_uid, f"request_async: BEDROCK model resolution DEFAULT bedrock_inference_profile={bedrock_inference_profile}")
             model_id = bedrock_inference_profile if bedrock_inference_profile else request_data.get('model')
+            debug_log(_at_uid, f"request_async: BEDROCK resolved model_id={model_id} aws_region={aws_region}")
 
             client_kwargs = {
                 "service_name": "bedrock-runtime",
@@ -335,6 +348,7 @@ class AnthropicClient(LLMClientBase):
                 len(bedrock_body.get("tools", [])),
             )
 
+            debug_log(_at_uid, lambda: f"request_async: BEDROCK FINAL_CALL model_id={model_id} num_messages={len(bedrock_body.get('messages', []))} num_tools={len(bedrock_body.get('tools', []))} thinking={bedrock_body.get('thinking')} max_tokens={bedrock_body.get('max_tokens')} tool_choice={bedrock_body.get('tool_choice')} full_body={json.dumps(bedrock_body, default=str)}")
             # Run synchronous boto3 call in a thread to avoid blocking the event loop
             def _invoke():
                 resp = bedrock_client.invoke_model(
@@ -365,8 +379,10 @@ class AnthropicClient(LLMClientBase):
                 endpoint_type=llm_config.model_endpoint_type,
                 model=request_data.get("model"),
             )
+            debug_log(_at_uid, lambda _r=response_dict: f"request_async: BEDROCK LLM_RESPONSE body={json.dumps(_r, default=str)}")
             return response_dict
         else:
+            debug_log(_at_uid, f"request_async: STANDARD_ANTHROPIC branch model={llm_config.model}")
             client = await self._get_anthropic_client_async(llm_config, async_client=True)
             _extra_body = {}
             _sdk_data = {}
@@ -375,6 +391,7 @@ class AnthropicClient(LLMClientBase):
                     _extra_body["output_config"] = v
                 else:
                     _sdk_data[k] = v
+            debug_log(_at_uid, lambda: f"request_async: STANDARD_ANTHROPIC FINAL_CALL model={_sdk_data.get('model')} num_messages={len(_sdk_data.get('messages', []))} num_tools={len(_sdk_data.get('tools', []))} thinking={_sdk_data.get('thinking')} max_tokens={_sdk_data.get('max_tokens')} tool_choice={_sdk_data.get('tool_choice')} full_body={json.dumps(_sdk_data, default=str)}")
             response = await client.beta.messages.create(**_sdk_data, betas=["tools-2024-04-04", "prompt-caching-2024-07-31"], **({"extra_body": _extra_body} if _extra_body else {}))
         logger.info("This is the usage response from claude %s", response.usage)
         self._log_cache_observation_usage(
@@ -382,6 +399,7 @@ class AnthropicClient(LLMClientBase):
             endpoint_type=llm_config.model_endpoint_type,
             model=request_data.get("model"),
         )
+        debug_log(_at_uid, lambda _r=response: f"request_async: LLM_RESPONSE body={json.dumps(_r.model_dump(), default=str)}")
         return response.model_dump()
 
     @trace_method

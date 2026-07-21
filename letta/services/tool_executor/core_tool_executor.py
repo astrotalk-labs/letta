@@ -1,6 +1,10 @@
 import math
 from typing import Any, Dict, Optional
 
+from letta.log import get_logger
+
+logger = get_logger(__name__)
+
 from letta.constants import (
     CORE_MEMORY_LINE_NUMBER_WARNING,
     MEMORY_TOOLS_LINE_NUMBER_PREFIX_REGEX,
@@ -200,6 +204,11 @@ class LettaCoreToolExecutor(ToolExecutor):
         new_value = current_value + "\n" + str(content)
         agent_state.memory.update_block_value(label=label, value=new_value)
         await AgentManager().update_memory_if_changed_async(agent_id=agent_state.id, new_memory=agent_state.memory, actor=actor)
+        try:
+            import json as _json
+            logger.warning("[COST_LEAK] %s", _json.dumps({"type": "tool_executor_rebuild", "tool": "core_memory_append", "agent_id": agent_state.id}, default=str))
+        except Exception:
+            pass
         return None
 
     async def core_memory_replace(
@@ -229,6 +238,11 @@ class LettaCoreToolExecutor(ToolExecutor):
         new_value = current_value.replace(str(old_content), str(new_content))
         agent_state.memory.update_block_value(label=label, value=new_value)
         await AgentManager().update_memory_if_changed_async(agent_id=agent_state.id, new_memory=agent_state.memory, actor=actor)
+        try:
+            import json as _json
+            logger.warning("[COST_LEAK] %s", _json.dumps({"type": "tool_executor_rebuild", "tool": "core_memory_replace", "agent_id": agent_state.id}, default=str))
+        except Exception:
+            pass
         return None
 
     async def memory_replace(

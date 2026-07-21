@@ -8,6 +8,7 @@ from openai.types.chat import ChatCompletionChunk
 from opentelemetry.trace import Span
 
 from letta.agents.base_agent import BaseAgent
+from letta.debug_util import debug_log
 from letta.agents.ephemeral_summary_agent import EphemeralSummaryAgent
 from letta.agents.helpers import _create_letta_response, _prepare_in_context_messages_no_persist_async, generate_step_id
 from letta.constants import DEFAULT_MAX_STEPS
@@ -345,11 +346,21 @@ class LettaAgent(BaseAgent):
         request_span = tracer.start_span("time_to_first_token", start_time=request_start_timestamp_ns)
         request_span.set_attributes({f"llm_config.{k}": v for k, v in agent_state.llm_config.model_dump().items() if v is not None})
 
+        _chain_at_uid = getattr(self, "at_user_id", None)
         for i in range(max_steps):
             step_id = generate_step_id()
             step_start = get_utc_timestamp_ns()
             agent_step_span = tracer.start_span("agent_step", start_time=step_start)
             agent_step_span.set_attributes({"step_id": step_id})
+
+            try:
+                from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
+                import json as _json
+                if _chain_at_uid and _is_user_in_cache_obs_sample(_chain_at_uid):
+                    logger.info("[CHAIN_OBS] %s", _json.dumps({"phase": "step_start", "at_user_id": _chain_at_uid, "agent_id": agent_state.id, "step_index": i}, default=str))
+            except Exception:
+                pass
+            debug_log(self.at_user_id, f"step_stream_no_tokens: LOOP step={i}/{max_steps} agent_id={agent_state.id} model={agent_state.llm_config.model}")
 
             request_data, response_data, current_in_context_messages, new_in_context_messages, valid_tool_names = (
                 await self._build_and_request_from_llm(
@@ -464,8 +475,23 @@ class LettaAgent(BaseAgent):
 
             MetricRegistry().step_execution_time_ms_histogram.record(step_start - get_utc_timestamp_ns(), get_ctx_attributes())
 
+            if i == max_steps - 1 and should_continue:
+                try:
+                    import json as _json
+                    logger.warning("[COST_LEAK] %s", _json.dumps({"type": "max_steps_hit", "at_user_id": _chain_at_uid, "agent_id": agent_state.id, "step_count": i + 1}, default=str))
+                except Exception:
+                    pass
+
             if not should_continue:
                 break
+
+        try:
+            from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
+            import json as _json
+            if _chain_at_uid and _is_user_in_cache_obs_sample(_chain_at_uid):
+                logger.info("[CHAIN_OBS] %s", _json.dumps({"phase": "turn_complete", "at_user_id": _chain_at_uid, "agent_id": agent_state.id, "total_steps": usage.step_count, "output_tokens": usage.completion_tokens, "input_tokens": usage.prompt_tokens}, default=str))
+        except Exception:
+            pass
 
         # Extend the in context message ids
         if not agent_state.message_buffer_autoclear:
@@ -527,7 +553,10 @@ class LettaAgent(BaseAgent):
                 f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} GATED_OFF "
                 f"user_id={self.at_user_id} rollout_pct={_CASCADE_ROLLOUT_PCT} — running primary-only"
             )
+            debug_log(self.at_user_id, f"_step: cascade GATED_OFF rollout_pct={_CASCADE_ROLLOUT_PCT} → latency_optimisation_flow=False")
             latency_optimisation_flow = False
+        else:
+            debug_log(self.at_user_id, f"_step: cascade gate passed latency_optimisation_flow={latency_optimisation_flow}")
 
         _ctx_prep_start = get_utc_timestamp_ns() if task_id else None
         async with AsyncTimer() as _t:
@@ -573,6 +602,7 @@ class LettaAgent(BaseAgent):
                     f"cascade skipped (Haiku→Haiku is a no-op)"
                 )
                 MetricRegistry().haiku_cascade_request_counter.add(1, _cascade_attrs(state="disabled_primary_is_haiku"))
+                debug_log(self.at_user_id, f"_step: cascade DISABLED_PRIMARY_IS_HAIKU model={agent_state.llm_config.model}")
                 latency_optimisation_flow = False
             else:
                 _haiku_model = _HAIKU_MODEL_BY_PROVIDER.get(agent_state.llm_config.model_endpoint_type)
@@ -588,6 +618,7 @@ class LettaAgent(BaseAgent):
                         f"timeout_s={_HAIKU_TIMEOUT_SECONDS}"
                     )
                     MetricRegistry().haiku_cascade_request_counter.add(1, _cascade_attrs(state="enabled"))
+                    debug_log(self.at_user_id, f"_step: cascade ENABLED haiku_model={_haiku_model} primary_model={agent_state.llm_config.model}")
                 else:
                     logger.warning(
                         f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} DISABLED_NO_MODEL "
@@ -595,6 +626,9 @@ class LettaAgent(BaseAgent):
                         f"for provider={agent_state.llm_config.model_endpoint_type}; using primary model for all steps."
                     )
                     MetricRegistry().haiku_cascade_request_counter.add(1, _cascade_attrs(state="disabled_no_model"))
+                    debug_log(self.at_user_id, f"_step: cascade DISABLED_NO_MODEL provider={agent_state.llm_config.model_endpoint_type}")
+        else:
+            debug_log(self.at_user_id, f"_step: latency_optimisation_flow=False using primary model for all steps model={agent_state.llm_config.model}")
 
         # span for request
         request_span = tracer.start_span("time_to_first_token")
@@ -618,11 +652,21 @@ class LettaAgent(BaseAgent):
         _haiku_wasted_prompt_tokens: int = 0
         _haiku_wasted_completion_tokens: int = 0
 
+        _cascade_chain_at_uid = getattr(self, "at_user_id", None)
         for i in range(max_steps):
             step_id = generate_step_id()
             step_start = get_utc_timestamp_ns()
             agent_step_span = tracer.start_span("agent_step", start_time=step_start)
             agent_step_span.set_attributes({"step_id": step_id})
+
+            try:
+                from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
+                import json as _json
+                if _cascade_chain_at_uid and _is_user_in_cache_obs_sample(_cascade_chain_at_uid):
+                    logger.info("[CHAIN_OBS] %s", _json.dumps({"phase": "step_start", "at_user_id": _cascade_chain_at_uid, "agent_id": agent_state.id, "step_index": i}, default=str))
+            except Exception:
+                pass
+            debug_log(self.at_user_id, f"_step: LOOP step={i}/{max_steps} agent_id={agent_state.id} model={agent_state.llm_config.model}")
 
             # Cascade rule: attempt Haiku from step 1 onwards.
             #
@@ -657,15 +701,20 @@ class LettaAgent(BaseAgent):
                     f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} step={i} ATTEMPT_HAIKU "
                     f"model={_original_model} -> {_haiku_model}"
                 )
+                debug_log(self.at_user_id, f"_step: step={i} ATTEMPT_HAIKU primary={_original_model} → haiku={_haiku_model}")
             elif _haiku_model and i == 0:
                 logger.warning(
                     f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} step={i} KEEP_PRIMARY "
                     f"reason=step_0_always_uses_primary_to_avoid_single_step_request_tax"
                 )
                 MetricRegistry().haiku_cascade_step_counter.add(1, _cascade_attrs(outcome="primary_step0"))
+                debug_log(self.at_user_id, f"_step: step={i} KEEP_PRIMARY model={agent_state.llm_config.model}")
             elif not _haiku_model and latency_optimisation_flow:
                 # Cascade requested but no Haiku model mapped — record so we can detect misconfigs.
                 MetricRegistry().haiku_cascade_step_counter.add(1, _cascade_attrs(outcome="primary_no_haiku_model"))
+                debug_log(self.at_user_id, f"_step: step={i} no haiku model mapped using primary={agent_state.llm_config.model}")
+            else:
+                debug_log(self.at_user_id, f"_step: step={i} standard (no cascade) model={agent_state.llm_config.model}")
 
             # Strategy: gate-only (NOT tool-list restriction).
             #
@@ -726,6 +775,7 @@ class LettaAgent(BaseAgent):
             if _haiku_timed_out:
                 _haiku_timeout_step_count += 1
                 _step_used_haiku = False
+                debug_log(self.at_user_id, f"_step: step={i} HAIKU_TIMED_OUT retrying on primary model={agent_state.llm_config.model}")
                 _llm_timeout_retry_start = get_utc_timestamp_ns() if task_id else None
                 request_data, response_data, current_in_context_messages, new_in_context_messages, valid_tool_names = (
                     await self._build_and_request_from_llm(
@@ -768,6 +818,7 @@ class LettaAgent(BaseAgent):
                     _haiku_tool_call_name in _PRIMARY_RESERVED_TOOLS
                     or _haiku_tool_call_name is None
                 )
+                debug_log(self.at_user_id, f"_step: step={i} quality gate haiku_tool={_haiku_tool_call_name} needs_retry={_needs_primary_retry}")
                 if _needs_primary_retry:
                     _reason = (
                         "haiku_returned_text_response_no_tool"
@@ -816,6 +867,7 @@ class LettaAgent(BaseAgent):
                     response = llm_client.convert_response_to_chat_completion(response_data, in_context_messages, agent_state.llm_config)
                     # This step ultimately ran on the primary model, not Haiku
                     _step_used_haiku = False
+                    debug_log(self.at_user_id, lambda _i=i, _r=response: f"_step: step={_i} PRIMARY_RETRY complete tool={_r.choices[0].message.tool_calls[0].function.name if _r.choices[0].message.tool_calls else 'text'}")
 
             # TODO: add run_id
             usage.step_count += 1
@@ -954,8 +1006,30 @@ class LettaAgent(BaseAgent):
 
             MetricRegistry().step_execution_time_ms_histogram.record(step_start - get_utc_timestamp_ns(), get_ctx_attributes())
 
+            if i == max_steps - 1 and should_continue:
+                try:
+                    import json as _json
+                    logger.warning("[COST_LEAK] %s", _json.dumps({"type": "max_steps_hit", "at_user_id": _cascade_chain_at_uid, "agent_id": agent_state.id, "step_count": i + 1}, default=str))
+                except Exception:
+                    pass
+
             if not should_continue:
                 break
+
+        if _haiku_retried_step_count > 0:
+            try:
+                import json as _json
+                logger.warning("[COST_LEAK] %s", _json.dumps({"type": "haiku_cascade_retry", "at_user_id": _cascade_chain_at_uid, "agent_id": agent_state.id, "retry_count": _haiku_retried_step_count, "primary_steps": _primary_step_count, "haiku_steps": _haiku_step_count}, default=str))
+            except Exception:
+                pass
+
+        try:
+            from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
+            import json as _json
+            if _cascade_chain_at_uid and _is_user_in_cache_obs_sample(_cascade_chain_at_uid):
+                logger.info("[CHAIN_OBS] %s", _json.dumps({"phase": "turn_complete", "at_user_id": _cascade_chain_at_uid, "agent_id": agent_state.id, "total_steps": usage.step_count, "output_tokens": usage.completion_tokens, "input_tokens": usage.prompt_tokens}, default=str))
+        except Exception:
+            pass
 
         # log request time
         if request_start_timestamp_ns:
@@ -1320,15 +1394,20 @@ class LettaAgent(BaseAgent):
                     if _filtered_tools and not _forced_call_stripped:
                         request_data["tools"] = _filtered_tools
                         valid_tool_names = [n for n in valid_tool_names if n not in excluded_tool_names]
+                        debug_log(self.at_user_id, f"_build_and_request: step={step_index} tool restriction applied excluded={excluded_tool_names} remaining={[t.get('name') for t in _filtered_tools]}")
                     else:
                         logger.warning(
                             f"[HAIKU_CASCADE] step={step_index} SKIP_TOOL_RESTRICTION "
                             f"reason={'empty_after_filter' if not _filtered_tools else 'forced_call_stripped'} "
                             f"tool_choice_name={_tc_name} — gate will handle"
                         )
+                        debug_log(self.at_user_id, f"_build_and_request: step={step_index} SKIP_TOOL_RESTRICTION reason={'empty_after_filter' if not _filtered_tools else 'forced_call_stripped'}")
+                else:
+                    debug_log(self.at_user_id, f"_build_and_request: step={step_index} no tool restriction excluded_tool_names={excluded_tool_names}")
 
                 # Inject per-request thinking overrides (gated, except Sonnet 5 which is always exempt)
                 if _thinking_override_allowed(self.at_user_id, agent_state.llm_config.model):
+                    debug_log(self.at_user_id, f"_build_and_request: step={step_index} thinking override ALLOWED model={agent_state.llm_config.model} thinking={thinking}")
                     if thinking is not None:
                         request_data["thinking"] = thinking
                         request_data["temperature"] = 1.0
@@ -1337,15 +1416,26 @@ class LettaAgent(BaseAgent):
                         # Thinking is incompatible with tool_choice "any"/"tool"; downgrade to "auto"
                         if request_data.get("tool_choice", {}).get("type") in ("any", "tool"):
                             request_data["tool_choice"] = {"type": "auto", "disable_parallel_tool_use": True}
+                        debug_log(self.at_user_id, f"_build_and_request: step={step_index} thinking injected into request_data")
+                    else:
+                        debug_log(self.at_user_id, f"_build_and_request: step={step_index} thinking override allowed but thinking=None skipping")
+                else:
+                    debug_log(self.at_user_id, f"_build_and_request: step={step_index} thinking override NOT allowed model={agent_state.llm_config.model}")
                 # output_config flows to all users unconditionally
                 if output_config is not None:
                     request_data["output_config"] = output_config
+                    debug_log(self.at_user_id, f"_build_and_request: step={step_index} output_config injected={output_config}")
+                else:
+                    debug_log(self.at_user_id, f"_build_and_request: step={step_index} output_config=None skipping")
                 # Inject Gemini thinking_config: maps {"level": "low"|"medium"|"high"} → thinking_budget
                 if thinking_config is not None and agent_state.llm_config.model_endpoint_type in ("google_ai", "google_vertex"):
                     level = thinking_config.get("level", "low")
                     budget = _GEMINI_THINKING_LEVEL_TO_BUDGET.get(level, _GEMINI_THINKING_LEVEL_TO_BUDGET["low"])
                     if "config" in request_data:
                         request_data["config"]["thinking_config"] = {"thinking_budget": budget}
+                    debug_log(self.at_user_id, f"_build_and_request: step={step_index} gemini thinking_config injected level={level} budget={budget}")
+                else:
+                    debug_log(self.at_user_id, f"_build_and_request: step={step_index} gemini thinking_config skipped thinking_config={thinking_config} endpoint_type={agent_state.llm_config.model_endpoint_type}")
 
                 if agent_state.llm_config.model_endpoint_type in ("google_ai", "google_vertex"):
                     logger.warning(
@@ -1357,6 +1447,10 @@ class LettaAgent(BaseAgent):
                         f"max_output_tokens={request_data.get('config', {}).get('max_output_tokens')}"
                     )
 
+                debug_log(
+                    self.at_user_id,
+                    lambda _si=step_index, _rd=request_data: f"_build_and_request: step={_si} FINAL_LLM_PROMPT model={agent_state.llm_config.model} endpoint_type={agent_state.llm_config.model_endpoint_type} prompt={json.dumps(_rd, default=str)}",
+                )
                 async with AsyncTimer() as timer:
                     # Attempt LLM request
                     response = await llm_client.request_async(request_data, agent_state.llm_config, use_vertex_experiment=use_vertex_experiment, use_bedrock_experiment=use_bedrock_experiment)
@@ -1485,11 +1579,14 @@ class LettaAgent(BaseAgent):
         llm_config: LLMConfig,
         force: bool,
     ) -> List[Message]:
+        debug_log(self.at_user_id, f"_handle_llm_error: error_type={type(e).__name__} is_context_window_exceeded={isinstance(e, ContextWindowExceededError)} force={force} in_context_msg_count={len(in_context_messages)}")
         if isinstance(e, ContextWindowExceededError):
+            debug_log(self.at_user_id, f"_handle_llm_error: CONTEXT_WINDOW_EXCEEDED → triggering _rebuild_context_window model={llm_config.model} context_window={llm_config.context_window}")
             return await self._rebuild_context_window(
                 in_context_messages=in_context_messages, new_letta_messages=new_letta_messages, llm_config=llm_config, force=force
             )
         else:
+            debug_log(self.at_user_id, f"_handle_llm_error: non-context-window error → re-raising error_type={type(e).__name__}")
             raise llm_client.handle_llm_error(e)
 
     @trace_method
@@ -1503,17 +1600,27 @@ class LettaAgent(BaseAgent):
     ) -> List[Message]:
         # If total tokens is reached, we truncate down
         # TODO: This can be broken by bad configs, e.g. lower bound too high, initial messages too fat, etc.
+        debug_log(self.at_user_id, f"_rebuild_context_window: entry force={force} total_tokens={total_tokens} context_window={llm_config.context_window} in_context_msg_count={len(in_context_messages)}")
         if force or (total_tokens and total_tokens > llm_config.context_window):
             self.logger.warning(
                 f"Total tokens {total_tokens} exceeds configured max tokens {llm_config.context_window}, forcefully clearing message history."
             )
+            debug_log(self.at_user_id, f"_rebuild_context_window: FORCE_CLEAR path total_tokens={total_tokens} context_window={llm_config.context_window}")
             new_in_context_messages, updated = self.summarizer.summarize(
                 in_context_messages=in_context_messages, new_letta_messages=new_letta_messages, force=True, clear=True
             )
         else:
+            debug_log(self.at_user_id, f"_rebuild_context_window: SOFT_SUMMARIZE path")
             new_in_context_messages, updated = self.summarizer.summarize(
                 in_context_messages=in_context_messages, new_letta_messages=new_letta_messages
             )
+        debug_log(self.at_user_id, f"_rebuild_context_window: summarize complete updated={updated} new_msg_count={len(new_in_context_messages)}")
+        if updated:
+            try:
+                import json as _json
+                logger.warning("[COST_LEAK] %s", _json.dumps({"type": "summarization_triggered", "at_user_id": getattr(self, "at_user_id", None), "agent_id": getattr(self, "agent_id", None)}, default=str))
+            except Exception:
+                pass
         _t_setctx = get_utc_timestamp_ns()
         await self.agent_manager.set_in_context_messages_async(
             agent_id=self.agent_id, message_ids=[m.id for m in new_in_context_messages], actor=self.actor
@@ -1559,6 +1666,16 @@ class LettaAgent(BaseAgent):
                 else asyncio.sleep(0, result=self.num_archival_memories)
             ),
         )
+
+        self._current_step_index = step_index
+        try:
+            from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
+            import json as _json
+            _chain_uid = getattr(self, "at_user_id", None)
+            if _chain_uid and _is_user_in_cache_obs_sample(_chain_uid):
+                logger.info("[CHAIN_OBS] %s", _json.dumps({"phase": "llm_request_build", "at_user_id": _chain_uid, "agent_id": agent_state.id, "step_index": step_index, "num_messages": self.num_messages, "num_archival_memories": self.num_archival_memories}, default=str))
+        except Exception:
+            pass
 
         # PR β cascade fix: skip _rebuild_memory_async on intermediate steps of the
         # same user turn. The agent multi-step loop calls core_memory_append between
@@ -1712,6 +1829,7 @@ class LettaAgent(BaseAgent):
 
         tool_call_id = tool_call.id or f"call_{uuid.uuid4().hex[:8]}"
 
+        debug_log(self.at_user_id, f"_handle_ai_response: tool={tool_call_name} is_final_step={is_final_step} request_heartbeat={request_heartbeat} tool_valid={tool_call_name in valid_tool_names}")
         log_telemetry(
             self.logger,
             "_handle_ai_response execute tool start",
@@ -1727,6 +1845,7 @@ class LettaAgent(BaseAgent):
                 bullet_points = "\n".join(f"\t- {msg}" for msg in violated_rule_messages)
                 base_error_message += f"\n** Hint: Possible rules that were violated:\n{bullet_points}"
             tool_execution_result = ToolExecutionResult(status="error", func_return=base_error_message)
+            debug_log(self.at_user_id, f"_handle_ai_response: INVALID_TOOL tool={tool_call_name} violated_rules={violated_rule_messages}")
         else:
             async with AsyncTimer() as _t:
                 tool_execution_result = await self._execute_tool(
@@ -1740,6 +1859,7 @@ class LettaAgent(BaseAgent):
                              agent_id=agent_state.id, user_id=self.at_user_id,
                              step_id=step_id, tool=tool_call_name,
                              success=tool_execution_result.success_flag)
+            debug_log(self.at_user_id, f"_handle_ai_response: tool_executed tool={tool_call_name} success={tool_execution_result.success_flag} elapsed_ms={_t.elapsed_ms:.0f}")
         log_telemetry(
             self.logger, "_handle_ai_response execute tool finish", tool_execution_result=tool_execution_result, tool_call_id=tool_call_id
         )
@@ -1747,10 +1867,12 @@ class LettaAgent(BaseAgent):
         if tool_call_name in ["conversation_search", "conversation_search_date", "archival_memory_search"]:
             # with certain functions we rely on the paging mechanism to handle overflow
             truncate = False
+            debug_log(self.at_user_id, f"_handle_ai_response: MEMORY_SEARCH tool={tool_call_name} truncate=False (paging mode)")
         else:
             # but by default, we add a truncation safeguard to prevent bad functions from
             # overflow the agent context window
             truncate = True
+            debug_log(self.at_user_id, f"_handle_ai_response: tool={tool_call_name} truncate=True")
 
         # get the function response limit
         target_tool = next((x for x in agent_state.tools if x.name == tool_call_name), None)
@@ -1771,10 +1893,15 @@ class LettaAgent(BaseAgent):
             if continue_stepping:
                 stop_reason = LettaStopReason(stop_reason=StopReasonType.tool_rule.value)
             continue_stepping = False
+            debug_log(self.at_user_id, f"_handle_ai_response: TERMINAL_TOOL tool={tool_call_name} continue_stepping=False stop_reason={stop_reason}")
         elif tool_rules_solver.has_children_tools(tool_name=tool_call_name):
             continue_stepping = True
+            debug_log(self.at_user_id, f"_handle_ai_response: HAS_CHILDREN_TOOLS tool={tool_call_name} continue_stepping=True")
         elif tool_rules_solver.is_continue_tool(tool_name=tool_call_name):
             continue_stepping = True
+            debug_log(self.at_user_id, f"_handle_ai_response: CONTINUE_TOOL tool={tool_call_name} continue_stepping=True")
+        else:
+            debug_log(self.at_user_id, f"_handle_ai_response: tool={tool_call_name} continue_stepping={continue_stepping} (request_heartbeat)")
 
         # 5a. Persist Steps to DB
         # Following agent loop to persist this before messages
@@ -1876,6 +2003,9 @@ class LettaAgent(BaseAgent):
             actor=self.actor,
         )
         # TODO: Integrate sandbox result
+        _is_archival = tool_name in ("archival_memory_insert", "archival_memory_search", "archival_memory_delete")
+        if _is_archival:
+            debug_log(self.at_user_id, lambda _n=tool_name, _a=tool_args: f"_execute_tool: ARCHIVAL_MEMORY tool={_n} args={__import__('json').dumps(_a, default=str)}")
         log_event(name=f"start_{tool_name}_execution", attributes=tool_args)
         tool_execution_result = await tool_execution_manager.execute_tool_async(
             function_name=tool_name,
@@ -1883,6 +2013,8 @@ class LettaAgent(BaseAgent):
             tool=target_tool,
             step_id=step_id,
         )
+        if _is_archival:
+            debug_log(self.at_user_id, lambda _n=tool_name, _r=tool_execution_result: f"_execute_tool: ARCHIVAL_MEMORY_RESULT tool={_n} success={_r.success_flag} result={__import__('json').dumps(_r.func_return, default=str)}")
         if agent_step_span:
             end_time = get_utc_timestamp_ns()
             agent_step_span.add_event(

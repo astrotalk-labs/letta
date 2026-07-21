@@ -156,6 +156,21 @@ class BaseAgent(ABC):
                     except Exception:
                         pass
 
+                _step_idx = getattr(self, "_current_step_index", None)
+                if _step_idx is not None and _step_idx > 0:
+                    try:
+                        import json as _json
+                        logger.warning("[COST_LEAK] %s", _json.dumps({
+                            "type": "mid_turn_rebuild",
+                            "at_user_id": _mr_at_user_id,
+                            "agent_id": agent_state.id,
+                            "step_index": _step_idx,
+                            "diff_chars": len(diff),
+                            "old_system_chars": len(curr_system_message_text),
+                        }, default=str))
+                    except Exception:
+                        pass
+
                 # Test-user-gated optimization: skip system message rewrite when
                 # the diff is small AND the total system length is unchanged. This
                 # is the signature of pure attribute-only updates (chars_current,
