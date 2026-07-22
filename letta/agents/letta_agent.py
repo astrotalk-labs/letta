@@ -1183,6 +1183,7 @@ class LettaAgent(BaseAgent):
                 tool_rules_solver,
                 step_index=i,
                 thinking=thinking,
+                thinking_config=thinking_config,
                 output_config=output_config,
             )
             log_event("agent.stream.llm_response.received")  # [3^]
