@@ -51,6 +51,7 @@ class ToolExecutorFactory:
         block_manager: BlockManager,
         passage_manager: PassageManager,
         actor: User,
+        task_id: Optional[str] = None,
     ) -> ToolExecutor:
         """Get the appropriate executor for the given tool type."""
         executor_class = cls._executor_map.get(tool_type, SandboxToolExecutor)
@@ -60,6 +61,7 @@ class ToolExecutorFactory:
             block_manager=block_manager,
             passage_manager=passage_manager,
             actor=actor,
+            task_id=task_id,
         )
 
 
@@ -76,6 +78,7 @@ class ToolExecutionManager:
         agent_state: Optional[AgentState] = None,
         sandbox_config: Optional[SandboxConfig] = None,
         sandbox_env_vars: Optional[Dict[str, Any]] = None,
+        task_id: Optional[str] = None,
     ):
         self.message_manager = message_manager
         self.agent_manager = agent_manager
@@ -86,6 +89,7 @@ class ToolExecutionManager:
         self.actor = actor
         self.sandbox_config = sandbox_config
         self.sandbox_env_vars = sandbox_env_vars
+        self.task_id = task_id
 
     @trace_method
     async def execute_tool_async(
@@ -103,6 +107,7 @@ class ToolExecutionManager:
                 block_manager=self.block_manager,
                 passage_manager=self.passage_manager,
                 actor=self.actor,
+                task_id=self.task_id,
             )
 
             def _metrics_callback(exec_time_ms: int, exc):

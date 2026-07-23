@@ -154,6 +154,7 @@ class LettaCoreToolExecutor(ToolExecutor):
                 limit=count + start,  # Request enough results to handle offset
                 embedding_config=agent_state.embedding_config,
                 embed_query=True,
+                task_id=self.task_id,
             )
 
             # Apply pagination
