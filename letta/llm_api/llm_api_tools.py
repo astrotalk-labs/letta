@@ -157,7 +157,7 @@ def create(
     """Return response to chat completion with backoff"""
     from letta.utils import printd
     from letta.log import get_logger
-    
+
     logger = get_logger(__name__)
     log_msg = f"[CREATE] Starting LLM request: model_endpoint_type={llm_config.model_endpoint_type}, use_vertex_experiment={use_vertex_experiment}, stream={stream}"
     logger.info(log_msg)
@@ -365,11 +365,12 @@ def create(
 
     elif llm_config.model_endpoint_type == "anthropic":
         from letta.log import get_logger
+
         logger = get_logger(__name__)
         log_msg = f"[ANTHROPIC] Handling anthropic request with use_vertex_experiment={use_vertex_experiment}"
         logger.info(log_msg)
         print(f"DEBUG: {log_msg}")
-        
+
         if not use_tool_naming:
             raise NotImplementedError("Only tool calling supported on Anthropic API requests")
 
@@ -379,23 +380,24 @@ def create(
         # ✅ Create the appropriate client based on use_vertex_experiment flag
         anthropic_client = None
         original_model = llm_config.model
-        
+
         if use_vertex_experiment:
             # Switch TO Vertex AI
             log_msg = f"[ANTHROPIC] Creating Vertex AI client due to use_vertex_experiment=True"
             logger.info(log_msg)
             print(f"DEBUG: {log_msg}")
             from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
+
             vertex_client = AnthropicVertexClient()
             anthropic_client = vertex_client._get_client()
             log_msg = f"[ANTHROPIC] Created Vertex client: {type(anthropic_client).__name__}"
             logger.info(log_msg)
             print(f"DEBUG: {log_msg}")
-            
+
             # ✅ Convert model name: dash format -> @ format
             # Example: claude-sonnet-4-5-20250929 -> claude-sonnet-4-5@20250929
-            if '-' in original_model and '@' not in original_model:
-                parts = original_model.rsplit('-', 1)  # Split on the LAST dash only
+            if "-" in original_model and "@" not in original_model:
+                parts = original_model.rsplit("-", 1)  # Split on the LAST dash only
                 if len(parts) == 2 and parts[1].isdigit():  # Ensure it's a date
                     llm_config.model = f"{parts[0]}@{parts[1]}"
                     log_msg = f"[ANTHROPIC] Converted model for Vertex: {original_model} -> {llm_config.model}"
@@ -488,13 +490,16 @@ def create(
 
     elif llm_config.model_endpoint_type == "anthropic_vertex":
         """Anthropic Claude models on Google Vertex AI using Anthropic's SDK
-        
+
         NOTE: This case is kept for backward compatibility when use_vertex_experiment is not set.
         When use_vertex_experiment is explicitly set, the consolidated anthropic case above handles it.
         """
         from letta.log import get_logger
+
         logger = get_logger(__name__)
-        log_msg = f"[ANTHROPIC_VERTEX] Handling anthropic_vertex request (explicit Vertex client, use_vertex_experiment={use_vertex_experiment})"
+        log_msg = (
+            f"[ANTHROPIC_VERTEX] Handling anthropic_vertex request (explicit Vertex client, use_vertex_experiment={use_vertex_experiment})"
+        )
         logger.info(log_msg)
         print(f"DEBUG: {log_msg}")
 
@@ -507,25 +512,26 @@ def create(
         # ✅ Check if we should switch to direct Anthropic
         anthropic_client = None
         original_model = llm_config.model
-        
+
         if not use_vertex_experiment:
             # Switch TO direct Anthropic API
             log_msg = f"[ANTHROPIC_VERTEX] Switching to direct Anthropic API due to use_vertex_experiment=False"
             logger.info(log_msg)
             print(f"DEBUG: {log_msg}")
-            
+
             # ✅ Convert model name: @ format -> dash format
             # Example: claude-sonnet-4-5@20250929 -> claude-sonnet-4-5-20250929
-            if '@' in original_model:
-                llm_config.model = original_model.replace('@', '-')
+            if "@" in original_model:
+                llm_config.model = original_model.replace("@", "-")
                 log_msg = f"[ANTHROPIC_VERTEX] Converted model for direct API: {original_model} -> {llm_config.model}"
                 logger.info(log_msg)
                 print(f"DEBUG: {log_msg}")
-            
+
             # ✅ Create direct Anthropic client
             if provider_category == ProviderCategory.byok:
                 from letta.services.provider_manager import ProviderManager
                 from letta.services.user_manager import UserManager
+
                 actor_user = UserManager().get_user_or_default(user_id=user_id)
                 api_key = ProviderManager().get_override_key(provider_name, actor=actor_user)
                 anthropic_client = anthropic.Anthropic(api_key=api_key)
@@ -533,7 +539,7 @@ def create(
                 anthropic_client = anthropic.Anthropic()
             else:
                 raise ValueError("No available Anthropic API key for direct Anthropic")
-            
+
             log_msg = f"[ANTHROPIC_VERTEX] Created direct Anthropic client: {type(anthropic_client).__name__}"
             logger.info(log_msg)
             print(f"DEBUG: {log_msg}")
@@ -543,6 +549,7 @@ def create(
             logger.info(log_msg)
             print(f"DEBUG: {log_msg}")
             from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
+
             vertex_client = AnthropicVertexClient()
             anthropic_client = vertex_client._get_client()
             log_msg = f"[ANTHROPIC_VERTEX] Created Vertex client: {type(anthropic_client).__name__}"

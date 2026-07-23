@@ -138,7 +138,9 @@ class LLMClientBase:
         raise NotImplementedError
 
     @abstractmethod
-    async def request_async(self, request_data: dict, llm_config: LLMConfig, use_vertex_experiment: bool = False, use_bedrock_experiment: bool = False) -> dict:
+    async def request_async(
+        self, request_data: dict, llm_config: LLMConfig, use_vertex_experiment: bool = False, use_bedrock_experiment: bool = False
+    ) -> dict:
         """
         Performs underlying request to llm and returns raw response.
 

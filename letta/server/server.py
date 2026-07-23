@@ -1131,11 +1131,15 @@ class SyncServer(Server):
         agent_state = self.agent_manager.get_agent_by_id(agent_id=agent_id, actor=actor)
         # Insert into archival memory
         # TODO: @mindy look at moving this to agent_manager to avoid above extra call
-        passages = self.passage_manager.insert_passage(agent_state=agent_state, agent_id=agent_id, text=memory_contents, actor=actor, gb_user_id=gb_user_id)
+        passages = self.passage_manager.insert_passage(
+            agent_state=agent_state, agent_id=agent_id, text=memory_contents, actor=actor, gb_user_id=gb_user_id
+        )
 
         return passages
 
-    async def insert_archival_memory_async(self, agent_id: str, memory_contents: str, actor: User, gb_user_id: Optional[str] = None) -> List[Passage]:
+    async def insert_archival_memory_async(
+        self, agent_id: str, memory_contents: str, actor: User, gb_user_id: Optional[str] = None
+    ) -> List[Passage]:
         import time
 
         t0 = time.time()

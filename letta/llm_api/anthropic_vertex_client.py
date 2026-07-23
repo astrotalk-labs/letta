@@ -13,10 +13,10 @@ class AnthropicVertexClient:
         # Use provided region, env var, or default to global
         # For newer Claude models (claude-sonnet-4-5@20250929), use 'global'
         self.region = (
-                region or
-                os.getenv('GOOGLE_CLOUD_LOCATION') or
-                os.getenv('ANTHROPIC_VERTEX_REGION') or
-                'global'  # Default region for newer models
+            region
+            or os.getenv("GOOGLE_CLOUD_LOCATION")
+            or os.getenv("ANTHROPIC_VERTEX_REGION")
+            or "global"  # Default region for newer models
         )
 
         if not self.project_id:

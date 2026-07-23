@@ -2,6 +2,7 @@ import base64
 
 try:
     from mistralai import Mistral, OCRPageObject, OCRResponse, OCRUsageInfo
+
     _MISTRAL_AVAILABLE = True
 except ImportError:
     _MISTRAL_AVAILABLE = False

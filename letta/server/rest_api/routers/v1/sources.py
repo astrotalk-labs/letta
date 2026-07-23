@@ -340,7 +340,14 @@ async def sleeptime_document_ingest_async(server: SyncServer, source_id: str, ac
 
 
 async def load_file_to_source_cloud(
-    server: SyncServer, agent_states: List[AgentState], content: bytes, file: UploadFile, job: Job, source_id: str, actor: User, gb_user_id: Optional[str] = None
+    server: SyncServer,
+    agent_states: List[AgentState],
+    content: bytes,
+    file: UploadFile,
+    job: Job,
+    source_id: str,
+    actor: User,
+    gb_user_id: Optional[str] = None,
 ):
     file_processor = MistralFileParser()
     text_chunker = LlamaIndexChunker()
