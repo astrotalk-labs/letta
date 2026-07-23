@@ -13,7 +13,6 @@ from letta.log import get_logger
 from letta.schemas.agent import AgentState
 from letta.schemas.file import FileMetadata
 from letta.schemas.job import Job
-from letta.schemas.passage import Passage
 from letta.schemas.source import Source, SourceCreate, SourceUpdate
 from letta.schemas.user import User
 from letta.server.rest_api.utils import get_letta_server
@@ -249,28 +248,6 @@ async def upload_file_to_source(
     safe_create_task(sleeptime_document_ingest_async(server, source_id, actor), logger=logger, label="sleeptime_document_ingest_async")
 
     return job
-
-
-@router.get("/{source_id}/passages", response_model=List[Passage], operation_id="list_source_passages")
-async def list_source_passages(
-    source_id: str,
-    after: Optional[str] = Query(None, description="Message after which to retrieve the returned messages."),
-    before: Optional[str] = Query(None, description="Message before which to retrieve the returned messages."),
-    limit: int = Query(100, description="Maximum number of messages to retrieve."),
-    server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
-):
-    """
-    List all passages associated with a data source.
-    """
-    actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
-    return await server.agent_manager.list_passages_async(
-        actor=actor,
-        source_id=source_id,
-        after=after,
-        before=before,
-        limit=limit,
-    )
 
 
 @router.get("/{source_id}/files", response_model=List[FileMetadata], operation_id="list_source_files")

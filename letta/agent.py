@@ -1239,12 +1239,12 @@ class Agent(BaseAgent):
                 else 0
             )
 
-        agent_manager_passage_size = self.agent_manager.passage_size(actor=self.user, agent_id=self.agent_state.id)
+        agent_manager_passage_size = self.passage_manager.agent_passage_size(actor=self.user, agent_id=self.agent_state.id)
         message_manager_size = self.message_manager.size(actor=self.user, agent_id=self.agent_state.id)
         external_memory_summary = compile_memory_metadata_block(
             memory_edit_timestamp=get_utc_time(),
             previous_message_count=self.message_manager.size(actor=self.user, agent_id=self.agent_state.id),
-            archival_memory_size=self.agent_manager.passage_size(actor=self.user, agent_id=self.agent_state.id),
+            archival_memory_size=self.passage_manager.agent_passage_size(actor=self.user, agent_id=self.agent_state.id),
         )
         num_tokens_external_memory_summary = count_tokens(external_memory_summary)
 

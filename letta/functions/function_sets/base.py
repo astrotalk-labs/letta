@@ -108,7 +108,7 @@ def archival_memory_search(self: "Agent", query: str, page: Optional[int] = 0, s
 
     try:
         # Get results using passage manager
-        all_results = self.agent_manager.list_passages(
+        all_results = self.agent_manager.list_agent_passages(
             actor=self.user,
             agent_id=self.agent_state.id,
             query_text=query,
