@@ -19,14 +19,12 @@ MCP_TOOL_TAG_NAME_PREFIX = "mcp"  # full format, mcp:server_name
 
 LETTA_CORE_TOOL_MODULE_NAME = "letta.functions.function_sets.base"
 LETTA_MULTI_AGENT_TOOL_MODULE_NAME = "letta.functions.function_sets.multi_agent"
-LETTA_VOICE_TOOL_MODULE_NAME = "letta.functions.function_sets.voice"
 LETTA_BUILTIN_TOOL_MODULE_NAME = "letta.functions.function_sets.builtin"
 LETTA_FILES_TOOL_MODULE_NAME = "letta.functions.function_sets.files"
 
 LETTA_TOOL_MODULE_NAMES = [
     LETTA_CORE_TOOL_MODULE_NAME,
     LETTA_MULTI_AGENT_TOOL_MODULE_NAME,
-    LETTA_VOICE_TOOL_MODULE_NAME,
     LETTA_BUILTIN_TOOL_MODULE_NAME,
     LETTA_FILES_TOOL_MODULE_NAME,
 ]
@@ -104,14 +102,7 @@ BASE_SLEEPTIME_TOOLS = [
     # "archival_memory_search",
     # "conversation_search",
 ]
-# Base tools for the voice agent
-BASE_VOICE_SLEEPTIME_CHAT_TOOLS = [SEND_MESSAGE_TOOL_NAME, "search_memory"]
-# Base memory tools for sleeptime agent
-BASE_VOICE_SLEEPTIME_TOOLS = [
-    "store_memories",
-    "rethink_user_memory",
-    "finish_rethinking_memory",
-]
+
 # Multi agent tools
 MULTI_AGENT_TOOLS = ["send_message_to_agent_and_wait_for_reply", "send_message_to_agents_matching_tags", "send_message_to_agent_async"]
 
@@ -131,16 +122,7 @@ BUILTIN_TOOLS = ["run_code", "web_search"]
 FILES_TOOLS = ["open_file", "close_file", "grep", "search_files"]
 
 # Set of all built-in Letta tools
-LETTA_TOOL_SET = set(
-    BASE_TOOLS
-    + BASE_MEMORY_TOOLS
-    + MULTI_AGENT_TOOLS
-    + BASE_SLEEPTIME_TOOLS
-    + BASE_VOICE_SLEEPTIME_TOOLS
-    + BASE_VOICE_SLEEPTIME_CHAT_TOOLS
-    + BUILTIN_TOOLS
-    + FILES_TOOLS
-)
+LETTA_TOOL_SET = set(BASE_TOOLS + BASE_MEMORY_TOOLS + MULTI_AGENT_TOOLS + BASE_SLEEPTIME_TOOLS + BUILTIN_TOOLS + FILES_TOOLS)
 
 
 def FUNCTION_RETURN_VALUE_TRUNCATED(return_str, return_char: int, return_char_limit: int):

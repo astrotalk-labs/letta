@@ -14,8 +14,6 @@ from letta.constants import (
     BASE_SLEEPTIME_CHAT_TOOLS,
     BASE_SLEEPTIME_TOOLS,
     BASE_TOOLS,
-    BASE_VOICE_SLEEPTIME_CHAT_TOOLS,
-    BASE_VOICE_SLEEPTIME_TOOLS,
     FILES_TOOLS,
     MULTI_AGENT_TOOLS,
 )
@@ -24,7 +22,7 @@ from letta.helpers.datetime_helpers import AsyncTimer, get_utc_time
 from letta.llm_api.llm_client import LLMClient
 from letta.log import get_logger
 from letta.orm import Agent as AgentModel
-from letta.orm import AgentPassage, AgentsTags
+from letta.orm import AgentsTags
 from letta.orm import Block as BlockModel
 from letta.orm import BlocksAgents
 from letta.orm import Group as GroupModel
@@ -250,11 +248,7 @@ class AgentManager:
         # tools
         tool_names = set(agent_create.tools or [])
         if agent_create.include_base_tools:
-            if agent_create.agent_type == AgentType.voice_sleeptime_agent:
-                tool_names |= set(BASE_VOICE_SLEEPTIME_TOOLS)
-            elif agent_create.agent_type == AgentType.voice_convo_agent:
-                tool_names |= set(BASE_VOICE_SLEEPTIME_CHAT_TOOLS)
-            elif agent_create.agent_type == AgentType.sleeptime_agent:
+            if agent_create.agent_type == AgentType.sleeptime_agent:
                 tool_names |= set(BASE_SLEEPTIME_TOOLS)
             elif agent_create.enable_sleeptime:
                 tool_names |= set(BASE_SLEEPTIME_CHAT_TOOLS)
@@ -412,11 +406,7 @@ class AgentManager:
         # tools
         tool_names = set(agent_create.tools or [])
         if agent_create.include_base_tools:
-            if agent_create.agent_type == AgentType.voice_sleeptime_agent:
-                tool_names |= set(BASE_VOICE_SLEEPTIME_TOOLS)
-            elif agent_create.agent_type == AgentType.voice_convo_agent:
-                tool_names |= set(BASE_VOICE_SLEEPTIME_CHAT_TOOLS)
-            elif agent_create.agent_type == AgentType.sleeptime_agent:
+            if agent_create.agent_type == AgentType.sleeptime_agent:
                 tool_names |= set(BASE_SLEEPTIME_TOOLS)
             elif agent_create.enable_sleeptime:
                 tool_names |= set(BASE_SLEEPTIME_CHAT_TOOLS)
@@ -1123,7 +1113,7 @@ class AgentManager:
             # Delete sleeptime agent and group (TODO this is flimsy pls fix)
             if agent.multi_agent_group:
                 participant_agent_ids = agent.multi_agent_group.agent_ids
-                if agent.multi_agent_group.manager_type in {ManagerType.sleeptime, ManagerType.voice_sleeptime} and participant_agent_ids:
+                if agent.multi_agent_group.manager_type == ManagerType.sleeptime and participant_agent_ids:
                     for participant_agent_id in participant_agent_ids:
                         try:
                             sleeptime_agent = AgentModel.read(db_session=session, identifier=participant_agent_id, actor=actor)
@@ -1171,7 +1161,7 @@ class AgentManager:
             # Delete sleeptime agent and group (TODO this is flimsy pls fix)
             if agent.multi_agent_group:
                 participant_agent_ids = agent.multi_agent_group.agent_ids
-                if agent.multi_agent_group.manager_type in {ManagerType.sleeptime, ManagerType.voice_sleeptime} and participant_agent_ids:
+                if agent.multi_agent_group.manager_type == ManagerType.sleeptime and participant_agent_ids:
                     for participant_agent_id in participant_agent_ids:
                         try:
                             sleeptime_agent = await AgentModel.read_async(db_session=session, identifier=participant_agent_id, actor=actor)
