@@ -2001,6 +2001,7 @@ class LettaAgent(BaseAgent):
             passage_manager=self.passage_manager,
             sandbox_env_vars=sandbox_env_vars,
             actor=self.actor,
+            task_id=self._task_id,
         )
         # TODO: Integrate sandbox result
         _is_archival = tool_name in ("archival_memory_insert", "archival_memory_search", "archival_memory_delete")

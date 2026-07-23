@@ -22,12 +22,14 @@ class ToolExecutor(ABC):
         block_manager: BlockManager,
         passage_manager: PassageManager,
         actor: User,
+        task_id: Optional[str] = None,
     ):
         self.message_manager = message_manager
         self.agent_manager = agent_manager
         self.block_manager = block_manager
         self.passage_manager = passage_manager
         self.actor = actor
+        self.task_id = task_id
 
     @abstractmethod
     async def execute(

@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -19,7 +20,7 @@ from letta.constants import (
     MULTI_AGENT_TOOLS,
 )
 from letta.helpers import ToolRulesSolver
-from letta.helpers.datetime_helpers import get_utc_time
+from letta.helpers.datetime_helpers import AsyncTimer, get_utc_time
 from letta.llm_api.llm_client import LLMClient
 from letta.log import get_logger
 from letta.orm import Agent as AgentModel
@@ -2054,9 +2055,11 @@ class AgentManager:
         ascending: bool = True,
         embedding_config: Optional[EmbeddingConfig] = None,
         agent_only: bool = False,
+        task_id: Optional[str] = None,
     ) -> List[PydanticPassage]:
         """Lists all passages attached to an agent."""
         with db_registry.session() as session:
+            _t0 = time.perf_counter()
             main_query = build_passage_query(
                 actor=actor,
                 agent_id=agent_id,
@@ -2072,13 +2075,15 @@ class AgentManager:
                 embedding_config=embedding_config,
                 agent_only=agent_only,
             )
+            _embed_ms = (time.perf_counter() - _t0) * 1000
 
             # Add limit
             if limit:
                 main_query = main_query.limit(limit)
 
-            # Execute query
+            _t1 = time.perf_counter()
             results = list(session.execute(main_query))
+            _query_ms = (time.perf_counter() - _t1) * 1000
 
             passages = []
             for row in results:
@@ -2094,6 +2099,27 @@ class AgentManager:
                     data.pop("agent_id", None)
                     passage = SourcePassage(**data)
                 passages.append(passage)
+
+            if task_id:
+                logger.info(
+                    "[EMBEDDING_SEARCH] fn=list_passages  phase=embed  embed_query=%s  elapsed_ms=%.0f  agent_id=%s  user_id=%s  task_id=%s  limit=%s",
+                    embed_query,
+                    _embed_ms,
+                    agent_id,
+                    actor.id,
+                    task_id,
+                    limit,
+                )
+                logger.info(
+                    "[EMBEDDING_SEARCH] fn=list_passages  phase=db_query  embed_query=%s  elapsed_ms=%.0f  agent_id=%s  user_id=%s  task_id=%s  limit=%s  result_count=%d",
+                    embed_query,
+                    _query_ms,
+                    agent_id,
+                    actor.id,
+                    task_id,
+                    limit,
+                    len(passages),
+                )
 
             return [p.to_pydantic() for p in passages]
 
@@ -2115,9 +2141,11 @@ class AgentManager:
         ascending: bool = True,
         embedding_config: Optional[EmbeddingConfig] = None,
         agent_only: bool = False,
+        task_id: Optional[str] = None,
     ) -> List[PydanticPassage]:
         """Lists all passages attached to an agent."""
         async with db_registry.async_session() as session:
+            _t0 = time.perf_counter()
             main_query = build_passage_query(
                 actor=actor,
                 agent_id=agent_id,
@@ -2133,13 +2161,14 @@ class AgentManager:
                 embedding_config=embedding_config,
                 agent_only=agent_only,
             )
+            _embed_ms = (time.perf_counter() - _t0) * 1000
 
             # Add limit
             if limit:
                 main_query = main_query.limit(limit)
 
-            # Execute query
-            result = await session.execute(main_query)
+            async with AsyncTimer() as _t:
+                result = await session.execute(main_query)
 
             passages = []
             for row in result:
@@ -2155,6 +2184,27 @@ class AgentManager:
                     data.pop("agent_id", None)
                     passage = SourcePassage(**data)
                 passages.append(passage)
+
+            if task_id:
+                logger.info(
+                    "[EMBEDDING_SEARCH] fn=list_passages_async  phase=embed  embed_query=%s  elapsed_ms=%.0f  agent_id=%s  user_id=%s  task_id=%s  limit=%s",
+                    embed_query,
+                    _embed_ms,
+                    agent_id,
+                    actor.id,
+                    task_id,
+                    limit,
+                )
+                logger.info(
+                    "[EMBEDDING_SEARCH] fn=list_passages_async  phase=db_query  embed_query=%s  elapsed_ms=%.0f  agent_id=%s  user_id=%s  task_id=%s  limit=%s  result_count=%d",
+                    embed_query,
+                    _t.elapsed_ms,
+                    agent_id,
+                    actor.id,
+                    task_id,
+                    limit,
+                    len(passages),
+                )
 
             return [p.to_pydantic() for p in passages]
 
@@ -2175,9 +2225,11 @@ class AgentManager:
         embed_query: bool = False,
         ascending: bool = True,
         embedding_config: Optional[EmbeddingConfig] = None,
+        task_id: Optional[str] = None,
     ) -> List[PydanticPassage]:
         """Lists all passages attached to an agent."""
         async with db_registry.async_session() as session:
+            _t0 = time.perf_counter()
             main_query = build_source_passage_query(
                 actor=actor,
                 agent_id=agent_id,
@@ -2192,16 +2244,38 @@ class AgentManager:
                 ascending=ascending,
                 embedding_config=embedding_config,
             )
+            _embed_ms = (time.perf_counter() - _t0) * 1000
 
             # Add limit
             if limit:
                 main_query = main_query.limit(limit)
 
-            # Execute query
-            result = await session.execute(main_query)
+            async with AsyncTimer() as _t:
+                result = await session.execute(main_query)
 
             # Get ORM objects directly using scalars()
             passages = result.scalars().all()
+
+            if task_id:
+                logger.info(
+                    "[EMBEDDING_SEARCH] fn=list_source_passages_async  phase=embed  embed_query=%s  elapsed_ms=%.0f  agent_id=%s  user_id=%s  task_id=%s  limit=%s",
+                    embed_query,
+                    _embed_ms,
+                    agent_id,
+                    actor.id,
+                    task_id,
+                    limit,
+                )
+                logger.info(
+                    "[EMBEDDING_SEARCH] fn=list_source_passages_async  phase=db_query  embed_query=%s  elapsed_ms=%.0f  agent_id=%s  user_id=%s  task_id=%s  limit=%s  result_count=%d",
+                    embed_query,
+                    _t.elapsed_ms,
+                    agent_id,
+                    actor.id,
+                    task_id,
+                    limit,
+                    len(passages),
+                )
 
             # Convert to Pydantic models
             return [p.to_pydantic() for p in passages]
@@ -2221,9 +2295,11 @@ class AgentManager:
         embed_query: bool = False,
         ascending: bool = True,
         embedding_config: Optional[EmbeddingConfig] = None,
+        task_id: Optional[str] = None,
     ) -> List[PydanticPassage]:
         """Lists all passages attached to an agent."""
         async with db_registry.async_session() as session:
+            _t0 = time.perf_counter()
             main_query = build_agent_passage_query(
                 actor=actor,
                 agent_id=agent_id,
@@ -2236,16 +2312,38 @@ class AgentManager:
                 ascending=ascending,
                 embedding_config=embedding_config,
             )
+            _embed_ms = (time.perf_counter() - _t0) * 1000
 
             # Add limit
             if limit:
                 main_query = main_query.limit(limit)
 
-            # Execute query
-            result = await session.execute(main_query)
+            async with AsyncTimer() as _t:
+                result = await session.execute(main_query)
 
             # Get ORM objects directly using scalars()
             passages = result.scalars().all()
+
+            if task_id:
+                logger.info(
+                    "[EMBEDDING_SEARCH] fn=list_agent_passages_async  phase=embed  embed_query=%s  elapsed_ms=%.0f  agent_id=%s  user_id=%s  task_id=%s  limit=%s",
+                    embed_query,
+                    _embed_ms,
+                    agent_id,
+                    actor.id,
+                    task_id,
+                    limit,
+                )
+                logger.info(
+                    "[EMBEDDING_SEARCH] fn=list_agent_passages_async  phase=db_query  embed_query=%s  elapsed_ms=%.0f  agent_id=%s  user_id=%s  task_id=%s  limit=%s  result_count=%d",
+                    embed_query,
+                    _t.elapsed_ms,
+                    agent_id,
+                    actor.id,
+                    task_id,
+                    limit,
+                    len(passages),
+                )
 
             # Convert to Pydantic models
             return [p.to_pydantic() for p in passages]

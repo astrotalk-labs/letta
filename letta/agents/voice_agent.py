@@ -468,6 +468,7 @@ class VoiceAgent(BaseAgent):
             embed_query=True,
             start_date=start_date,
             end_date=end_date,
+            task_id=self._task_id,
         )
         formatted_archival_results = [{"timestamp": str(result.created_at), "content": result.text} for result in archival_results]
         response = {
