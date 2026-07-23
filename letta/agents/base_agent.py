@@ -104,7 +104,9 @@ class BaseAgent(ABC):
             curr_system_message_text = curr_system_message.content[0].text
             if curr_memory_str in curr_system_message_text:
                 if self._task_id:
-                    logger.info(f"[REBUILD_TIMING] task_id={self._task_id} agent_id={agent_state.id} refresh_ms={_refresh_ms} changed=false")
+                    logger.info(
+                        f"[REBUILD_TIMING] task_id={self._task_id} agent_id={agent_state.id} refresh_ms={_refresh_ms} changed=false"
+                    )
                 return in_context_messages
 
             memory_edit_timestamp = get_utc_time()
@@ -141,17 +143,22 @@ class BaseAgent(ABC):
                 if _mr_at_user_id:
                     try:
                         from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
+
                         if _is_user_in_cache_obs_sample(_mr_at_user_id):
                             import json as _json
+
                             logger.info(
                                 "[MEMORY_REBUILD] %s",
-                                _json.dumps({
-                                    "at_user_id": _mr_at_user_id,
-                                    "agent_id": agent_state.id,
-                                    "diff_chars": len(diff),
-                                    "old_system_chars": len(curr_system_message_text),
-                                    "new_system_chars": len(new_system_message_str),
-                                }, default=str),
+                                _json.dumps(
+                                    {
+                                        "at_user_id": _mr_at_user_id,
+                                        "agent_id": agent_state.id,
+                                        "diff_chars": len(diff),
+                                        "old_system_chars": len(curr_system_message_text),
+                                        "new_system_chars": len(new_system_message_str),
+                                    },
+                                    default=str,
+                                ),
                             )
                     except Exception:
                         pass
@@ -160,14 +167,21 @@ class BaseAgent(ABC):
                 if _step_idx is not None and _step_idx > 0:
                     try:
                         import json as _json
-                        logger.warning("[COST_LEAK] %s", _json.dumps({
-                            "type": "mid_turn_rebuild",
-                            "at_user_id": _mr_at_user_id,
-                            "agent_id": agent_state.id,
-                            "step_index": _step_idx,
-                            "diff_chars": len(diff),
-                            "old_system_chars": len(curr_system_message_text),
-                        }, default=str))
+
+                        logger.warning(
+                            "[COST_LEAK] %s",
+                            _json.dumps(
+                                {
+                                    "type": "mid_turn_rebuild",
+                                    "at_user_id": _mr_at_user_id,
+                                    "agent_id": agent_state.id,
+                                    "step_index": _step_idx,
+                                    "diff_chars": len(diff),
+                                    "old_system_chars": len(curr_system_message_text),
+                                },
+                                default=str,
+                            ),
+                        )
                     except Exception:
                         pass
 
@@ -189,15 +203,19 @@ class BaseAgent(ABC):
                 ):
                     try:
                         import json as _json
+
                         logger.info(
                             "[MEMORY_REBUILD_SKIPPED] %s",
-                            _json.dumps({
-                                "at_user_id": _mr_at_user_id,
-                                "agent_id": agent_state.id,
-                                "diff_chars": len(diff),
-                                "system_chars": len(curr_system_message_text),
-                                "reason": "small_diff_equal_length",
-                            }, default=str),
+                            _json.dumps(
+                                {
+                                    "at_user_id": _mr_at_user_id,
+                                    "agent_id": agent_state.id,
+                                    "diff_chars": len(diff),
+                                    "system_chars": len(curr_system_message_text),
+                                    "reason": "small_diff_equal_length",
+                                },
+                                default=str,
+                            ),
                         )
                     except Exception:
                         pass

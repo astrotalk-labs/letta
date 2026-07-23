@@ -1,4 +1,3 @@
-
 """Hardcoded Bedrock inference profile IDs.
 
 Only the profile ID is hardcoded here — partition, region, and account are taken at

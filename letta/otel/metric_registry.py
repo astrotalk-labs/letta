@@ -202,8 +202,20 @@ class MetricRegistry:
                 # ~2-8s, degraded Bedrock up to ~30s). Default OTel buckets cap at 10s
                 # and would clip the degraded tail we specifically want to see.
                 explicit_bucket_boundaries_advisory=[
-                    100, 250, 500, 1000, 2000, 3000, 5000, 7500, 10000,
-                    15000, 20000, 30000, 45000, 60000,
+                    100,
+                    250,
+                    500,
+                    1000,
+                    2000,
+                    3000,
+                    5000,
+                    7500,
+                    10000,
+                    15000,
+                    20000,
+                    30000,
+                    45000,
+                    60000,
                 ],
             ),
         )

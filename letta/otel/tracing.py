@@ -120,13 +120,11 @@ async def _trace_error_handler(_request: Request, exc: Exception) -> JSONRespons
     # We format the traceback into the message text so it is impossible to miss.
     if status_code >= 500:
         import traceback as _tb
+
         _tb_text = "".join(_tb.format_exception(type(exc), exc, exc.__traceback__))
         _path = getattr(_request, "url", "?")
         _method = getattr(_request, "method", "?")
-        _full_msg = (
-            f"[UNHANDLED_EXCEPTION] {type(exc).__name__}: {error_msg} "
-            f"(path={_path} method={_method})\n{_tb_text}"
-        )
+        _full_msg = f"[UNHANDLED_EXCEPTION] {type(exc).__name__}: {error_msg} " f"(path={_path} method={_method})\n{_tb_text}"
         # logger.error so structured-log collectors pick it up
         logger.error(_full_msg)
         # print to stdout as a backup — guaranteed to land in container logs even

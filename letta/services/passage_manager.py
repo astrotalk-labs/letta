@@ -25,6 +25,7 @@ from letta.utils import enforce_types
 
 logger = get_logger(__name__)
 
+
 # TODO: Add redis-backed caching for backend
 @lru_cache(maxsize=8192)
 def get_embedding(text: str, model: str, endpoint: str, endpoint_type: str = "openai") -> List[float]:
@@ -547,7 +548,9 @@ class PassageManager:
                 )
                 passages.append(passage)
 
-            logger.info(f"[Embeddings] Successfully stored {len(passages)} passage(s) via {endpoint_type} embeddings for user_id={actor.id} gb_user_id={gb_user_id}")
+            logger.info(
+                f"[Embeddings] Successfully stored {len(passages)} passage(s) via {endpoint_type} embeddings for user_id={actor.id} gb_user_id={gb_user_id}"
+            )
             return passages
 
         except Exception as e:
@@ -604,7 +607,9 @@ class PassageManager:
 
             passages = await self.create_many_agent_passages_async(passages=passages, actor=actor)
 
-            logger.info(f"[Embeddings] Successfully stored {len(passages)} passage(s) via {embedding_config.embedding_endpoint_type} embeddings for user_id={actor.id} gb_user_id={gb_user_id}")
+            logger.info(
+                f"[Embeddings] Successfully stored {len(passages)} passage(s) via {embedding_config.embedding_endpoint_type} embeddings for user_id={actor.id} gb_user_id={gb_user_id}"
+            )
             return passages
 
         except Exception as e:

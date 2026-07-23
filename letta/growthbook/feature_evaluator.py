@@ -57,10 +57,7 @@ class FeatureEvaluator:
         try:
             from growthbook import GrowthBook  # type: ignore[import-untyped]
         except ImportError:
-            raise FeatureEvaluatorException(
-                "growthbook package is not installed. "
-                "Install it with: pip install growthbook"
-            )
+            raise FeatureEvaluatorException("growthbook package is not installed. " "Install it with: pip install growthbook")
 
         if not feature_key:
             raise FeatureEvaluatorException("Invalid feature key: feature_key is empty")
@@ -91,16 +88,11 @@ class FeatureEvaluator:
                 return None
 
             value = result.value
-            logger.debug(
-                f"GrowthBook feature '{feature_key}' evaluated: "
-                f"value={value}, source={result.source}"
-            )
+            logger.debug(f"GrowthBook feature '{feature_key}' evaluated: " f"value={value}, source={result.source}")
             return value
 
         except Exception as e:
-            raise FeatureEvaluatorException(
-                f"Exception evaluating feature '{feature_key}': {e}"
-            ) from e
+            raise FeatureEvaluatorException(f"Exception evaluating feature '{feature_key}': {e}") from e
         finally:
             gb.destroy()
 

@@ -88,9 +88,11 @@ class TestFeatureEvaluator:
             evaluator.get_feature_value("my-flag", {})
 
     def test_json_value(self):
-        evaluator = self._make_evaluator({
-            "config-flag": {"defaultValue": {"tier": "premium", "limit": 100}},
-        })
+        evaluator = self._make_evaluator(
+            {
+                "config-flag": {"defaultValue": {"tier": "premium", "limit": 100}},
+            }
+        )
         result = evaluator.get_feature_value("config-flag", {"userId": "123"})
         assert result == {"tier": "premium", "limit": 100}
 
@@ -110,7 +112,9 @@ class TestExperimentsService:
 
     def test_build_attributes(self):
         attrs = ExperimentsService.build_attributes(
-            user_id="u1", agent_id="a1", organization_id="org1",
+            user_id="u1",
+            agent_id="a1",
+            organization_id="org1",
             extra_attributes={"custom": "val"},
         )
         assert attrs[GrowthBookAttributes.USER_ID] == "u1"

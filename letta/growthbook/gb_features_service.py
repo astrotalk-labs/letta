@@ -138,9 +138,7 @@ class GBFeaturesService:
             daemon=True,
         )
         self._refresh_thread.start()
-        logger.info(
-            f"GrowthBook features refresh thread started (interval={self._refresh_interval}s)."
-        )
+        logger.info(f"GrowthBook features refresh thread started (interval={self._refresh_interval}s).")
 
     def _refresh_loop(self):
         """Background loop that fetches features periodically."""

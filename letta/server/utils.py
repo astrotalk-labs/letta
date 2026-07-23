@@ -66,6 +66,7 @@ logger = get_logger(__name__)
 
 class ServiceHealth(BaseModel):
     """Internal model for service health status"""
+
     service: str
     healthy: bool
     error: Optional[str] = None
@@ -74,10 +75,10 @@ class ServiceHealth(BaseModel):
 async def check_database_health(db: AsyncSession) -> ServiceHealth:
     """
     Check database connectivity by performing a simple query.
-    
+
     Args:
         db: AsyncSession instance
-        
+
     Returns:
         ServiceHealth with database connectivity status
     """
@@ -85,79 +86,52 @@ async def check_database_health(db: AsyncSession) -> ServiceHealth:
         # Execute a simple query to verify database connectivity
         result = await db.execute(text("SELECT 1"))
         result.scalar()
-        
-        return ServiceHealth(
-            service="postgres",
-            healthy=True,
-            error=None
-        )
+
+        return ServiceHealth(service="postgres", healthy=True, error=None)
     except Exception as e:
         # Log error type without exposing sensitive connection details
         logger.error(f"Database health check failed: {type(e).__name__}")
-        return ServiceHealth(
-            service="postgres",
-            healthy=False,
-            error="Database connection failed"
-        )
+        return ServiceHealth(service="postgres", healthy=False, error="Database connection failed")
 
 
 async def check_anthropic_health() -> Optional[ServiceHealth]:
     """
     Check Anthropic direct API connectivity if API key is configured.
-    
+
     Returns:
         ServiceHealth if API key is configured, None otherwise
     """
     api_key = model_settings.anthropic_api_key or os.getenv("ANTHROPIC_API_KEY")
-    
+
     if not api_key:
         return None
-    
+
     try:
         import anthropic
-        
+
         # Create a minimal client and test connectivity
         client = anthropic.Anthropic(api_key=api_key, max_retries=1, timeout=5.0)
-        
+
         # Try to use count_tokens endpoint as a lightweight connectivity check
         try:
-            client.messages.count_tokens(
-                model="claude-sonnet-4-5-20250929",
-                messages=[{"role": "user", "content": "test"}]
-            )
-            return ServiceHealth(
-                service="anthropic_direct",
-                healthy=True,
-                error=None
-            )
+            client.messages.count_tokens(model="claude-sonnet-4-5-20250929", messages=[{"role": "user", "content": "test"}])
+            return ServiceHealth(service="anthropic_direct", healthy=True, error=None)
         except Exception as e:
             # Log error type without exposing API key details
             logger.error(f"Anthropic direct API health check failed: {type(e).__name__}")
-            return ServiceHealth(
-                service="anthropic_direct",
-                healthy=False,
-                error="Anthropic API unavailable"
-            )
+            return ServiceHealth(service="anthropic_direct", healthy=False, error="Anthropic API unavailable")
     except ImportError:
         logger.warning("Anthropic library not installed")
-        return ServiceHealth(
-            service="anthropic_direct",
-            healthy=False,
-            error="Anthropic library not installed"
-        )
+        return ServiceHealth(service="anthropic_direct", healthy=False, error="Anthropic library not installed")
     except Exception as e:
         logger.error(f"Anthropic direct health check failed: {type(e).__name__}")
-        return ServiceHealth(
-            service="anthropic_direct",
-            healthy=False,
-            error="Anthropic API check failed"
-        )
+        return ServiceHealth(service="anthropic_direct", healthy=False, error="Anthropic API check failed")
 
 
 async def check_all_ai_services() -> Dict[str, ServiceHealth]:
     """
     Check connectivity to configured AI services (Anthropic direct API only).
-    
+
     Returns:
         Dictionary mapping service names to their health status
     """
@@ -168,5 +142,5 @@ async def check_all_ai_services() -> Dict[str, ServiceHealth]:
     # if anthropic_health is not None:
     #     ai_services[anthropic_health.service] = anthropic_health
     # return ai_services
-    
+
     return {}
