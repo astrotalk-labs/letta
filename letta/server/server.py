@@ -1072,7 +1072,7 @@ class SyncServer(Server):
         return agent.memory
 
     def get_archival_memory_summary(self, agent_id: str, actor: User) -> ArchivalMemorySummary:
-        return ArchivalMemorySummary(size=self.agent_manager.passage_size(actor=actor, agent_id=agent_id))
+        return ArchivalMemorySummary(size=self.passage_manager.agent_passage_size(actor=actor, agent_id=agent_id))
 
     def get_recall_memory_summary(self, agent_id: str, actor: User) -> RecallMemorySummary:
         return RecallMemorySummary(size=self.message_manager.size(actor=actor, agent_id=agent_id))
@@ -1093,7 +1093,7 @@ class SyncServer(Server):
         actor = self.user_manager.get_user_or_default(user_id=user_id)
 
         # iterate over records
-        records = self.agent_manager.list_passages(
+        records = self.agent_manager.list_agent_passages(
             actor=actor,
             agent_id=agent_id,
             after=after,
@@ -1302,12 +1302,6 @@ class SyncServer(Server):
         """Delete a data source"""
         await self.source_manager.delete_source(source_id=source_id, actor=actor)
 
-        # delete data from passage store
-        passages_to_be_deleted = await self.agent_manager.list_passages_async(actor=actor, source_id=source_id, limit=None)
-        await self.passage_manager.delete_source_passages_async(actor=actor, passages=passages_to_be_deleted)
-
-        # TODO: delete data from agent passage stores (?)
-
     async def load_file_to_source(self, source_id: str, file_path: str, job_id: str, actor: User) -> Job:
 
         # update job
@@ -1331,9 +1325,9 @@ class SyncServer(Server):
             agent_id = agent_state.id
 
             # Attach source to agent
-            curr_passage_size = await self.agent_manager.passage_size_async(actor=actor, agent_id=agent_id)
+            curr_passage_size = await self.passage_manager.agent_passage_size_async(actor=actor, agent_id=agent_id)
             agent_state = await self.agent_manager.attach_source_async(agent_id=agent_state.id, source_id=source_id, actor=actor)
-            new_passage_size = await self.agent_manager.passage_size_async(actor=actor, agent_id=agent_id)
+            new_passage_size = await self.passage_manager.agent_passage_size_async(actor=actor, agent_id=agent_id)
             assert new_passage_size >= curr_passage_size  # in case empty files are added
 
             # rebuild system prompt and force
@@ -1364,7 +1358,7 @@ class SyncServer(Server):
             step_manager=self.step_manager,
             telemetry_manager=self.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
         )
-        passages = await self.agent_manager.list_passages_async(actor=actor, source_id=source.id)
+        passages = await self.agent_manager.list_agent_passages_async(actor=actor)
         for passage in passages:
             await sleeptime_agent.step(
                 input_messages=[
@@ -1517,10 +1511,6 @@ class SyncServer(Server):
         passage_count, document_count = await load_data(connector, source, self.passage_manager, self.file_manager, actor=actor)
         return passage_count, document_count
 
-    def list_data_source_passages(self, user_id: str, source_id: str) -> List[Passage]:
-        # TODO: move this query into PassageManager
-        return self.agent_manager.list_passages(actor=self.user_manager.get_user_or_default(user_id=user_id), source_id=source_id)
-
     def list_all_sources(self, actor: User) -> List[Source]:
         # TODO: legacy: remove
         """List all sources (w/ extra metadata) belonging to a user"""
@@ -1532,7 +1522,7 @@ class SyncServer(Server):
         for source in sources:
 
             # count number of passages
-            num_passages = self.agent_manager.passage_size(actor=actor, source_id=source.id)
+            num_passages = self.passage_manager.agent_passage_size(actor=actor)
 
             # TODO: add when files table implemented
             ## count number of files

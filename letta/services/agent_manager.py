@@ -30,7 +30,7 @@ from letta.orm import BlocksAgents
 from letta.orm import Group as GroupModel
 from letta.orm import IdentitiesAgents
 from letta.orm import Source as SourceModel
-from letta.orm import SourcePassage, SourcesAgents
+from letta.orm import SourcesAgents
 from letta.orm import Tool as ToolModel
 from letta.orm import ToolsAgents
 from letta.orm.enums import ToolType
@@ -75,8 +75,6 @@ from letta.services.helpers.agent_manager_helper import (
     _process_relationship,
     _process_relationship_async,
     build_agent_passage_query,
-    build_passage_query,
-    build_source_passage_query,
     check_supports_structured_output,
     compile_system_message,
     derive_system_message,
@@ -2039,7 +2037,7 @@ class AgentManager:
 
     @trace_method
     @enforce_types
-    def list_passages(
+    def list_agent_passages(
         self,
         actor: PydanticUser,
         agent_id: Optional[str] = None,
@@ -2057,52 +2055,38 @@ class AgentManager:
         agent_only: bool = False,
         task_id: Optional[str] = None,
     ) -> List[PydanticPassage]:
-        """Lists all passages attached to an agent."""
+        """List archival memory passages for an agent.
+
+        Supports text search, vector similarity search, date filtering, and cursor-based
+        pagination. The source_id, file_id, and agent_only params are accepted for
+        backwards compatibility but have no effect.
+        """
         with db_registry.session() as session:
             _t0 = time.perf_counter()
-            main_query = build_passage_query(
+            main_query = build_agent_passage_query(
                 actor=actor,
                 agent_id=agent_id,
-                file_id=file_id,
                 query_text=query_text,
                 start_date=start_date,
                 end_date=end_date,
                 before=before,
                 after=after,
-                source_id=source_id,
                 embed_query=embed_query,
                 ascending=ascending,
                 embedding_config=embedding_config,
-                agent_only=agent_only,
             )
             _embed_ms = (time.perf_counter() - _t0) * 1000
 
-            # Add limit
             if limit:
                 main_query = main_query.limit(limit)
 
             _t1 = time.perf_counter()
-            results = list(session.execute(main_query))
+            passages = session.execute(main_query).scalars().all()
             _query_ms = (time.perf_counter() - _t1) * 1000
-
-            passages = []
-            for row in results:
-                data = dict(row._mapping)
-                if data["agent_id"] is not None:
-                    # This is an AgentPassage - remove source fields
-                    data.pop("source_id", None)
-                    data.pop("file_id", None)
-                    data.pop("file_name", None)
-                    passage = AgentPassage(**data)
-                else:
-                    # This is a SourcePassage - remove agent field
-                    data.pop("agent_id", None)
-                    passage = SourcePassage(**data)
-                passages.append(passage)
 
             if task_id:
                 logger.info(
-                    "[EMBEDDING_SEARCH] fn=list_passages  phase=embed  embed_query=%s  elapsed_ms=%.0f  agent_id=%s  user_id=%s  task_id=%s  limit=%s",
+                    "[EMBEDDING_SEARCH] fn=list_agent_passages  phase=embed  embed_query=%s  elapsed_ms=%.0f  agent_id=%s  user_id=%s  task_id=%s  limit=%s",
                     embed_query,
                     _embed_ms,
                     agent_id,
@@ -2111,7 +2095,7 @@ class AgentManager:
                     limit,
                 )
                 logger.info(
-                    "[EMBEDDING_SEARCH] fn=list_passages  phase=db_query  embed_query=%s  elapsed_ms=%.0f  agent_id=%s  user_id=%s  task_id=%s  limit=%s  result_count=%d",
+                    "[EMBEDDING_SEARCH] fn=list_agent_passages  phase=db_query  embed_query=%s  elapsed_ms=%.0f  agent_id=%s  user_id=%s  task_id=%s  limit=%s  result_count=%d",
                     embed_query,
                     _query_ms,
                     agent_id,
@@ -2121,163 +2105,6 @@ class AgentManager:
                     len(passages),
                 )
 
-            return [p.to_pydantic() for p in passages]
-
-    @trace_method
-    @enforce_types
-    async def list_passages_async(
-        self,
-        actor: PydanticUser,
-        agent_id: Optional[str] = None,
-        file_id: Optional[str] = None,
-        limit: Optional[int] = 50,
-        query_text: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        source_id: Optional[str] = None,
-        embed_query: bool = False,
-        ascending: bool = True,
-        embedding_config: Optional[EmbeddingConfig] = None,
-        agent_only: bool = False,
-        task_id: Optional[str] = None,
-    ) -> List[PydanticPassage]:
-        """Lists all passages attached to an agent."""
-        async with db_registry.async_session() as session:
-            _t0 = time.perf_counter()
-            main_query = build_passage_query(
-                actor=actor,
-                agent_id=agent_id,
-                file_id=file_id,
-                query_text=query_text,
-                start_date=start_date,
-                end_date=end_date,
-                before=before,
-                after=after,
-                source_id=source_id,
-                embed_query=embed_query,
-                ascending=ascending,
-                embedding_config=embedding_config,
-                agent_only=agent_only,
-            )
-            _embed_ms = (time.perf_counter() - _t0) * 1000
-
-            # Add limit
-            if limit:
-                main_query = main_query.limit(limit)
-
-            async with AsyncTimer() as _t:
-                result = await session.execute(main_query)
-
-            passages = []
-            for row in result:
-                data = dict(row._mapping)
-                if data["agent_id"] is not None:
-                    # This is an AgentPassage - remove source fields
-                    data.pop("source_id", None)
-                    data.pop("file_id", None)
-                    data.pop("file_name", None)
-                    passage = AgentPassage(**data)
-                else:
-                    # This is a SourcePassage - remove agent field
-                    data.pop("agent_id", None)
-                    passage = SourcePassage(**data)
-                passages.append(passage)
-
-            if task_id:
-                logger.info(
-                    "[EMBEDDING_SEARCH] fn=list_passages_async  phase=embed  embed_query=%s  elapsed_ms=%.0f  agent_id=%s  user_id=%s  task_id=%s  limit=%s",
-                    embed_query,
-                    _embed_ms,
-                    agent_id,
-                    actor.id,
-                    task_id,
-                    limit,
-                )
-                logger.info(
-                    "[EMBEDDING_SEARCH] fn=list_passages_async  phase=db_query  embed_query=%s  elapsed_ms=%.0f  agent_id=%s  user_id=%s  task_id=%s  limit=%s  result_count=%d",
-                    embed_query,
-                    _t.elapsed_ms,
-                    agent_id,
-                    actor.id,
-                    task_id,
-                    limit,
-                    len(passages),
-                )
-
-            return [p.to_pydantic() for p in passages]
-
-    @trace_method
-    @enforce_types
-    async def list_source_passages_async(
-        self,
-        actor: PydanticUser,
-        agent_id: Optional[str] = None,
-        file_id: Optional[str] = None,
-        limit: Optional[int] = 50,
-        query_text: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        source_id: Optional[str] = None,
-        embed_query: bool = False,
-        ascending: bool = True,
-        embedding_config: Optional[EmbeddingConfig] = None,
-        task_id: Optional[str] = None,
-    ) -> List[PydanticPassage]:
-        """Lists all passages attached to an agent."""
-        async with db_registry.async_session() as session:
-            _t0 = time.perf_counter()
-            main_query = build_source_passage_query(
-                actor=actor,
-                agent_id=agent_id,
-                file_id=file_id,
-                query_text=query_text,
-                start_date=start_date,
-                end_date=end_date,
-                before=before,
-                after=after,
-                source_id=source_id,
-                embed_query=embed_query,
-                ascending=ascending,
-                embedding_config=embedding_config,
-            )
-            _embed_ms = (time.perf_counter() - _t0) * 1000
-
-            # Add limit
-            if limit:
-                main_query = main_query.limit(limit)
-
-            async with AsyncTimer() as _t:
-                result = await session.execute(main_query)
-
-            # Get ORM objects directly using scalars()
-            passages = result.scalars().all()
-
-            if task_id:
-                logger.info(
-                    "[EMBEDDING_SEARCH] fn=list_source_passages_async  phase=embed  embed_query=%s  elapsed_ms=%.0f  agent_id=%s  user_id=%s  task_id=%s  limit=%s",
-                    embed_query,
-                    _embed_ms,
-                    agent_id,
-                    actor.id,
-                    task_id,
-                    limit,
-                )
-                logger.info(
-                    "[EMBEDDING_SEARCH] fn=list_source_passages_async  phase=db_query  embed_query=%s  elapsed_ms=%.0f  agent_id=%s  user_id=%s  task_id=%s  limit=%s  result_count=%d",
-                    embed_query,
-                    _t.elapsed_ms,
-                    agent_id,
-                    actor.id,
-                    task_id,
-                    limit,
-                    len(passages),
-                )
-
-            # Convert to Pydantic models
             return [p.to_pydantic() for p in passages]
 
     @trace_method
@@ -2347,84 +2174,6 @@ class AgentManager:
 
             # Convert to Pydantic models
             return [p.to_pydantic() for p in passages]
-
-    @trace_method
-    @enforce_types
-    def passage_size(
-        self,
-        actor: PydanticUser,
-        agent_id: Optional[str] = None,
-        file_id: Optional[str] = None,
-        query_text: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        source_id: Optional[str] = None,
-        embed_query: bool = False,
-        ascending: bool = True,
-        embedding_config: Optional[EmbeddingConfig] = None,
-        agent_only: bool = False,
-    ) -> int:
-        """Returns the count of passages matching the given criteria."""
-        with db_registry.session() as session:
-            main_query = build_passage_query(
-                actor=actor,
-                agent_id=agent_id,
-                file_id=file_id,
-                query_text=query_text,
-                start_date=start_date,
-                end_date=end_date,
-                before=before,
-                after=after,
-                source_id=source_id,
-                embed_query=embed_query,
-                ascending=ascending,
-                embedding_config=embedding_config,
-                agent_only=agent_only,
-            )
-
-            # Convert to count query
-            count_query = select(func.count()).select_from(main_query.subquery())
-            return session.scalar(count_query) or 0
-
-    @enforce_types
-    async def passage_size_async(
-        self,
-        actor: PydanticUser,
-        agent_id: Optional[str] = None,
-        file_id: Optional[str] = None,
-        query_text: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        source_id: Optional[str] = None,
-        embed_query: bool = False,
-        ascending: bool = True,
-        embedding_config: Optional[EmbeddingConfig] = None,
-        agent_only: bool = False,
-    ) -> int:
-        async with db_registry.async_session() as session:
-            main_query = build_passage_query(
-                actor=actor,
-                agent_id=agent_id,
-                file_id=file_id,
-                query_text=query_text,
-                start_date=start_date,
-                end_date=end_date,
-                before=before,
-                after=after,
-                source_id=source_id,
-                embed_query=embed_query,
-                ascending=ascending,
-                embedding_config=embedding_config,
-                agent_only=agent_only,
-            )
-
-            # Convert to count query
-            count_query = select(func.count()).select_from(main_query.subquery())
-            return (await session.execute(count_query)).scalar() or 0
 
     # ======================================================================================================================
     # Tool Management
