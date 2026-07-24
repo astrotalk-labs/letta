@@ -276,9 +276,14 @@ class LettaAgent(BaseAgent):
         latency_optimisation_flow: bool = False,
         llm_provider: Optional[str] = None,
     ) -> LettaResponse:
+        _t_agent_load_start = get_utc_timestamp_ns() if task_id else None
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
         )
+        if task_id and _t_agent_load_start is not None:
+            logger.warning(
+                f"[TASK_LATENCY] task_id={task_id} phase=agent_load duration_ms={ns_to_ms(get_utc_timestamp_ns() - _t_agent_load_start)}"
+            )
         _, new_in_context_messages, usage, stop_reason = await self._step(
             agent_state=agent_state,
             input_messages=input_messages,
@@ -456,7 +461,7 @@ class LettaAgent(BaseAgent):
                 is_final_step=(i == max_steps - 1),
             )
             self.response_messages.extend(persisted_messages)
-            new_in_context_messages.extend(persisted_messages)
+            # new_in_context_messages.extend(persisted_messages)  # dead path — step_stream_no_tokens is never invoked
             initial_messages = None
             log_event("agent.stream_no_tokens.llm_response.processed")  # [4^]
 
@@ -763,9 +768,7 @@ class LettaAgent(BaseAgent):
                 _original_model = agent_state.llm_config.model
                 agent_state.llm_config.model = _haiku_model
                 _step_used_haiku = True
-                logger.info(
-                    f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} step={i} ATTEMPT_HAIKU " f"model={_original_model} -> {_haiku_model}"
-                )
+                logger.info(f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} step={i} ATTEMPT_HAIKU model={_original_model} -> {_haiku_model}")
                 debug_log(self.at_user_id, f"_step: step={i} ATTEMPT_HAIKU primary={_original_model} → haiku={_haiku_model}")
             elif _haiku_model and i == 0:
                 logger.warning(
@@ -1027,15 +1030,14 @@ class LettaAgent(BaseAgent):
                     f"[TASK_LATENCY] task_id={task_id} step={i} phase=tool_exec duration_ms={ns_to_ms(get_utc_timestamp_ns() - _tool_start)}"
                 )
             self.response_messages.extend(persisted_messages)
-            _pre_extend_ids = [m.id for m in new_in_context_messages]
-            _persisted_ids = [m.id for m in persisted_messages]
-            _overlap = set(_pre_extend_ids) & set(_persisted_ids)
+            _existing_ids = {m.id for m in new_in_context_messages}
+            deduped_persisted = [m for m in persisted_messages if m.id not in _existing_ids]
             debug_log(
                 self.at_user_id,
-                f"_step: step={i} [MSG_DUP_DIAG] pre_extend_ids={_pre_extend_ids} "
-                f"persisted_ids={_persisted_ids} overlap={list(_overlap)}",
+                f"_step: step={i} [MSG_DUP_FIX] persisted={len(persisted_messages)} "
+                f"deduped={len(deduped_persisted)} dropped={len(persisted_messages) - len(deduped_persisted)}",
             )
-            new_in_context_messages.extend(persisted_messages)
+            new_in_context_messages.extend(deduped_persisted)
             initial_messages = None
             _prev_tool_name = tool_call.function.name  # used by next iteration for cascade decision
 
@@ -1414,7 +1416,7 @@ class LettaAgent(BaseAgent):
                 is_final_step=(i == max_steps - 1),
             )
             self.response_messages.extend(persisted_messages)
-            new_in_context_messages.extend(persisted_messages)
+            # new_in_context_messages.extend(persisted_messages)  # dead path — step_stream is never invoked
             initial_messages = None
 
             # log total step time
@@ -1818,12 +1820,16 @@ class LettaAgent(BaseAgent):
             except Exception:
                 pass
         _t_setctx = get_utc_timestamp_ns()
-        _final_ids = [m.id for m in new_in_context_messages]
-        _final_unique = set(_final_ids)
+        _seen = set()
+        _final_ids = []
+        for m in new_in_context_messages:
+            if m.id not in _seen:
+                _seen.add(m.id)
+                _final_ids.append(m.id)
+        _raw_count = len(new_in_context_messages)
         debug_log(
             getattr(self, "at_user_id", None),
-            f"_rebuild_context_window: [MSG_DUP_DIAG] saving message_ids total={len(_final_ids)} "
-            f"unique={len(_final_unique)} has_dupes={len(_final_ids) != len(_final_unique)} ids={_final_ids}",
+            f"_rebuild_context_window: [MSG_DUP_FIX] raw={_raw_count} deduped={len(_final_ids)} dropped={_raw_count - len(_final_ids)}",
         )
         await self.agent_manager.set_in_context_messages_async(agent_id=self.agent_id, message_ids=_final_ids, actor=self.actor)
         if self._task_id:
