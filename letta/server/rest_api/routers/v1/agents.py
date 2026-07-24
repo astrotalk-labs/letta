@@ -751,7 +751,7 @@ async def send_message(
             logger.warning(
                 f"[TASK_LATENCY] task_id={request.task_id} phase=agent_load duration_ms={ns_to_ms(get_utc_timestamp_ns() - _t_agent)}"
             )
-        agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type in ["sleeptime", "voice_sleeptime"]
+        agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type == "sleeptime"
         model_compatible = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "together", "google_ai", "google_vertex"]
         debug_log(
             at_user_id,
@@ -763,7 +763,7 @@ async def send_message(
                 at_user_id,
                 f"send_message: using new agent loop path enable_sleeptime={agent.enable_sleeptime} agent_type={agent.agent_type}",
             )
-            if agent.enable_sleeptime and agent.agent_type != AgentType.voice_convo_agent:
+            if agent.enable_sleeptime:
                 debug_log(at_user_id, "send_message: choosing SleeptimeMultiAgentV2")
                 agent_loop = SleeptimeMultiAgentV2(
                     agent_id=agent_id,
@@ -879,13 +879,13 @@ async def send_message_streaming(
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
     # TODO: This is redundant, remove soon
     agent = await server.agent_manager.get_agent_by_id_async(agent_id, actor, include_relationships=["multi_agent_group"])
-    agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type in ["sleeptime", "voice_sleeptime"]
+    agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type == "sleeptime"
     model_compatible = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "together", "google_ai", "google_vertex"]
     model_compatible_token_streaming = agent.llm_config.model_endpoint_type in ["anthropic", "openai"]
     not_letta_endpoint = not ("inference.letta.com" in agent.llm_config.model_endpoint)
 
     if agent_eligible and model_compatible:
-        if agent.enable_sleeptime and agent.agent_type != AgentType.voice_convo_agent:
+        if agent.enable_sleeptime:
             agent_loop = SleeptimeMultiAgentV2(
                 agent_id=agent_id,
                 message_manager=server.message_manager,
@@ -1118,7 +1118,7 @@ async def summarize_agent_conversation(
 
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
     agent = await server.agent_manager.get_agent_by_id_async(agent_id, actor, include_relationships=["multi_agent_group"])
-    agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type in ["sleeptime", "voice_sleeptime"]
+    agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type == "sleeptime"
     model_compatible = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "together", "google_ai", "google_vertex"]
 
     if agent_eligible and model_compatible:

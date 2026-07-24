@@ -143,16 +143,8 @@ def _process_tags(agent: AgentModel, tags: List[str], replace=True):
 
 def derive_system_message(agent_type: AgentType, enable_sleeptime: Optional[bool] = None, system: Optional[str] = None):
     if system is None:
-        # TODO: don't hardcode
-
-        if agent_type == AgentType.voice_convo_agent:
-            system = gpt_system.get_system_text("voice_chat")
-
-        elif agent_type == AgentType.voice_sleeptime_agent:
-            system = gpt_system.get_system_text("voice_sleeptime")
-
         # MemGPT v1, both w/ and w/o sleeptime
-        elif agent_type == AgentType.memgpt_agent and not enable_sleeptime:
+        if agent_type == AgentType.memgpt_agent and not enable_sleeptime:
             system = gpt_system.get_system_text("memgpt_v2_chat")
         elif agent_type == AgentType.memgpt_agent and enable_sleeptime:
             # NOTE: same as the chat one, since the chat one says that you "may" have the tools

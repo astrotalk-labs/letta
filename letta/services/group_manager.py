@@ -85,15 +85,6 @@ class GroupManager:
                     new_group.sleeptime_agent_frequency = group.manager_config.sleeptime_agent_frequency
                     if new_group.sleeptime_agent_frequency:
                         new_group.turns_counter = -1
-                case ManagerType.voice_sleeptime:
-                    new_group.manager_type = ManagerType.voice_sleeptime
-                    new_group.manager_agent_id = group.manager_config.manager_agent_id
-                    max_message_buffer_length = group.manager_config.max_message_buffer_length
-                    min_message_buffer_length = group.manager_config.min_message_buffer_length
-                    # Safety check for buffer length range
-                    self.ensure_buffer_length_range_valid(max_value=max_message_buffer_length, min_value=min_message_buffer_length)
-                    new_group.max_message_buffer_length = max_message_buffer_length
-                    new_group.min_message_buffer_length = min_message_buffer_length
                 case _:
                     raise ValueError(f"Unsupported manager type: {group.manager_config.manager_type}")
 
@@ -130,15 +121,6 @@ class GroupManager:
                     new_group.sleeptime_agent_frequency = group.manager_config.sleeptime_agent_frequency
                     if new_group.sleeptime_agent_frequency:
                         new_group.turns_counter = -1
-                case ManagerType.voice_sleeptime:
-                    new_group.manager_type = ManagerType.voice_sleeptime
-                    new_group.manager_agent_id = group.manager_config.manager_agent_id
-                    max_message_buffer_length = group.manager_config.max_message_buffer_length
-                    min_message_buffer_length = group.manager_config.min_message_buffer_length
-                    # Safety check for buffer length range
-                    self.ensure_buffer_length_range_valid(max_value=max_message_buffer_length, min_value=min_message_buffer_length)
-                    new_group.max_message_buffer_length = max_message_buffer_length
-                    new_group.min_message_buffer_length = min_message_buffer_length
                 case _:
                     raise ValueError(f"Unsupported manager type: {group.manager_config.manager_type}")
 
@@ -177,12 +159,6 @@ class GroupManager:
                     case ManagerType.sleeptime:
                         manager_agent_id = group_update.manager_config.manager_agent_id
                         sleeptime_agent_frequency = group_update.manager_config.sleeptime_agent_frequency
-                        if sleeptime_agent_frequency and group.turns_counter is None:
-                            group.turns_counter = -1
-                    case ManagerType.voice_sleeptime:
-                        manager_agent_id = group_update.manager_config.manager_agent_id
-                        max_message_buffer_length = group_update.manager_config.max_message_buffer_length or group.max_message_buffer_length
-                        min_message_buffer_length = group_update.manager_config.min_message_buffer_length or group.min_message_buffer_length
                         if sleeptime_agent_frequency and group.turns_counter is None:
                             group.turns_counter = -1
                     case _:
