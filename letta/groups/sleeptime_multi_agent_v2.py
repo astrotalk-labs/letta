@@ -66,7 +66,6 @@ class SleeptimeMultiAgentV2(BaseAgent):
         use_assistant_message: bool = True,
         request_start_timestamp_ns: Optional[int] = None,
         include_return_message_types: Optional[List[MessageType]] = None,
-        **kwargs,
     ) -> LettaResponse:
         run_ids = []
 

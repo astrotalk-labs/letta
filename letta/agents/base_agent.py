@@ -9,7 +9,7 @@ from letta.helpers.datetime_helpers import get_utc_time, get_utc_timestamp_ns, n
 from letta.log import get_logger
 from letta.schemas.agent import AgentState
 from letta.schemas.enums import MessageStreamStatus
-from letta.schemas.letta_message import LegacyLettaMessage, LettaMessage, MessageType
+from letta.schemas.letta_message import LegacyLettaMessage, LettaMessage
 from letta.schemas.letta_message_content import TextContent
 from letta.schemas.letta_response import LettaResponse
 from letta.schemas.letta_stop_reason import LettaStopReason, StopReasonType
@@ -51,31 +51,19 @@ class BaseAgent(ABC):
         self._task_id: Optional[str] = None  # set per-request by step(); used to gate latency logs
 
     @abstractmethod
-    async def step(
-        self,
-        input_messages: List[MessageCreate],
-        agent_state: Optional[AgentState] = None,
-        max_steps: int = DEFAULT_MAX_STEPS,
-        use_assistant_message: bool = True,
-        request_start_timestamp_ns: Optional[int] = None,
-        include_return_message_types: Optional[List[MessageType]] = None,
-        use_vertex_experiment: bool = False,
-        use_bedrock_experiment: bool = False,
-        model_override: Optional[str] = None,
-        user_cohort: Optional[str] = None,
-        thinking: Optional[dict] = None,
-        thinking_config: Optional[dict] = None,
-        output_config: Optional[dict] = None,
-        task_id: Optional[str] = None,
-        latency_optimisation_flow: bool = False,
-        llm_provider: Optional[str] = None,
-        **kwargs,
-    ) -> LettaResponse:
+    async def step(self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS) -> LettaResponse:
+        """
+        Main execution loop for the agent.
+        """
         raise NotImplementedError
 
+    @abstractmethod
     async def step_stream(
         self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS
     ) -> AsyncGenerator[Union[LettaMessage, LegacyLettaMessage, MessageStreamStatus], None]:
+        """
+        Main streaming execution loop for the agent.
+        """
         raise NotImplementedError
 
     def pre_process_input_message(self, input_messages: List[MessageCreate]) -> Any:
