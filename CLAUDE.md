@@ -106,13 +106,13 @@ embedding-provider load during an outage rather than backing off from it.
 
 ## Best practices for this repo
 
-- **Provider-affecting changes for the `/messages` flow only need `step()`.**
-  Streaming isn't used by this integration, so `use_vertex_experiment` /
-  `use_bedrock_experiment` / `model_override` / `llm_provider` handling only needs to
-  be verified in `LettaAgent.step()`. If you're touching a genuinely
-  streaming-facing feature instead, `step_stream_no_tokens()` and `step_stream()`
-  have their own separate `_apply_provider_switching` call sites and need their own
-  verification — don't assume a `step()` fix carries over.
+- **`step_stream_no_tokens()` and `step_stream()` are dead code paths.**
+  They are never invoked by any caller in this integration. All `/messages` traffic
+  goes through `step()` → `_step()`. Do not spend effort verifying, fixing, or
+  maintaining these methods — treat them as dead code.
+- **Provider-affecting changes for the `/messages` flow only need `_step()`.**
+  `use_vertex_experiment` / `use_bedrock_experiment` / `model_override` /
+  `llm_provider` handling only needs to be verified in `LettaAgent._step()`.
 - **New `LettaRequest` fields need explicit plumbing, not implicit inheritance.**
   `LettaStreamingRequest` and `LettaBatchRequest` subclass `LettaRequest`, but the
   *handlers* for streaming/batch call their own code paths — a field added to
@@ -147,14 +147,14 @@ embedding-provider load during an outage rather than backing off from it.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **letta** (11741 symbols, 26389 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **letta** (11747 symbols, 26393 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
 ## Always Do
 
 - **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main"})`.
+- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main-custom"})`.
 - **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
 - When exploring unfamiliar code, use `query({search_query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
 - When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
