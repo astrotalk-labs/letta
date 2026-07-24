@@ -2,15 +2,13 @@ import asyncio
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import openai
 
 from letta.agents.base_agent import BaseAgent
-from letta.agents.exceptions import IncompatibleAgentType
 from letta.agents.voice_sleeptime_agent import VoiceSleeptimeAgent
 from letta.constants import DEFAULT_MAX_STEPS, NON_USER_MSG_PREFIX
-from letta.helpers.datetime_helpers import get_utc_time
 from letta.helpers.tool_execution_helper import (
     add_pre_execution_message,
     enable_strict_mode,
@@ -20,8 +18,7 @@ from letta.helpers.tool_execution_helper import (
 from letta.interfaces.openai_chat_completions_streaming_interface import OpenAIChatCompletionsStreamingInterface
 from letta.log import get_logger
 from letta.orm.enums import ToolType
-from letta.schemas.agent import AgentState, AgentType
-from letta.schemas.enums import MessageRole
+from letta.schemas.agent import AgentState
 from letta.schemas.letta_response import LettaResponse
 from letta.schemas.message import Message, MessageCreate
 from letta.schemas.openai.chat_completion_request import (
@@ -34,20 +31,13 @@ from letta.schemas.openai.chat_completion_request import (
     UserMessage,
 )
 from letta.schemas.user import User
-from letta.server.rest_api.utils import (
-    convert_in_context_letta_messages_to_openai,
-    create_assistant_messages_from_openai_response,
-    create_input_messages,
-    create_letta_messages_from_llm_response,
-)
+from letta.server.rest_api.utils import create_assistant_messages_from_openai_response, create_letta_messages_from_llm_response
 from letta.services.agent_manager import AgentManager
 from letta.services.block_manager import BlockManager
-from letta.services.helpers.agent_manager_helper import compile_system_message
 from letta.services.message_manager import MessageManager
 from letta.services.passage_manager import PassageManager
 from letta.services.summarizer.enums import SummarizationMode
 from letta.services.summarizer.summarizer import Summarizer
-from letta.settings import model_settings
 
 logger = get_logger(__name__)
 
@@ -113,77 +103,6 @@ class VoiceAgent(BaseAgent):
 
     async def step(self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS) -> LettaResponse:
         raise NotImplementedError("VoiceAgent does not have a synchronous step implemented currently.")
-
-    async def step_stream(self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS) -> AsyncGenerator[str, None]:
-        """
-        Main streaming loop that yields partial tokens.
-        Whenever we detect a tool call, we yield from _handle_ai_response as well.
-        """
-        if len(input_messages) != 1 or input_messages[0].role != MessageRole.user:
-            raise ValueError(f"Voice Agent was invoked with multiple input messages or message did not have role `user`: {input_messages}")
-
-        user_query = input_messages[0].content[0].text
-
-        agent_state = await self.agent_manager.get_agent_by_id_async(self.agent_id, actor=self.actor)
-
-        # TODO: Refactor this so it uses our in-house clients
-        # TODO: For now, piggyback off of OpenAI client for ease
-        if agent_state.llm_config.model_endpoint_type == "anthropic":
-            self.openai_client.api_key = model_settings.anthropic_api_key
-            self.openai_client.base_url = "https://api.anthropic.com/v1/"
-        elif agent_state.llm_config.model_endpoint_type != "openai":
-            raise ValueError("Letta voice agents are only compatible with OpenAI or Anthropic.")
-
-        # Safety check
-        if agent_state.agent_type != AgentType.voice_convo_agent:
-            raise IncompatibleAgentType(expected_type=AgentType.voice_convo_agent, actual_type=agent_state.agent_type)
-
-        summarizer = self.init_summarizer(agent_state=agent_state)
-
-        in_context_messages = await self.message_manager.get_messages_by_ids_async(message_ids=agent_state.message_ids, actor=self.actor)
-        memory_edit_timestamp = get_utc_time()
-        in_context_messages[0].content[0].text = compile_system_message(
-            system_prompt=agent_state.system,
-            in_context_memory=agent_state.memory,
-            in_context_memory_last_edit=memory_edit_timestamp,
-            previous_message_count=self.num_messages,
-            archival_memory_size=self.num_archival_memories,
-        )
-        letta_message_db_queue = create_input_messages(input_messages=input_messages, agent_id=agent_state.id, actor=self.actor)
-        in_memory_message_history = self.pre_process_input_message(input_messages)
-
-        # TODO: Define max steps here
-        for _ in range(max_steps):
-            # Rebuild memory each loop
-            in_context_messages = await self._rebuild_memory_async(in_context_messages, agent_state)
-            openai_messages = convert_in_context_letta_messages_to_openai(in_context_messages, exclude_system_messages=True)
-            openai_messages.extend(in_memory_message_history)
-
-            request = self._build_openai_request(openai_messages, agent_state)
-
-            stream = await self.openai_client.chat.completions.create(**request.model_dump(exclude_unset=True))
-            streaming_interface = OpenAIChatCompletionsStreamingInterface(stream_pre_execution_message=True)
-
-            # 1) Yield partial tokens from OpenAI
-            async for sse_chunk in streaming_interface.process(stream):
-                yield sse_chunk
-
-            # 2) Now handle the final AI response. This might yield more text (stalling, etc.)
-            should_continue = await self._handle_ai_response(
-                user_query,
-                streaming_interface,
-                agent_state,
-                in_memory_message_history,
-                letta_message_db_queue,
-            )
-
-            if not should_continue:
-                break
-
-        # Rebuild context window if desired
-        await self._rebuild_context_window(summarizer, in_context_messages, letta_message_db_queue)
-
-        yield "data: [DONE]\n\n"
 
     async def _handle_ai_response(
         self,
@@ -273,7 +192,6 @@ class VoiceAgent(BaseAgent):
             )
             letta_message_db_queue.extend(tool_call_messages)
 
-            # Because we have new data, we want to continue the while-loop in `step_stream`
             return True
         else:
             # If we got here, there's no tool call. If finish_reason_stop => done

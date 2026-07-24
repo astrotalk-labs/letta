@@ -1,5 +1,4 @@
 import asyncio
-import json
 import os
 import threading
 import time
@@ -14,7 +13,6 @@ from letta.schemas.embedding_config import EmbeddingConfig
 from letta.schemas.letta_message_content import TextContent
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.message import MessageCreate
-from letta.server.rest_api.streaming_response import StreamingResponseWithStatusCode
 from letta.services.agent_manager import AgentManager
 from letta.services.block_manager import BlockManager
 from letta.services.message_manager import MessageManager
@@ -124,44 +122,6 @@ async def test_provider_trace_experimental_step(message, agent_state, default_us
     reply_telemetry = await experimental_agent.telemetry_manager.get_provider_trace_by_step_id_async(step_id=reply_step, actor=default_user)
     assert tool_telemetry.request_json
     assert reply_telemetry.request_json
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("message", ["Get the weather in San Francisco."])
-async def test_provider_trace_experimental_step_stream(message, agent_state, default_user, event_loop):
-    experimental_agent = LettaAgent(
-        agent_id=agent_state.id,
-        message_manager=MessageManager(),
-        agent_manager=AgentManager(),
-        block_manager=BlockManager(),
-        passage_manager=PassageManager(),
-        step_manager=StepManager(),
-        telemetry_manager=TelemetryManager(),
-        actor=default_user,
-    )
-    stream = experimental_agent.step_stream([MessageCreate(role="user", content=[TextContent(text=message)])])
-
-    result = StreamingResponseWithStatusCode(
-        stream,
-        media_type="text/event-stream",
-    )
-
-    message_id = None
-
-    async def test_send(message) -> None:
-        nonlocal message_id
-        if "body" in message and not message_id:
-            body = message["body"].decode("utf-8").split("data:")
-            message_id = json.loads(body[1])["id"]
-
-    await result.stream_response(send=test_send)
-
-    messages = await experimental_agent.message_manager.get_messages_by_ids_async([message_id], actor=default_user)
-    step_ids = set((message.step_id for message in messages))
-    for step_id in step_ids:
-        telemetry_data = await experimental_agent.telemetry_manager.get_provider_trace_by_step_id_async(step_id=step_id, actor=default_user)
-        assert telemetry_data.request_json
-        assert telemetry_data.response_json
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
-from typing import AsyncGenerator, List, Optional
+from typing import List, Optional
 
 from letta.agents.base_agent import BaseAgent
 from letta.agents.letta_agent import LettaAgent
@@ -146,66 +146,6 @@ class SleeptimeMultiAgentV2(BaseAgent):
 
         for finish_chunk in self.get_finish_chunks_for_stream(response.usage):
             yield f"data: {finish_chunk}\n\n"
-
-    @trace_method
-    async def step_stream(
-        self,
-        input_messages: List[MessageCreate],
-        max_steps: int = DEFAULT_MAX_STEPS,
-        use_assistant_message: bool = True,
-        request_start_timestamp_ns: Optional[int] = None,
-        include_return_message_types: Optional[List[MessageType]] = None,
-    ) -> AsyncGenerator[str, None]:
-        # Prepare new messages
-        new_messages = []
-        for message in input_messages:
-            if isinstance(message.content, str):
-                message.content = [TextContent(text=message.content)]
-            message.group_id = self.group.id
-            new_messages.append(message)
-
-        # Load foreground agent
-        foreground_agent = LettaAgent(
-            agent_id=self.agent_id,
-            message_manager=self.message_manager,
-            agent_manager=self.agent_manager,
-            block_manager=self.block_manager,
-            passage_manager=self.passage_manager,
-            actor=self.actor,
-            step_manager=self.step_manager,
-            telemetry_manager=self.telemetry_manager,
-        )
-        # Perform foreground agent step
-        async for chunk in foreground_agent.step_stream(
-            input_messages=new_messages,
-            max_steps=max_steps,
-            use_assistant_message=use_assistant_message,
-            request_start_timestamp_ns=request_start_timestamp_ns,
-            include_return_message_types=include_return_message_types,
-        ):
-            yield chunk
-
-        # Get response messages
-        last_response_messages = foreground_agent.response_messages
-
-        # Update turns counter
-        if self.group.sleeptime_agent_frequency is not None and self.group.sleeptime_agent_frequency > 0:
-            turns_counter = await self.group_manager.bump_turns_counter_async(group_id=self.group.id, actor=self.actor)
-
-        # Perform participant steps
-        if self.group.sleeptime_agent_frequency is None or (
-            turns_counter is not None and turns_counter % self.group.sleeptime_agent_frequency == 0
-        ):
-            last_processed_message_id = await self.group_manager.get_last_processed_message_id_and_update_async(
-                group_id=self.group.id, last_processed_message_id=last_response_messages[-1].id, actor=self.actor
-            )
-            for sleeptime_agent_id in self.group.agent_ids:
-                run_id = await self._issue_background_task(
-                    sleeptime_agent_id,
-                    last_response_messages,
-                    last_processed_message_id,
-                    use_assistant_message,
-                )
 
     async def _issue_background_task(
         self,
