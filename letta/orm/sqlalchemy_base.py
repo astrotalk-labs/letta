@@ -4,6 +4,7 @@ from enum import Enum
 from functools import wraps
 from pprint import pformat
 from typing import TYPE_CHECKING, List, Literal, Optional, Tuple, Union
+from typing_extensions import Self
 
 from sqlalchemy import Sequence, String, and_, delete, func, or_, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError, TimeoutError
@@ -438,7 +439,7 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         access_type: AccessType = AccessType.ORGANIZATION,
         check_is_deleted: bool = False,
         **kwargs,
-    ) -> "SqlalchemyBase":
+    ) -> Self:
         """The primary accessor for an ORM record.
         Args:
             db_session: the database session to use when retrieving the record
@@ -477,7 +478,7 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         access_type: AccessType = AccessType.ORGANIZATION,
         check_is_deleted: bool = False,
         **kwargs,
-    ) -> "SqlalchemyBase":
+    ) -> Self:
         """The primary accessor for an ORM record. Async version of read method.
         Args:
             db_session: the database session to use when retrieving the record

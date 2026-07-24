@@ -1,7 +1,7 @@
 import asyncio
 import json
 import uuid
-from typing import AsyncGenerator, Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from openai import AsyncStream
 from openai.types.chat import ChatCompletionChunk
@@ -10,14 +10,12 @@ from opentelemetry.trace import Span
 from letta.agents.base_agent import BaseAgent
 from letta.debug_util import debug_log
 from letta.agents.ephemeral_summary_agent import EphemeralSummaryAgent
-from letta.agents.helpers import _create_letta_response, _prepare_in_context_messages_no_persist_async, generate_step_id
+from letta.agents.helpers import _create_letta_response, prepare_in_context_messages_no_persist_async, generate_step_id
 from letta.constants import DEFAULT_MAX_STEPS
 from letta.errors import ContextWindowExceededError
 from letta.helpers import ToolRulesSolver
 from letta.helpers.datetime_helpers import AsyncTimer, get_utc_timestamp_ns, ns_to_ms
 from letta.helpers.tool_execution_helper import enable_strict_mode
-from letta.interfaces.anthropic_streaming_interface import AnthropicStreamingInterface
-from letta.interfaces.openai_streaming_interface import OpenAIStreamingInterface
 from letta.llm_api.llm_client import LLMClient
 from letta.llm_api.llm_client_base import LLMClientBase
 from letta.local_llm.constants import INNER_THOUGHTS_KWARG
@@ -179,7 +177,6 @@ class LettaAgent(BaseAgent):
     ):
         super().__init__(agent_id=agent_id, openai_client=None, message_manager=message_manager, agent_manager=agent_manager, actor=actor)
 
-        # TODO: Make this more general, factorable
         # Summarizer settings
         self.block_manager = block_manager
         self.passage_manager = passage_manager
@@ -261,6 +258,7 @@ class LettaAgent(BaseAgent):
     async def step(
         self,
         input_messages: List[MessageCreate],
+        agent_state: Optional[AgentState] = None,
         max_steps: int = DEFAULT_MAX_STEPS,
         use_assistant_message: bool = True,
         request_start_timestamp_ns: Optional[int] = None,
@@ -275,10 +273,12 @@ class LettaAgent(BaseAgent):
         task_id: Optional[str] = None,
         latency_optimisation_flow: bool = False,
         llm_provider: Optional[str] = None,
+        **kwargs,
     ) -> LettaResponse:
-        agent_state = await self.agent_manager.get_agent_by_id_async(
-            agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
-        )
+        if agent_state is None:
+            agent_state = await self.agent_manager.get_agent_by_id_async(
+                agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
+            )
         _, new_in_context_messages, usage, stop_reason = await self._step(
             agent_state=agent_state,
             input_messages=input_messages,
@@ -303,255 +303,255 @@ class LettaAgent(BaseAgent):
             include_return_message_types=include_return_message_types,
         )
 
-    @trace_method
-    async def step_stream_no_tokens(
-        self,
-        input_messages: List[MessageCreate],
-        max_steps: int = DEFAULT_MAX_STEPS,
-        use_assistant_message: bool = True,
-        request_start_timestamp_ns: Optional[int] = None,
-        include_return_message_types: Optional[List[MessageType]] = None,
-        use_vertex_experiment: bool = False,
-        use_bedrock_experiment: bool = False,
-        model_override: Optional[str] = None,
-        user_cohort: Optional[str] = None,
-        thinking: Optional[dict] = None,
-        thinking_config: Optional[dict] = None,
-        output_config: Optional[dict] = None,
-        llm_provider: Optional[str] = None,
-    ):
-        agent_state = await self.agent_manager.get_agent_by_id_async(
-            agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
-        )
-
-        # Handle provider switching based on experiment flags
-        self._apply_provider_switching(
-            agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override, llm_provider=llm_provider
-        )
-
-        async with AsyncTimer() as _t:
-            current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
-                input_messages, agent_state, self.message_manager, self.actor
-            )
-        _log_step_timing(
-            "message_buffer_load",
-            _t.elapsed_ms,
-            agent_id=agent_state.id,
-            user_id=self.at_user_id,
-            msg_count=len(current_in_context_messages),
-        )
-        initial_messages = new_in_context_messages
-        tool_rules_solver = ToolRulesSolver(agent_state.tool_rules)
-        llm_client = LLMClient.create(
-            provider_type=agent_state.llm_config.model_endpoint_type,
-            put_inner_thoughts_first=True,
-            actor=self.actor,
-            at_user_id=self.at_user_id,
-            user_cohort=user_cohort,
-        )
-        stop_reason = None
-        usage = LettaUsageStatistics()
-
-        # span for request
-        request_span = tracer.start_span("time_to_first_token", start_time=request_start_timestamp_ns)
-        request_span.set_attributes({f"llm_config.{k}": v for k, v in agent_state.llm_config.model_dump().items() if v is not None})
-
-        _chain_at_uid = getattr(self, "at_user_id", None)
-        for i in range(max_steps):
-            step_id = generate_step_id()
-            step_start = get_utc_timestamp_ns()
-            agent_step_span = tracer.start_span("agent_step", start_time=step_start)
-            agent_step_span.set_attributes({"step_id": step_id})
-
-            try:
-                from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
-                import json as _json
-
-                if _chain_at_uid and _is_user_in_cache_obs_sample(_chain_at_uid):
-                    logger.info(
-                        "[CHAIN_OBS] %s",
-                        _json.dumps(
-                            {"phase": "step_start", "at_user_id": _chain_at_uid, "agent_id": agent_state.id, "step_index": i}, default=str
-                        ),
-                    )
-            except Exception:
-                pass
-            debug_log(
-                self.at_user_id,
-                f"step_stream_no_tokens: LOOP step={i}/{max_steps} agent_id={agent_state.id} model={agent_state.llm_config.model}",
-            )
-
-            request_data, response_data, current_in_context_messages, new_in_context_messages, valid_tool_names = (
-                await self._build_and_request_from_llm(
-                    current_in_context_messages,
-                    new_in_context_messages,
-                    agent_state,
-                    llm_client,
-                    tool_rules_solver,
-                    agent_step_span,
-                    use_vertex_experiment=use_vertex_experiment,
-                    use_bedrock_experiment=use_bedrock_experiment,
-                    step_index=i,
-                    thinking=thinking,
-                    thinking_config=thinking_config,
-                    output_config=output_config,
-                )
-            )
-            in_context_messages = current_in_context_messages + new_in_context_messages
-
-            log_event("agent.stream_no_tokens.llm_response.received")  # [3^]
-
-            response = llm_client.convert_response_to_chat_completion(response_data, in_context_messages, agent_state.llm_config)
-
-            # update usage
-            # TODO: add run_id
-            usage.step_count += 1
-            usage.completion_tokens += response.usage.completion_tokens
-            usage.prompt_tokens += response.usage.prompt_tokens
-            usage.total_tokens += response.usage.total_tokens
-            MetricRegistry().message_output_tokens.record(
-                response.usage.completion_tokens, dict(get_ctx_attributes(), **{"model.name": agent_state.llm_config.model})
-            )
-
-            if not response.choices[0].message.tool_calls:
-                text = response.choices[0].message.content
-                if text:
-                    synthetic = ToolCall(
-                        id=f"synthetic_{uuid.uuid4().hex[:8]}",
-                        function=FunctionCall(
-                            name="send_message",
-                            arguments=json.dumps({"message": text}),
-                        ),
-                    )
-                    response.choices[0].message.tool_calls = [synthetic]
-                    logger.warning("Model returned text without a tool call; wrapping as synthetic send_message.")
-                else:
-                    raise ValueError("No tool calls found in response, model must make a tool call")
-            tool_call = response.choices[0].message.tool_calls[0]
-            if response.choices[0].message.reasoning_content:
-                reasoning = [
-                    ReasoningContent(
-                        reasoning=response.choices[0].message.reasoning_content,
-                        is_native=True,
-                        signature=response.choices[0].message.reasoning_content_signature,
-                    )
-                ]
-            elif response.choices[0].message.omitted_reasoning_content:
-                reasoning = [OmittedReasoningContent()]
-            elif response.choices[0].message.content:
-                reasoning = [TextContent(text=response.choices[0].message.content)]  # reasoning placed into content for legacy reasons
-            else:
-                logger.info("No reasoning content found.")
-                reasoning = None
-
-            persisted_messages, should_continue, stop_reason = await self._handle_ai_response(
-                tool_call,
-                valid_tool_names,
-                agent_state,
-                tool_rules_solver,
-                response.usage,
-                reasoning_content=reasoning,
-                initial_messages=initial_messages,
-                agent_step_span=agent_step_span,
-                is_final_step=(i == max_steps - 1),
-            )
-            self.response_messages.extend(persisted_messages)
-            new_in_context_messages.extend(persisted_messages)
-            initial_messages = None
-            log_event("agent.stream_no_tokens.llm_response.processed")  # [4^]
-
-            # log step time
-            now = get_utc_timestamp_ns()
-            step_ns = now - step_start
-            agent_step_span.add_event(name="step_ms", attributes={"duration_ms": ns_to_ms(step_ns)})
-            agent_step_span.end()
-
-            # Log LLM Trace
-            async with AsyncTimer() as _t:
-                await self.telemetry_manager.create_provider_trace_async(
-                    actor=self.actor,
-                    provider_trace_create=ProviderTraceCreate(
-                        request_json=request_data,
-                        response_json=response_data,
-                        step_id=step_id,
-                        organization_id=self.actor.organization_id,
-                    ),
-                )
-            _log_step_timing("telemetry_persist", _t.elapsed_ms, agent_id=agent_state.id, user_id=self.at_user_id, step_id=step_id)
-
-            # stream step
-            # TODO: improve TTFT
-            filter_user_messages = [m for m in persisted_messages if m.role != "user"]
-            letta_messages = Message.to_letta_messages_from_list(
-                filter_user_messages, use_assistant_message=use_assistant_message, reverse=False
-            )
-
-            for message in letta_messages:
-                if include_return_message_types is None or message.message_type in include_return_message_types:
-                    yield f"data: {message.model_dump_json()}\n\n"
-
-            MetricRegistry().step_execution_time_ms_histogram.record(step_start - get_utc_timestamp_ns(), get_ctx_attributes())
-
-            if i == max_steps - 1 and should_continue:
-                try:
-                    import json as _json
-
-                    logger.warning(
-                        "[COST_LEAK] %s",
-                        _json.dumps(
-                            {"type": "max_steps_hit", "at_user_id": _chain_at_uid, "agent_id": agent_state.id, "step_count": i + 1},
-                            default=str,
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            if not should_continue:
-                break
-
-        try:
-            from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
-            import json as _json
-
-            if _chain_at_uid and _is_user_in_cache_obs_sample(_chain_at_uid):
-                logger.info(
-                    "[CHAIN_OBS] %s",
-                    _json.dumps(
-                        {
-                            "phase": "turn_complete",
-                            "at_user_id": _chain_at_uid,
-                            "agent_id": agent_state.id,
-                            "total_steps": usage.step_count,
-                            "output_tokens": usage.completion_tokens,
-                            "input_tokens": usage.prompt_tokens,
-                        },
-                        default=str,
-                    ),
-                )
-        except Exception:
-            pass
-
-        # Extend the in context message ids
-        if not agent_state.message_buffer_autoclear:
-            await self._rebuild_context_window(
-                in_context_messages=current_in_context_messages,
-                new_letta_messages=new_in_context_messages,
-                llm_config=agent_state.llm_config,
-                total_tokens=usage.total_tokens,
-                force=False,
-            )
-
-        # log request time
-        if request_start_timestamp_ns:
-            now = get_utc_timestamp_ns()
-            request_ns = now - request_start_timestamp_ns
-            request_span.add_event(name="letta_request_ms", attributes={"duration_ms": ns_to_ms(request_ns)})
-        request_span.end()
-
-        # Return back usage
-        for finish_chunk in self.get_finish_chunks_for_stream(usage, stop_reason):
-            yield f"data: {finish_chunk}\n\n"
-
+    #     @trace_method
+    #     async def step_stream_no_tokens(
+    #         self,
+    #         input_messages: List[MessageCreate],
+    #         max_steps: int = DEFAULT_MAX_STEPS,
+    #         use_assistant_message: bool = True,
+    #         request_start_timestamp_ns: Optional[int] = None,
+    #         include_return_message_types: Optional[List[MessageType]] = None,
+    #         use_vertex_experiment: bool = False,
+    #         use_bedrock_experiment: bool = False,
+    #         model_override: Optional[str] = None,
+    #         user_cohort: Optional[str] = None,
+    #         thinking: Optional[dict] = None,
+    #         thinking_config: Optional[dict] = None,
+    #         output_config: Optional[dict] = None,
+    #         llm_provider: Optional[str] = None,
+    #     ):
+    #         agent_state = await self.agent_manager.get_agent_by_id_async(
+    #             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
+    #         )
+    #
+    #         # Handle provider switching based on experiment flags
+    #         self._apply_provider_switching(
+    #             agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override, llm_provider=llm_provider
+    #         )
+    #
+    #         async with AsyncTimer() as _t:
+    #             current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
+    #                 input_messages, agent_state, self.message_manager, self.actor
+    #             )
+    #         _log_step_timing(
+    #             "message_buffer_load",
+    #             _t.elapsed_ms,
+    #             agent_id=agent_state.id,
+    #             user_id=self.at_user_id,
+    #             msg_count=len(current_in_context_messages),
+    #         )
+    #         initial_messages = new_in_context_messages
+    #         tool_rules_solver = ToolRulesSolver(agent_state.tool_rules)
+    #         llm_client = LLMClient.create(
+    #             provider_type=agent_state.llm_config.model_endpoint_type,
+    #             put_inner_thoughts_first=True,
+    #             actor=self.actor,
+    #             at_user_id=self.at_user_id,
+    #             user_cohort=user_cohort,
+    #         )
+    #         stop_reason = None
+    #         usage = LettaUsageStatistics()
+    #
+    #         # span for request
+    #         request_span = tracer.start_span("time_to_first_token", start_time=request_start_timestamp_ns)
+    #         request_span.set_attributes({f"llm_config.{k}": v for k, v in agent_state.llm_config.model_dump().items() if v is not None})
+    #
+    #         _chain_at_uid = getattr(self, "at_user_id", None)
+    #         for i in range(max_steps):
+    #             step_id = generate_step_id()
+    #             step_start = get_utc_timestamp_ns()
+    #             agent_step_span = tracer.start_span("agent_step", start_time=step_start)
+    #             agent_step_span.set_attributes({"step_id": step_id})
+    #
+    #             try:
+    #                 from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
+    #                 import json as _json
+    #
+    #                 if _chain_at_uid and _is_user_in_cache_obs_sample(_chain_at_uid):
+    #                     logger.info(
+    #                         "[CHAIN_OBS] %s",
+    #                         _json.dumps(
+    #                             {"phase": "step_start", "at_user_id": _chain_at_uid, "agent_id": agent_state.id, "step_index": i}, default=str
+    #                         ),
+    #                     )
+    #             except Exception:
+    #                 pass
+    #             debug_log(
+    #                 self.at_user_id,
+    #                 f"step_stream_no_tokens: LOOP step={i}/{max_steps} agent_id={agent_state.id} model={agent_state.llm_config.model}",
+    #             )
+    #
+    #             request_data, response_data, current_in_context_messages, new_in_context_messages, valid_tool_names = (
+    #                 await self._build_and_request_from_llm(
+    #                     current_in_context_messages,
+    #                     new_in_context_messages,
+    #                     agent_state,
+    #                     llm_client,
+    #                     tool_rules_solver,
+    #                     agent_step_span,
+    #                     use_vertex_experiment=use_vertex_experiment,
+    #                     use_bedrock_experiment=use_bedrock_experiment,
+    #                     step_index=i,
+    #                     thinking=thinking,
+    #                     thinking_config=thinking_config,
+    #                     output_config=output_config,
+    #                 )
+    #             )
+    #             in_context_messages = current_in_context_messages + new_in_context_messages
+    #
+    #             log_event("agent.stream_no_tokens.llm_response.received")  # [3^]
+    #
+    #             response = llm_client.convert_response_to_chat_completion(response_data, in_context_messages, agent_state.llm_config)
+    #
+    #             # update usage
+    #             # TODO: add run_id
+    #             usage.step_count += 1
+    #             usage.completion_tokens += response.usage.completion_tokens
+    #             usage.prompt_tokens += response.usage.prompt_tokens
+    #             usage.total_tokens += response.usage.total_tokens
+    #             MetricRegistry().message_output_tokens.record(
+    #                 response.usage.completion_tokens, dict(get_ctx_attributes(), **{"model.name": agent_state.llm_config.model})
+    #             )
+    #
+    #             if not response.choices[0].message.tool_calls:
+    #                 text = response.choices[0].message.content
+    #                 if text:
+    #                     synthetic = ToolCall(
+    #                         id=f"synthetic_{uuid.uuid4().hex[:8]}",
+    #                         function=FunctionCall(
+    #                             name="send_message",
+    #                             arguments=json.dumps({"message": text}),
+    #                         ),
+    #                     )
+    #                     response.choices[0].message.tool_calls = [synthetic]
+    #                     logger.warning("Model returned text without a tool call; wrapping as synthetic send_message.")
+    #                 else:
+    #                     raise ValueError("No tool calls found in response, model must make a tool call")
+    #             tool_call = response.choices[0].message.tool_calls[0]
+    #             if response.choices[0].message.reasoning_content:
+    #                 reasoning = [
+    #                     ReasoningContent(
+    #                         reasoning=response.choices[0].message.reasoning_content,
+    #                         is_native=True,
+    #                         signature=response.choices[0].message.reasoning_content_signature,
+    #                     )
+    #                 ]
+    #             elif response.choices[0].message.omitted_reasoning_content:
+    #                 reasoning = [OmittedReasoningContent()]
+    #             elif response.choices[0].message.content:
+    #                 reasoning = [TextContent(text=response.choices[0].message.content)]  # reasoning placed into content for legacy reasons
+    #             else:
+    #                 logger.info("No reasoning content found.")
+    #                 reasoning = None
+    #
+    #             persisted_messages, should_continue, stop_reason = await self._handle_ai_response(
+    #                 tool_call,
+    #                 valid_tool_names,
+    #                 agent_state,
+    #                 tool_rules_solver,
+    #                 response.usage,
+    #                 reasoning_content=reasoning,
+    #                 initial_messages=initial_messages,
+    #                 agent_step_span=agent_step_span,
+    #                 is_final_step=(i == max_steps - 1),
+    #             )
+    #             self.response_messages.extend(persisted_messages)
+    #             new_in_context_messages.extend(persisted_messages)
+    #             initial_messages = None
+    #             log_event("agent.stream_no_tokens.llm_response.processed")  # [4^]
+    #
+    #             # log step time
+    #             now = get_utc_timestamp_ns()
+    #             step_ns = now - step_start
+    #             agent_step_span.add_event(name="step_ms", attributes={"duration_ms": ns_to_ms(step_ns)})
+    #             agent_step_span.end()
+    #
+    #             # Log LLM Trace
+    #             async with AsyncTimer() as _t:
+    #                 await self.telemetry_manager.create_provider_trace_async(
+    #                     actor=self.actor,
+    #                     provider_trace_create=ProviderTraceCreate(
+    #                         request_json=request_data,
+    #                         response_json=response_data,
+    #                         step_id=step_id,
+    #                         organization_id=self.actor.organization_id,
+    #                     ),
+    #                 )
+    #             _log_step_timing("telemetry_persist", _t.elapsed_ms, agent_id=agent_state.id, user_id=self.at_user_id, step_id=step_id)
+    #
+    #             # stream step
+    #             # TODO: improve TTFT
+    #             filter_user_messages = [m for m in persisted_messages if m.role != "user"]
+    #             letta_messages = Message.to_letta_messages_from_list(
+    #                 filter_user_messages, use_assistant_message=use_assistant_message, reverse=False
+    #             )
+    #
+    #             for message in letta_messages:
+    #                 if include_return_message_types is None or message.message_type in include_return_message_types:
+    #                     yield f"data: {message.model_dump_json()}\n\n"
+    #
+    #             MetricRegistry().step_execution_time_ms_histogram.record(step_start - get_utc_timestamp_ns(), get_ctx_attributes())
+    #
+    #             if i == max_steps - 1 and should_continue:
+    #                 try:
+    #                     import json as _json
+    #
+    #                     logger.warning(
+    #                         "[COST_LEAK] %s",
+    #                         _json.dumps(
+    #                             {"type": "max_steps_hit", "at_user_id": _chain_at_uid, "agent_id": agent_state.id, "step_count": i + 1},
+    #                             default=str,
+    #                         ),
+    #                     )
+    #                 except Exception:
+    #                     pass
+    #
+    #             if not should_continue:
+    #                 break
+    #
+    #         try:
+    #             from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
+    #             import json as _json
+    #
+    #             if _chain_at_uid and _is_user_in_cache_obs_sample(_chain_at_uid):
+    #                 logger.info(
+    #                     "[CHAIN_OBS] %s",
+    #                     _json.dumps(
+    #                         {
+    #                             "phase": "turn_complete",
+    #                             "at_user_id": _chain_at_uid,
+    #                             "agent_id": agent_state.id,
+    #                             "total_steps": usage.step_count,
+    #                             "output_tokens": usage.completion_tokens,
+    #                             "input_tokens": usage.prompt_tokens,
+    #                         },
+    #                         default=str,
+    #                     ),
+    #                 )
+    #         except Exception:
+    #             pass
+    #
+    #         # Extend the in context message ids
+    #         if not agent_state.message_buffer_autoclear:
+    #             await self._rebuild_context_window(
+    #                 in_context_messages=current_in_context_messages,
+    #                 new_letta_messages=new_in_context_messages,
+    #                 llm_config=agent_state.llm_config,
+    #                 total_tokens=usage.total_tokens,
+    #                 force=False,
+    #             )
+    #
+    #         # log request time
+    #         if request_start_timestamp_ns:
+    #             now = get_utc_timestamp_ns()
+    #             request_ns = now - request_start_timestamp_ns
+    #             request_span.add_event(name="letta_request_ms", attributes={"duration_ms": ns_to_ms(request_ns)})
+    #         request_span.end()
+    #
+    #         # Return back usage
+    #         for finish_chunk in self.get_finish_chunks_for_stream(usage, stop_reason):
+    #             yield f"data: {finish_chunk}\n\n"
+    #
     async def _step(
         self,
         agent_state: AgentState,
@@ -599,8 +599,15 @@ class LettaAgent(BaseAgent):
             debug_log(self.at_user_id, f"_step: cascade gate passed latency_optimisation_flow={latency_optimisation_flow}")
 
         _ctx_prep_start = get_utc_timestamp_ns() if task_id else None
+        _raw_msg_ids = agent_state.message_ids or []
+        _unique_msg_ids = set(_raw_msg_ids)
+        debug_log(
+            self.at_user_id,
+            f"_step: [MSG_DUP_DIAG] message_ids total={len(_raw_msg_ids)} unique={len(_unique_msg_ids)} "
+            f"has_dupes={len(_raw_msg_ids) != len(_unique_msg_ids)} ids={_raw_msg_ids}",
+        )
         async with AsyncTimer() as _t:
-            current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
+            current_in_context_messages, new_in_context_messages = await prepare_in_context_messages_no_persist_async(
                 input_messages, agent_state, self.message_manager, self.actor
             )
         if task_id and _ctx_prep_start:
@@ -609,7 +616,7 @@ class LettaAgent(BaseAgent):
             )
         _log_step_timing(
             "message_buffer_load",
-            _t.elapsed_ms,
+            _t.elapsed_ms or 0.0,
             agent_id=agent_state.id,
             user_id=self.at_user_id,
             msg_count=len(current_in_context_messages),
@@ -1020,6 +1027,14 @@ class LettaAgent(BaseAgent):
                     f"[TASK_LATENCY] task_id={task_id} step={i} phase=tool_exec duration_ms={ns_to_ms(get_utc_timestamp_ns() - _tool_start)}"
                 )
             self.response_messages.extend(persisted_messages)
+            _pre_extend_ids = [m.id for m in new_in_context_messages]
+            _persisted_ids = [m.id for m in persisted_messages]
+            _overlap = set(_pre_extend_ids) & set(_persisted_ids)
+            debug_log(
+                self.at_user_id,
+                f"_step: step={i} [MSG_DUP_DIAG] pre_extend_ids={_pre_extend_ids} "
+                f"persisted_ids={_persisted_ids} overlap={list(_overlap)}",
+            )
             new_in_context_messages.extend(persisted_messages)
             initial_messages = None
             _prev_tool_name = tool_call.function.name  # used by next iteration for cascade decision
@@ -1225,249 +1240,249 @@ class LettaAgent(BaseAgent):
 
         return current_in_context_messages, new_in_context_messages, usage, stop_reason
 
-    @trace_method
-    async def step_stream(
-        self,
-        input_messages: List[MessageCreate],
-        max_steps: int = DEFAULT_MAX_STEPS,
-        use_assistant_message: bool = True,
-        request_start_timestamp_ns: Optional[int] = None,
-        include_return_message_types: Optional[List[MessageType]] = None,
-        use_vertex_experiment: bool = False,
-        use_bedrock_experiment: bool = False,
-        model_override: Optional[str] = None,
-        user_cohort: Optional[str] = None,
-        thinking: Optional[dict] = None,
-        thinking_config: Optional[dict] = None,
-        output_config: Optional[dict] = None,
-        llm_provider: Optional[str] = None,
-    ) -> AsyncGenerator[str, None]:
-        """
-        Carries out an invocation of the agent loop in a streaming fashion that yields partial tokens.
-        Whenever we detect a tool call, we yield from _handle_ai_response as well. At each step, the agent
-            1. Rebuilds its memory
-            2. Generates a request for the LLM
-            3. Fetches a response from the LLM
-            4. Processes the response
-        """
-        agent_state = await self.agent_manager.get_agent_by_id_async(
-            agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
-        )
-
-        # Handle provider switching based on experiment flags
-        self._apply_provider_switching(
-            agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override, llm_provider=llm_provider
-        )
-
-        current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
-            input_messages, agent_state, self.message_manager, self.actor
-        )
-        initial_messages = new_in_context_messages
-
-        tool_rules_solver = ToolRulesSolver(agent_state.tool_rules)
-        llm_client = LLMClient.create(
-            provider_type=agent_state.llm_config.model_endpoint_type,
-            put_inner_thoughts_first=True,
-            actor=self.actor,
-            at_user_id=self.at_user_id,
-            user_cohort=user_cohort,
-        )
-        stop_reason = None
-        usage = LettaUsageStatistics()
-        first_chunk, request_span = True, None
-        if request_start_timestamp_ns:
-            request_span = tracer.start_span("time_to_first_token", start_time=request_start_timestamp_ns)
-            request_span.set_attributes({f"llm_config.{k}": v for k, v in agent_state.llm_config.model_dump().items() if v is not None})
-
-        for i in range(max_steps):
-            step_id = generate_step_id()
-            step_start = get_utc_timestamp_ns()
-            agent_step_span = tracer.start_span("agent_step", start_time=step_start)
-            agent_step_span.set_attributes({"step_id": step_id})
-
-            (
-                request_data,
-                stream,
-                current_in_context_messages,
-                new_in_context_messages,
-                valid_tool_names,
-                provider_request_start_timestamp_ns,
-            ) = await self._build_and_request_from_llm_streaming(
-                first_chunk,
-                agent_step_span,
-                request_start_timestamp_ns,
-                current_in_context_messages,
-                new_in_context_messages,
-                agent_state,
-                llm_client,
-                tool_rules_solver,
-                step_index=i,
-                thinking=thinking,
-                output_config=output_config,
-            )
-            log_event("agent.stream.llm_response.received")  # [3^]
-
-            # TODO: THIS IS INCREDIBLY UGLY
-            # TODO: THERE ARE MULTIPLE COPIES OF THE LLM_CONFIG EVERYWHERE THAT ARE GETTING MANIPULATED
-            if agent_state.llm_config.model_endpoint_type in ("anthropic", "anthropic_vertex", "anthropic_bedrock"):
-                interface = AnthropicStreamingInterface(
-                    use_assistant_message=use_assistant_message,
-                    put_inner_thoughts_in_kwarg=agent_state.llm_config.put_inner_thoughts_in_kwargs,
-                )
-            elif agent_state.llm_config.model_endpoint_type == "openai":
-                interface = OpenAIStreamingInterface(
-                    use_assistant_message=use_assistant_message,
-                    put_inner_thoughts_in_kwarg=agent_state.llm_config.put_inner_thoughts_in_kwargs,
-                )
-            else:
-                raise ValueError(f"Streaming not supported for {agent_state.llm_config}")
-
-            async for chunk in interface.process(
-                stream, ttft_span=request_span, provider_request_start_timestamp_ns=provider_request_start_timestamp_ns
-            ):
-                # Measure time to first token
-                if first_chunk and request_span is not None:
-                    now = get_utc_timestamp_ns()
-                    ttft_ns = now - request_start_timestamp_ns
-                    request_span.add_event(name="time_to_first_token_ms", attributes={"ttft_ms": ns_to_ms(ttft_ns)})
-                    metric_attributes = get_ctx_attributes()
-                    metric_attributes["model.name"] = agent_state.llm_config.model
-                    MetricRegistry().ttft_ms_histogram.record(ns_to_ms(ttft_ns), metric_attributes)
-                    first_chunk = False
-
-                if include_return_message_types is None or chunk.message_type in include_return_message_types:
-                    # filter down returned data
-                    yield f"data: {chunk.model_dump_json()}\n\n"
-
-            stream_end_time_ns = get_utc_timestamp_ns()
-
-            # update usage
-            usage.step_count += 1
-            usage.completion_tokens += interface.output_tokens
-            usage.prompt_tokens += interface.input_tokens
-            usage.total_tokens += interface.input_tokens + interface.output_tokens
-            MetricRegistry().message_output_tokens.record(
-                interface.output_tokens, dict(get_ctx_attributes(), **{"model.name": agent_state.llm_config.model})
-            )
-
-            # log LLM request time
-            llm_request_ms = ns_to_ms(stream_end_time_ns - request_start_timestamp_ns)
-            agent_step_span.add_event(name="llm_request_ms", attributes={"duration_ms": llm_request_ms})
-            MetricRegistry().llm_execution_time_ms_histogram.record(
-                llm_request_ms,
-                dict(get_ctx_attributes(), **{"model.name": agent_state.llm_config.model}),
-            )
-            # Per-LLM-call latency, partitioned by Bedrock vs non-Bedrock provider.
-            MetricRegistry().llm_call_ms_histogram.record(
-                llm_request_ms,
-                dict(
-                    get_ctx_attributes(),
-                    **{
-                        "model.name": agent_state.llm_config.model,
-                        "use_bedrock_experiment": str(use_bedrock_experiment).lower(),
-                    },
-                ),
-            )
-
-            # Process resulting stream content
-            try:
-                tool_call = interface.get_tool_call_object()
-            except ValueError as e:
-                stop_reason = LettaStopReason(stop_reason=StopReasonType.no_tool_call.value)
-                yield f"data: {stop_reason.model_dump_json()}\n\n"
-                raise e
-            except Exception as e:
-                stop_reason = LettaStopReason(stop_reason=StopReasonType.invalid_tool_call.value)
-                yield f"data: {stop_reason.model_dump_json()}\n\n"
-                raise e
-            reasoning_content = interface.get_reasoning_content()
-            persisted_messages, should_continue, stop_reason = await self._handle_ai_response(
-                tool_call,
-                valid_tool_names,
-                agent_state,
-                tool_rules_solver,
-                UsageStatistics(
-                    completion_tokens=interface.output_tokens,
-                    prompt_tokens=interface.input_tokens,
-                    total_tokens=interface.input_tokens + interface.output_tokens,
-                ),
-                reasoning_content=reasoning_content,
-                pre_computed_assistant_message_id=interface.letta_message_id,
-                step_id=step_id,
-                initial_messages=initial_messages,
-                agent_step_span=agent_step_span,
-                is_final_step=(i == max_steps - 1),
-            )
-            self.response_messages.extend(persisted_messages)
-            new_in_context_messages.extend(persisted_messages)
-            initial_messages = None
-
-            # log total step time
-            now = get_utc_timestamp_ns()
-            step_ns = now - step_start
-            agent_step_span.add_event(name="step_ms", attributes={"duration_ms": ns_to_ms(step_ns)})
-            agent_step_span.end()
-
-            # TODO (cliandy): the stream POST request span has ended at this point, we should tie this to the stream
-            # log_event("agent.stream.llm_response.processed") # [4^]
-
-            # Log LLM Trace
-            # TODO (cliandy): we are piecing together the streamed response here. Content here does not match the actual response schema.
-            await self.telemetry_manager.create_provider_trace_async(
-                actor=self.actor,
-                provider_trace_create=ProviderTraceCreate(
-                    request_json=request_data,
-                    response_json={
-                        "content": {
-                            "tool_call": tool_call.model_dump_json(),
-                            "reasoning": [content.model_dump_json() for content in reasoning_content],
-                        },
-                        "id": interface.message_id,
-                        "model": interface.model,
-                        "role": "assistant",
-                        # "stop_reason": "",
-                        # "stop_sequence": None,
-                        "type": "message",
-                        "usage": {"input_tokens": interface.input_tokens, "output_tokens": interface.output_tokens},
-                    },
-                    step_id=step_id,
-                    organization_id=self.actor.organization_id,
-                ),
-            )
-
-            tool_return = [msg for msg in persisted_messages if msg.role == "tool"][-1].to_letta_messages()[0]
-            if not (use_assistant_message and tool_return.name == "send_message"):
-                # Apply message type filtering if specified
-                if include_return_message_types is None or tool_return.message_type in include_return_message_types:
-                    yield f"data: {tool_return.model_dump_json()}\n\n"
-
-            # TODO (cliandy): consolidate and expand with trace
-            MetricRegistry().step_execution_time_ms_histogram.record(step_start - get_utc_timestamp_ns(), get_ctx_attributes())
-
-            if not should_continue:
-                break
-
-        # Extend the in context message ids
-        if not agent_state.message_buffer_autoclear:
-            await self._rebuild_context_window(
-                in_context_messages=current_in_context_messages,
-                new_letta_messages=new_in_context_messages,
-                llm_config=agent_state.llm_config,
-                total_tokens=usage.total_tokens,
-                force=False,
-            )
-
-        # log time of entire request
-        if request_start_timestamp_ns:
-            now = get_utc_timestamp_ns()
-            request_ns = now - request_start_timestamp_ns
-            request_span.add_event(name="letta_request_ms", attributes={"duration_ms": ns_to_ms(request_ns)})
-        request_span.end()
-
-        for finish_chunk in self.get_finish_chunks_for_stream(usage, stop_reason):
-            yield f"data: {finish_chunk}\n\n"
-
-    # noinspection PyInconsistentReturns
+    #     @trace_method
+    #     async def step_stream(
+    #         self,
+    #         input_messages: List[MessageCreate],
+    #         max_steps: int = DEFAULT_MAX_STEPS,
+    #         use_assistant_message: bool = True,
+    #         request_start_timestamp_ns: Optional[int] = None,
+    #         include_return_message_types: Optional[List[MessageType]] = None,
+    #         use_vertex_experiment: bool = False,
+    #         use_bedrock_experiment: bool = False,
+    #         model_override: Optional[str] = None,
+    #         user_cohort: Optional[str] = None,
+    #         thinking: Optional[dict] = None,
+    #         thinking_config: Optional[dict] = None,
+    #         output_config: Optional[dict] = None,
+    #         llm_provider: Optional[str] = None,
+    #     ) -> AsyncGenerator[str, None]:
+    #         """
+    #         Carries out an invocation of the agent loop in a streaming fashion that yields partial tokens.
+    #         Whenever we detect a tool call, we yield from _handle_ai_response as well. At each step, the agent
+    #             1. Rebuilds its memory
+    #             2. Generates a request for the LLM
+    #             3. Fetches a response from the LLM
+    #             4. Processes the response
+    #         """
+    #         agent_state = await self.agent_manager.get_agent_by_id_async(
+    #             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
+    #         )
+    #
+    #         # Handle provider switching based on experiment flags
+    #         self._apply_provider_switching(
+    #             agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override, llm_provider=llm_provider
+    #         )
+    #
+    #         current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
+    #             input_messages, agent_state, self.message_manager, self.actor
+    #         )
+    #         initial_messages = new_in_context_messages
+    #
+    #         tool_rules_solver = ToolRulesSolver(agent_state.tool_rules)
+    #         llm_client = LLMClient.create(
+    #             provider_type=agent_state.llm_config.model_endpoint_type,
+    #             put_inner_thoughts_first=True,
+    #             actor=self.actor,
+    #             at_user_id=self.at_user_id,
+    #             user_cohort=user_cohort,
+    #         )
+    #         stop_reason = None
+    #         usage = LettaUsageStatistics()
+    #         first_chunk, request_span = True, None
+    #         if request_start_timestamp_ns:
+    #             request_span = tracer.start_span("time_to_first_token", start_time=request_start_timestamp_ns)
+    #             request_span.set_attributes({f"llm_config.{k}": v for k, v in agent_state.llm_config.model_dump().items() if v is not None})
+    #
+    #         for i in range(max_steps):
+    #             step_id = generate_step_id()
+    #             step_start = get_utc_timestamp_ns()
+    #             agent_step_span = tracer.start_span("agent_step", start_time=step_start)
+    #             agent_step_span.set_attributes({"step_id": step_id})
+    #
+    #             (
+    #                 request_data,
+    #                 stream,
+    #                 current_in_context_messages,
+    #                 new_in_context_messages,
+    #                 valid_tool_names,
+    #                 provider_request_start_timestamp_ns,
+    #             ) = await self._build_and_request_from_llm_streaming(
+    #                 first_chunk,
+    #                 agent_step_span,
+    #                 request_start_timestamp_ns,
+    #                 current_in_context_messages,
+    #                 new_in_context_messages,
+    #                 agent_state,
+    #                 llm_client,
+    #                 tool_rules_solver,
+    #                 step_index=i,
+    #                 thinking=thinking,
+    #                 output_config=output_config,
+    #             )
+    #             log_event("agent.stream.llm_response.received")  # [3^]
+    #
+    #             # TODO: THIS IS INCREDIBLY UGLY
+    #             # TODO: THERE ARE MULTIPLE COPIES OF THE LLM_CONFIG EVERYWHERE THAT ARE GETTING MANIPULATED
+    #             if agent_state.llm_config.model_endpoint_type in ("anthropic", "anthropic_vertex", "anthropic_bedrock"):
+    #                 interface = AnthropicStreamingInterface(
+    #                     use_assistant_message=use_assistant_message,
+    #                     put_inner_thoughts_in_kwarg=agent_state.llm_config.put_inner_thoughts_in_kwargs,
+    #                 )
+    #             elif agent_state.llm_config.model_endpoint_type == "openai":
+    #                 interface = OpenAIStreamingInterface(
+    #                     use_assistant_message=use_assistant_message,
+    #                     put_inner_thoughts_in_kwarg=agent_state.llm_config.put_inner_thoughts_in_kwargs,
+    #                 )
+    #             else:
+    #                 raise ValueError(f"Streaming not supported for {agent_state.llm_config}")
+    #
+    #             async for chunk in interface.process(
+    #                 stream, ttft_span=request_span, provider_request_start_timestamp_ns=provider_request_start_timestamp_ns
+    #             ):
+    #                 # Measure time to first token
+    #                 if first_chunk and request_span is not None:
+    #                     now = get_utc_timestamp_ns()
+    #                     ttft_ns = now - request_start_timestamp_ns
+    #                     request_span.add_event(name="time_to_first_token_ms", attributes={"ttft_ms": ns_to_ms(ttft_ns)})
+    #                     metric_attributes = get_ctx_attributes()
+    #                     metric_attributes["model.name"] = agent_state.llm_config.model
+    #                     MetricRegistry().ttft_ms_histogram.record(ns_to_ms(ttft_ns), metric_attributes)
+    #                     first_chunk = False
+    #
+    #                 if include_return_message_types is None or chunk.message_type in include_return_message_types:
+    #                     # filter down returned data
+    #                     yield f"data: {chunk.model_dump_json()}\n\n"
+    #
+    #             stream_end_time_ns = get_utc_timestamp_ns()
+    #
+    #             # update usage
+    #             usage.step_count += 1
+    #             usage.completion_tokens += interface.output_tokens
+    #             usage.prompt_tokens += interface.input_tokens
+    #             usage.total_tokens += interface.input_tokens + interface.output_tokens
+    #             MetricRegistry().message_output_tokens.record(
+    #                 interface.output_tokens, dict(get_ctx_attributes(), **{"model.name": agent_state.llm_config.model})
+    #             )
+    #
+    #             # log LLM request time
+    #             llm_request_ms = ns_to_ms(stream_end_time_ns - request_start_timestamp_ns)
+    #             agent_step_span.add_event(name="llm_request_ms", attributes={"duration_ms": llm_request_ms})
+    #             MetricRegistry().llm_execution_time_ms_histogram.record(
+    #                 llm_request_ms,
+    #                 dict(get_ctx_attributes(), **{"model.name": agent_state.llm_config.model}),
+    #             )
+    #             # Per-LLM-call latency, partitioned by Bedrock vs non-Bedrock provider.
+    #             MetricRegistry().llm_call_ms_histogram.record(
+    #                 llm_request_ms,
+    #                 dict(
+    #                     get_ctx_attributes(),
+    #                     **{
+    #                         "model.name": agent_state.llm_config.model,
+    #                         "use_bedrock_experiment": str(use_bedrock_experiment).lower(),
+    #                     },
+    #                 ),
+    #             )
+    #
+    #             # Process resulting stream content
+    #             try:
+    #                 tool_call = interface.get_tool_call_object()
+    #             except ValueError as e:
+    #                 stop_reason = LettaStopReason(stop_reason=StopReasonType.no_tool_call.value)
+    #                 yield f"data: {stop_reason.model_dump_json()}\n\n"
+    #                 raise e
+    #             except Exception as e:
+    #                 stop_reason = LettaStopReason(stop_reason=StopReasonType.invalid_tool_call.value)
+    #                 yield f"data: {stop_reason.model_dump_json()}\n\n"
+    #                 raise e
+    #             reasoning_content = interface.get_reasoning_content()
+    #             persisted_messages, should_continue, stop_reason = await self._handle_ai_response(
+    #                 tool_call,
+    #                 valid_tool_names,
+    #                 agent_state,
+    #                 tool_rules_solver,
+    #                 UsageStatistics(
+    #                     completion_tokens=interface.output_tokens,
+    #                     prompt_tokens=interface.input_tokens,
+    #                     total_tokens=interface.input_tokens + interface.output_tokens,
+    #                 ),
+    #                 reasoning_content=reasoning_content,
+    #                 pre_computed_assistant_message_id=interface.letta_message_id,
+    #                 step_id=step_id,
+    #                 initial_messages=initial_messages,
+    #                 agent_step_span=agent_step_span,
+    #                 is_final_step=(i == max_steps - 1),
+    #             )
+    #             self.response_messages.extend(persisted_messages)
+    #             new_in_context_messages.extend(persisted_messages)
+    #             initial_messages = None
+    #
+    #             # log total step time
+    #             now = get_utc_timestamp_ns()
+    #             step_ns = now - step_start
+    #             agent_step_span.add_event(name="step_ms", attributes={"duration_ms": ns_to_ms(step_ns)})
+    #             agent_step_span.end()
+    #
+    #             # TODO (cliandy): the stream POST request span has ended at this point, we should tie this to the stream
+    #             # log_event("agent.stream.llm_response.processed") # [4^]
+    #
+    #             # Log LLM Trace
+    #             # TODO (cliandy): we are piecing together the streamed response here. Content here does not match the actual response schema.
+    #             await self.telemetry_manager.create_provider_trace_async(
+    #                 actor=self.actor,
+    #                 provider_trace_create=ProviderTraceCreate(
+    #                     request_json=request_data,
+    #                     response_json={
+    #                         "content": {
+    #                             "tool_call": tool_call.model_dump_json(),
+    #                             "reasoning": [content.model_dump_json() for content in reasoning_content],
+    #                         },
+    #                         "id": interface.message_id,
+    #                         "model": interface.model,
+    #                         "role": "assistant",
+    #                         # "stop_reason": "",
+    #                         # "stop_sequence": None,
+    #                         "type": "message",
+    #                         "usage": {"input_tokens": interface.input_tokens, "output_tokens": interface.output_tokens},
+    #                     },
+    #                     step_id=step_id,
+    #                     organization_id=self.actor.organization_id,
+    #                 ),
+    #             )
+    #
+    #             tool_return = [msg for msg in persisted_messages if msg.role == "tool"][-1].to_letta_messages()[0]
+    #             if not (use_assistant_message and tool_return.name == "send_message"):
+    #                 # Apply message type filtering if specified
+    #                 if include_return_message_types is None or tool_return.message_type in include_return_message_types:
+    #                     yield f"data: {tool_return.model_dump_json()}\n\n"
+    #
+    #             # TODO (cliandy): consolidate and expand with trace
+    #             MetricRegistry().step_execution_time_ms_histogram.record(step_start - get_utc_timestamp_ns(), get_ctx_attributes())
+    #
+    #             if not should_continue:
+    #                 break
+    #
+    #         # Extend the in context message ids
+    #         if not agent_state.message_buffer_autoclear:
+    #             await self._rebuild_context_window(
+    #                 in_context_messages=current_in_context_messages,
+    #                 new_letta_messages=new_in_context_messages,
+    #                 llm_config=agent_state.llm_config,
+    #                 total_tokens=usage.total_tokens,
+    #                 force=False,
+    #             )
+    #
+    #         # log time of entire request
+    #         if request_start_timestamp_ns:
+    #             now = get_utc_timestamp_ns()
+    #             request_ns = now - request_start_timestamp_ns
+    #             request_span.add_event(name="letta_request_ms", attributes={"duration_ms": ns_to_ms(request_ns)})
+    #         request_span.end()
+    #
+    #         for finish_chunk in self.get_finish_chunks_for_stream(usage, stop_reason):
+    #             yield f"data: {finish_chunk}\n\n"
+    #
+    #     # noinspection PyInconsistentReturns
     async def _build_and_request_from_llm(
         self,
         current_in_context_messages: List[Message],
@@ -1803,9 +1818,14 @@ class LettaAgent(BaseAgent):
             except Exception:
                 pass
         _t_setctx = get_utc_timestamp_ns()
-        await self.agent_manager.set_in_context_messages_async(
-            agent_id=self.agent_id, message_ids=[m.id for m in new_in_context_messages], actor=self.actor
+        _final_ids = [m.id for m in new_in_context_messages]
+        _final_unique = set(_final_ids)
+        debug_log(
+            getattr(self, "at_user_id", None),
+            f"_rebuild_context_window: [MSG_DUP_DIAG] saving message_ids total={len(_final_ids)} "
+            f"unique={len(_final_unique)} has_dupes={len(_final_ids) != len(_final_unique)} ids={_final_ids}",
         )
+        await self.agent_manager.set_in_context_messages_async(agent_id=self.agent_id, message_ids=_final_ids, actor=self.actor)
         if self._task_id:
             logger.info(
                 f"[CTXWIN_TIMING] task_id={self._task_id} agent_id={self.agent_id} "
