@@ -131,20 +131,13 @@ async def prepare_in_context_messages_no_persist_async(
         actor (User): The user performing the action, used for access control and attribution.
 
     Returns:
-        Tuple[List[Message], List[Message]]: A -tuple containing:
+        Tuple[List[Message], List[Message]]: A tuple containing:
             - The current in-context messages (existing context for the agent).
             - The new in-context messages (messages created from the new input).
     """
 
-    if agent_state.message_buffer_autoclear:
-        # If autoclear is enabled, only include the most recent system message (usually at index 0)
-        msg = await message_manager.get_message_by_id_async(message_id=(agent_state.message_ids or [])[0], actor=actor)
-        current_in_context_messages = [msg] if msg is not None else []
-    else:
-        # Otherwise, include the full list of messages by ID for context
-        current_in_context_messages = await message_manager.get_messages_by_ids_async(
-            message_ids=agent_state.message_ids or [], actor=actor
-        )
+    # Otherwise, include the full list of messages by ID for context
+    current_in_context_messages = await message_manager.get_messages_by_ids_async(message_ids=agent_state.message_ids or [], actor=actor)
 
     # Create a new user message from the input but dont store it yet
     new_in_context_messages = create_input_messages(input_messages=input_messages, agent_id=agent_state.id, actor=actor)
