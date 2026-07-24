@@ -7,6 +7,7 @@ class ToolType(str, Enum):
     LETTA_MEMORY_CORE = "letta_memory_core"
     LETTA_MULTI_AGENT_CORE = "letta_multi_agent_core"
     LETTA_SLEEPTIME_CORE = "letta_sleeptime_core"
+    LETTA_VOICE_SLEEPTIME_CORE = "letta_voice_sleeptime_core"
     LETTA_BUILTIN = "letta_builtin"
     LETTA_FILES_CORE = "letta_files_core"
     EXTERNAL_COMPOSIO = "external_composio"

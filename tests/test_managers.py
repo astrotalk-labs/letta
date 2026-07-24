@@ -26,6 +26,8 @@ from letta.constants import (
     BASE_MEMORY_TOOLS,
     BASE_SLEEPTIME_TOOLS,
     BASE_TOOLS,
+    BASE_VOICE_SLEEPTIME_CHAT_TOOLS,
+    BASE_VOICE_SLEEPTIME_TOOLS,
     BUILTIN_TOOLS,
     DEFAULT_ORG_ID,
     DEFAULT_ORG_NAME,
@@ -3064,6 +3066,10 @@ async def test_upsert_base_tools(server: SyncServer, default_user, event_loop):
             assert t.tool_type == ToolType.LETTA_MULTI_AGENT_CORE
         elif t.name in BASE_SLEEPTIME_TOOLS:
             assert t.tool_type == ToolType.LETTA_SLEEPTIME_CORE
+        elif t.name in BASE_VOICE_SLEEPTIME_TOOLS:
+            assert t.tool_type == ToolType.LETTA_VOICE_SLEEPTIME_CORE
+        elif t.name in BASE_VOICE_SLEEPTIME_CHAT_TOOLS:
+            assert t.tool_type == ToolType.LETTA_VOICE_SLEEPTIME_CORE
         elif t.name in BUILTIN_TOOLS:
             assert t.tool_type == ToolType.LETTA_BUILTIN
         elif t.name in FILES_TOOLS:
@@ -3082,6 +3088,7 @@ async def test_upsert_base_tools(server: SyncServer, default_user, event_loop):
         (ToolType.LETTA_MEMORY_CORE, BASE_MEMORY_TOOLS),
         (ToolType.LETTA_MULTI_AGENT_CORE, MULTI_AGENT_TOOLS),
         (ToolType.LETTA_SLEEPTIME_CORE, BASE_SLEEPTIME_TOOLS),
+        (ToolType.LETTA_VOICE_SLEEPTIME_CORE, sorted(set(BASE_VOICE_SLEEPTIME_TOOLS + BASE_VOICE_SLEEPTIME_CHAT_TOOLS) - {"send_message"})),
         (ToolType.LETTA_BUILTIN, BUILTIN_TOOLS),
         (ToolType.LETTA_FILES_CORE, FILES_TOOLS),
     ],
@@ -4397,7 +4404,7 @@ async def test_create_and_upsert_identity(server: SyncServer, default_user, even
             actor=default_user,
         )
 
-    identity_create.properties = [IdentityProperty(key="age", value=29, type=IdentityPropertyType.number)]
+    identity_create.properties = [(IdentityProperty(key="age", value=29, type=IdentityPropertyType.number))]
 
     identity = await server.identity_manager.upsert_identity_async(
         identity=IdentityUpsert(**identity_create.model_dump()), actor=default_user
