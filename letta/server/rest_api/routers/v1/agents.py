@@ -6,6 +6,7 @@ from typing import Annotated, Any, List, Optional
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import JSONResponse
 from marshmallow import ValidationError
+from orjson import orjson
 from pydantic import Field
 from sqlalchemy.exc import IntegrityError, OperationalError
 from starlette.responses import Response, StreamingResponse
@@ -19,7 +20,7 @@ from letta.log import get_logger
 from letta.orm.errors import NoResultFound
 from letta.otel.context import add_ctx_attribute, get_ctx_attributes
 from letta.otel.metric_registry import MetricRegistry
-from letta.schemas.agent import AgentState, CreateAgent, UpdateAgent
+from letta.schemas.agent import AgentState, AgentType, CreateAgent, UpdateAgent
 from letta.schemas.block import Block, BlockUpdate
 from letta.schemas.group import Group
 from letta.schemas.job import JobStatus, JobUpdate, LettaRequestConfig
@@ -126,7 +127,7 @@ class IndentedORJSONResponse(Response):
     media_type = "application/json"
 
     def render(self, content: Any) -> bytes:
-        return json.dumps(content, indent=2).encode()
+        return orjson.dumps(content, option=orjson.OPT_INDENT_2)
 
 
 @router.get("/{agent_id}/export", response_class=IndentedORJSONResponse, operation_id="export_agent_serialized")
@@ -742,65 +743,91 @@ async def send_message(
     try:
         _t_actor = get_utc_timestamp_ns()
         actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
+        # TODO: This is redundant, remove soon
         _t_agent = get_utc_timestamp_ns()
-        agent_state = await server.agent_manager.get_agent_by_id_async(
-            agent_id, actor, include_relationships=["tools", "memory", "tool_exec_environment_variables"]
-        )
+        agent = await server.agent_manager.get_agent_by_id_async(agent_id, actor, include_relationships=["multi_agent_group"])
         if request.task_id:
             logger.warning(f"[TASK_LATENCY] task_id={request.task_id} phase=actor_load duration_ms={ns_to_ms(_t_agent - _t_actor)}")
             logger.warning(
                 f"[TASK_LATENCY] task_id={request.task_id} phase=agent_load duration_ms={ns_to_ms(get_utc_timestamp_ns() - _t_agent)}"
             )
+        agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type == "sleeptime"
+        model_compatible = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "together", "google_ai", "google_vertex"]
         debug_log(
             at_user_id,
-            f"send_message: enable_sleeptime={agent_state.enable_sleeptime} agent_type={agent_state.agent_type}",
+            f"send_message branch: agent_eligible={agent_eligible} model_compatible={model_compatible} endpoint_type={agent.llm_config.model_endpoint_type}",
         )
 
-        if agent_state.enable_sleeptime:
-            debug_log(at_user_id, "send_message: choosing SleeptimeMultiAgentV2")
-            agent_loop = SleeptimeMultiAgentV2(
-                agent_id=agent_id,
-                message_manager=server.message_manager,
-                agent_manager=server.agent_manager,
-                block_manager=server.block_manager,
-                passage_manager=server.passage_manager,
-                group_manager=server.group_manager,
-                job_manager=server.job_manager,
-                actor=actor,
-                group=None,
+        if agent_eligible and model_compatible:
+            debug_log(
+                at_user_id,
+                f"send_message: using new agent loop path enable_sleeptime={agent.enable_sleeptime} agent_type={agent.agent_type}",
+            )
+            if agent.enable_sleeptime:
+                debug_log(at_user_id, "send_message: choosing SleeptimeMultiAgentV2")
+                agent_loop = SleeptimeMultiAgentV2(
+                    agent_id=agent_id,
+                    message_manager=server.message_manager,
+                    agent_manager=server.agent_manager,
+                    block_manager=server.block_manager,
+                    passage_manager=server.passage_manager,
+                    group_manager=server.group_manager,
+                    job_manager=server.job_manager,
+                    actor=actor,
+                    group=agent.multi_agent_group,
+                )
+            else:
+                debug_log(at_user_id, "send_message: choosing LettaAgent")
+                agent_loop = LettaAgent(
+                    agent_id=agent_id,
+                    message_manager=server.message_manager,
+                    agent_manager=server.agent_manager,
+                    block_manager=server.block_manager,
+                    passage_manager=server.passage_manager,
+                    actor=actor,
+                    step_manager=server.step_manager,
+                    telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
+                    at_user_id=at_user_id,
+                )
+
+            result = await agent_loop.step(
+                request.messages,
+                max_steps=request.max_steps,
+                use_assistant_message=request.use_assistant_message,
+                request_start_timestamp_ns=request_start_timestamp_ns,
+                include_return_message_types=request.include_return_message_types,
+                use_vertex_experiment=request.use_vertex_experiment,
+                use_bedrock_experiment=request.use_bedrock_experiment,
+                model_override=request.model_override,
+                user_cohort=request.user_cohort,
+                thinking=request.thinking,
+                thinking_config=request.thinking_config,
+                output_config=request.output_config,
+                task_id=request.task_id,
+                latency_optimisation_flow=request.latencyOptimisationFlow,
+                llm_provider=request.llm_provider,
             )
         else:
-            debug_log(at_user_id, "send_message: choosing LettaAgent")
-            agent_loop = LettaAgent(
-                agent_id=agent_id,
-                message_manager=server.message_manager,
-                agent_manager=server.agent_manager,
-                block_manager=server.block_manager,
-                passage_manager=server.passage_manager,
-                actor=actor,
-                step_manager=server.step_manager,
-                telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
-                at_user_id=at_user_id,
+            debug_log(
+                at_user_id,
+                f"send_message: falling back to legacy send_message_to_agent agent_eligible={agent_eligible} model_compatible={model_compatible}",
             )
-
-        result = await agent_loop.step(
-            request.messages,
-            agent_state=agent_state,
-            max_steps=request.max_steps,
-            use_assistant_message=request.use_assistant_message,
-            request_start_timestamp_ns=request_start_timestamp_ns,
-            include_return_message_types=request.include_return_message_types,
-            use_vertex_experiment=request.use_vertex_experiment,
-            use_bedrock_experiment=request.use_bedrock_experiment,
-            model_override=request.model_override,
-            user_cohort=request.user_cohort,
-            thinking=request.thinking,
-            thinking_config=request.thinking_config,
-            output_config=request.output_config,
-            task_id=request.task_id,
-            latency_optimisation_flow=request.latencyOptimisationFlow,
-            llm_provider=request.llm_provider,
-        )
+            result = await server.send_message_to_agent(
+                agent_id=agent_id,
+                actor=actor,
+                input_messages=request.messages,
+                stream_steps=False,
+                stream_tokens=False,
+                # Support for AssistantMessage
+                use_assistant_message=request.use_assistant_message,
+                assistant_message_tool_name=request.assistant_message_tool_name,
+                assistant_message_tool_kwarg=request.assistant_message_tool_kwarg,
+                include_return_message_types=request.include_return_message_types,
+                use_vertex_experiment=request.use_vertex_experiment,
+                use_bedrock_experiment=request.use_bedrock_experiment,
+                model_override=request.model_override,
+                user_cohort=request.user_cohort,
+            )
         return result
     except Exception as e:
         status_code = getattr(e, "status_code", 500)
@@ -816,134 +843,134 @@ async def send_message(
             logger.warning(f"Failed to record messages endpoint e2e metric: {metric_exc}")
 
 
-# @router.post(
-#     "/{agent_id}/messages/stream",
-#     response_model=None,
-#     operation_id="create_agent_message_stream",
-#     responses={
-#         200: {
-#             "description": "Successful response",
-#             "content": {
-#                 "text/event-stream": {"description": "Server-Sent Events stream"},
-#             },
-#         }
-#     },
-# )
-# async def send_message_streaming(
-#     agent_id: str,
-#     request_obj: Request,  # FastAPI Request
-#     server: SyncServer = Depends(get_letta_server),
-#     request: LettaStreamingRequest = Body(...),
-#     actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
-#     at_user_id: Optional[str] = Header(None, alias="x_gb_user_id"),
-# ) -> StreamingResponse | LettaResponse:
-#     """
-#     Process a user message and return the agent's response.
-#     This endpoint accepts a message from a user and processes it through the agent.
-#     It will stream the steps of the response always, and stream the tokens if 'stream_tokens' is set to True.
-#     """
-#     request_start_timestamp_ns = get_utc_timestamp_ns()
-#     MetricRegistry().user_message_counter.add(1, get_ctx_attributes())
+@router.post(
+    "/{agent_id}/messages/stream",
+    response_model=None,
+    operation_id="create_agent_message_stream",
+    responses={
+        200: {
+            "description": "Successful response",
+            "content": {
+                "text/event-stream": {"description": "Server-Sent Events stream"},
+            },
+        }
+    },
+)
+async def send_message_streaming(
+    agent_id: str,
+    request_obj: Request,  # FastAPI Request
+    server: SyncServer = Depends(get_letta_server),
+    request: LettaStreamingRequest = Body(...),
+    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    at_user_id: Optional[str] = Header(None, alias="x_gb_user_id"),
+) -> StreamingResponse | LettaResponse:
+    """
+    Process a user message and return the agent's response.
+    This endpoint accepts a message from a user and processes it through the agent.
+    It will stream the steps of the response always, and stream the tokens if 'stream_tokens' is set to True.
+    """
+    request_start_timestamp_ns = get_utc_timestamp_ns()
+    MetricRegistry().user_message_counter.add(1, get_ctx_attributes())
 
-#     logger.warning(
-#         f"[SEND_MESSAGE_STREAMING] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}, model_override={request.model_override}, llm_provider={request.llm_provider}"
-#     )
+    logger.warning(
+        f"[SEND_MESSAGE_STREAMING] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}, model_override={request.model_override}, llm_provider={request.llm_provider}"
+    )
 
-#     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
-#     # TODO: This is redundant, remove soon
-#     agent = await server.agent_manager.get_agent_by_id_async(agent_id, actor, include_relationships=["multi_agent_group"])
-#     agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type == "sleeptime"
-#     model_compatible = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "together", "google_ai", "google_vertex"]
-#     model_compatible_token_streaming = agent.llm_config.model_endpoint_type in ["anthropic", "openai"]
-#     not_letta_endpoint = not ("inference.letta.com" in agent.llm_config.model_endpoint)
+    actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
+    # TODO: This is redundant, remove soon
+    agent = await server.agent_manager.get_agent_by_id_async(agent_id, actor, include_relationships=["multi_agent_group"])
+    agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type == "sleeptime"
+    model_compatible = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "together", "google_ai", "google_vertex"]
+    model_compatible_token_streaming = agent.llm_config.model_endpoint_type in ["anthropic", "openai"]
+    not_letta_endpoint = not ("inference.letta.com" in agent.llm_config.model_endpoint)
 
-#     if agent_eligible and model_compatible:
-#         if agent.enable_sleeptime:
-#             agent_loop = SleeptimeMultiAgentV2(
-#                 agent_id=agent_id,
-#                 message_manager=server.message_manager,
-#                 agent_manager=server.agent_manager,
-#                 block_manager=server.block_manager,
-#                 passage_manager=server.passage_manager,
-#                 group_manager=server.group_manager,
-#                 job_manager=server.job_manager,
-#                 actor=actor,
-#                 step_manager=server.step_manager,
-#                 telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
-#                 group=agent.multi_agent_group,
-#             )
-#         else:
-#             agent_loop = LettaAgent(
-#                 agent_id=agent_id,
-#                 message_manager=server.message_manager,
-#                 agent_manager=server.agent_manager,
-#                 block_manager=server.block_manager,
-#                 passage_manager=server.passage_manager,
-#                 actor=actor,
-#                 step_manager=server.step_manager,
-#                 telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
-#                 at_user_id=at_user_id,
-#             )
-#         from letta.server.rest_api.streaming_response import StreamingResponseWithStatusCode
+    if agent_eligible and model_compatible:
+        if agent.enable_sleeptime:
+            agent_loop = SleeptimeMultiAgentV2(
+                agent_id=agent_id,
+                message_manager=server.message_manager,
+                agent_manager=server.agent_manager,
+                block_manager=server.block_manager,
+                passage_manager=server.passage_manager,
+                group_manager=server.group_manager,
+                job_manager=server.job_manager,
+                actor=actor,
+                step_manager=server.step_manager,
+                telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
+                group=agent.multi_agent_group,
+            )
+        else:
+            agent_loop = LettaAgent(
+                agent_id=agent_id,
+                message_manager=server.message_manager,
+                agent_manager=server.agent_manager,
+                block_manager=server.block_manager,
+                passage_manager=server.passage_manager,
+                actor=actor,
+                step_manager=server.step_manager,
+                telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
+                at_user_id=at_user_id,
+            )
+        from letta.server.rest_api.streaming_response import StreamingResponseWithStatusCode
 
-#         if request.stream_tokens and model_compatible_token_streaming and not_letta_endpoint:
-#             result = StreamingResponseWithStatusCode(
-#                 agent_loop.step_stream(
-#                     input_messages=request.messages,
-#                     max_steps=request.max_steps,
-#                     use_assistant_message=request.use_assistant_message,
-#                     request_start_timestamp_ns=request_start_timestamp_ns,
-#                     include_return_message_types=request.include_return_message_types,
-#                     use_vertex_experiment=request.use_vertex_experiment,
-#                     use_bedrock_experiment=request.use_bedrock_experiment,
-#                     model_override=request.model_override,
-#                     user_cohort=request.user_cohort,
-#                     thinking=request.thinking,
-#                     thinking_config=request.thinking_config,
-#                     output_config=request.output_config,
-#                     llm_provider=request.llm_provider,
-#                 ),
-#                 media_type="text/event-stream",
-#             )
-#         else:
-#             result = StreamingResponseWithStatusCode(
-#                 agent_loop.step_stream_no_tokens(
-#                     request.messages,
-#                     max_steps=request.max_steps,
-#                     use_assistant_message=request.use_assistant_message,
-#                     request_start_timestamp_ns=request_start_timestamp_ns,
-#                     include_return_message_types=request.include_return_message_types,
-#                     use_vertex_experiment=request.use_vertex_experiment,
-#                     use_bedrock_experiment=request.use_bedrock_experiment,
-#                     model_override=request.model_override,
-#                     user_cohort=request.user_cohort,
-#                     thinking=request.thinking,
-#                     thinking_config=request.thinking_config,
-#                     output_config=request.output_config,
-#                     llm_provider=request.llm_provider,
-#                 ),
-#                 media_type="text/event-stream",
-#             )
-#     else:
-#         result = await server.send_message_to_agent(
-#             agent_id=agent_id,
-#             actor=actor,
-#             input_messages=request.messages,
-#             stream_steps=True,
-#             stream_tokens=request.stream_tokens,
-#             # Support for AssistantMessage
-#             use_assistant_message=request.use_assistant_message,
-#             assistant_message_tool_name=request.assistant_message_tool_name,
-#             assistant_message_tool_kwarg=request.assistant_message_tool_kwarg,
-#             request_start_timestamp_ns=request_start_timestamp_ns,
-#             include_return_message_types=request.include_return_message_types,
-#             use_vertex_experiment=request.use_vertex_experiment,
-#             use_bedrock_experiment=request.use_bedrock_experiment,
-#             model_override=request.model_override,
-#             user_cohort=request.user_cohort,
-#         )
+        if request.stream_tokens and model_compatible_token_streaming and not_letta_endpoint:
+            result = StreamingResponseWithStatusCode(
+                agent_loop.step_stream(
+                    input_messages=request.messages,
+                    max_steps=request.max_steps,
+                    use_assistant_message=request.use_assistant_message,
+                    request_start_timestamp_ns=request_start_timestamp_ns,
+                    include_return_message_types=request.include_return_message_types,
+                    use_vertex_experiment=request.use_vertex_experiment,
+                    use_bedrock_experiment=request.use_bedrock_experiment,
+                    model_override=request.model_override,
+                    user_cohort=request.user_cohort,
+                    thinking=request.thinking,
+                    thinking_config=request.thinking_config,
+                    output_config=request.output_config,
+                    llm_provider=request.llm_provider,
+                ),
+                media_type="text/event-stream",
+            )
+        else:
+            result = StreamingResponseWithStatusCode(
+                agent_loop.step_stream_no_tokens(
+                    request.messages,
+                    max_steps=request.max_steps,
+                    use_assistant_message=request.use_assistant_message,
+                    request_start_timestamp_ns=request_start_timestamp_ns,
+                    include_return_message_types=request.include_return_message_types,
+                    use_vertex_experiment=request.use_vertex_experiment,
+                    use_bedrock_experiment=request.use_bedrock_experiment,
+                    model_override=request.model_override,
+                    user_cohort=request.user_cohort,
+                    thinking=request.thinking,
+                    thinking_config=request.thinking_config,
+                    output_config=request.output_config,
+                    llm_provider=request.llm_provider,
+                ),
+                media_type="text/event-stream",
+            )
+    else:
+        result = await server.send_message_to_agent(
+            agent_id=agent_id,
+            actor=actor,
+            input_messages=request.messages,
+            stream_steps=True,
+            stream_tokens=request.stream_tokens,
+            # Support for AssistantMessage
+            use_assistant_message=request.use_assistant_message,
+            assistant_message_tool_name=request.assistant_message_tool_name,
+            assistant_message_tool_kwarg=request.assistant_message_tool_kwarg,
+            request_start_timestamp_ns=request_start_timestamp_ns,
+            include_return_message_types=request.include_return_message_types,
+            use_vertex_experiment=request.use_vertex_experiment,
+            use_bedrock_experiment=request.use_bedrock_experiment,
+            model_override=request.model_override,
+            user_cohort=request.user_cohort,
+        )
 
-#     return result
+    return result
 
 
 async def process_message_background(

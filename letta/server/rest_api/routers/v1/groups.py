@@ -8,7 +8,7 @@ from letta.constants import DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG
 from letta.orm.errors import NoResultFound
 from letta.schemas.group import Group, GroupCreate, GroupUpdate, ManagerType
 from letta.schemas.letta_message import LettaMessageUnion, LettaMessageUpdateUnion
-from letta.schemas.letta_request import LettaRequest
+from letta.schemas.letta_request import LettaRequest, LettaStreamingRequest
 from letta.schemas.letta_response import LettaResponse
 from letta.server.rest_api.utils import get_letta_server
 from letta.server.server import SyncServer
@@ -150,37 +150,43 @@ async def send_group_message(
     return result
 
 
-# @router.post(
-#     "/{group_id}/messages/stream",
-#     response_model=None,
-#     operation_id="send_group_message_streaming",
-#     responses={
-#         200: {
-#             "description": "Successful response",
-#             "content": {
-#                 "text/event-stream": {"description": "Server-Sent Events stream"},
-#             },
-#         }
-#     },
-# )
-# async def send_group_message_streaming(
-#     group_id: str,
-#     server: SyncServer = Depends(get_letta_server),
-#     request: LettaStreamingRequest = Body(...),
-#     actor_id: Optional[str] = Header(None, alias="user_id"),
-# ):
-#     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
-#     result = await server.send_group_message_to_agent(
-#         group_id=group_id,
-#         actor=actor,
-#         input_messages=request.messages,
-#         stream_steps=True,
-#         stream_tokens=request.stream_tokens,
-#         use_assistant_message=request.use_assistant_message,
-#         assistant_message_tool_name=request.assistant_message_tool_name,
-#         assistant_message_tool_kwarg=request.assistant_message_tool_kwarg,
-#     )
-#     return result
+@router.post(
+    "/{group_id}/messages/stream",
+    response_model=None,
+    operation_id="send_group_message_streaming",
+    responses={
+        200: {
+            "description": "Successful response",
+            "content": {
+                "text/event-stream": {"description": "Server-Sent Events stream"},
+            },
+        }
+    },
+)
+async def send_group_message_streaming(
+    group_id: str,
+    server: SyncServer = Depends(get_letta_server),
+    request: LettaStreamingRequest = Body(...),
+    actor_id: Optional[str] = Header(None, alias="user_id"),
+):
+    """
+    Process a user message and return the group's responses.
+    This endpoint accepts a message from a user and processes it through agents in the group based on the specified pattern.
+    It will stream the steps of the response always, and stream the tokens if 'stream_tokens' is set to True.
+    """
+    actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
+    result = await server.send_group_message_to_agent(
+        group_id=group_id,
+        actor=actor,
+        input_messages=request.messages,
+        stream_steps=True,
+        stream_tokens=request.stream_tokens,
+        # Support for AssistantMessage
+        use_assistant_message=request.use_assistant_message,
+        assistant_message_tool_name=request.assistant_message_tool_name,
+        assistant_message_tool_kwarg=request.assistant_message_tool_kwarg,
+    )
+    return result
 
 
 GroupMessagesResponse = Annotated[
