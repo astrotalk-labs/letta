@@ -751,83 +751,51 @@ async def send_message(
             logger.warning(
                 f"[TASK_LATENCY] task_id={request.task_id} phase=agent_load duration_ms={ns_to_ms(get_utc_timestamp_ns() - _t_agent)}"
             )
-        agent_eligible = agent.multi_agent_group is None or agent.multi_agent_group.manager_type in ["sleeptime", "voice_sleeptime"]
-        model_compatible = agent.llm_config.model_endpoint_type in ["anthropic", "openai", "together", "google_ai", "google_vertex"]
-        debug_log(
-            at_user_id,
-            f"send_message branch: agent_eligible={agent_eligible} model_compatible={model_compatible} endpoint_type={agent.llm_config.model_endpoint_type}",
-        )
 
-        if agent_eligible and model_compatible:
-            debug_log(
-                at_user_id,
-                f"send_message: using new agent loop path enable_sleeptime={agent.enable_sleeptime} agent_type={agent.agent_type}",
-            )
-            if agent.enable_sleeptime and agent.agent_type != AgentType.voice_convo_agent:
-                debug_log(at_user_id, "send_message: choosing SleeptimeMultiAgentV2")
-                agent_loop = SleeptimeMultiAgentV2(
-                    agent_id=agent_id,
-                    message_manager=server.message_manager,
-                    agent_manager=server.agent_manager,
-                    block_manager=server.block_manager,
-                    passage_manager=server.passage_manager,
-                    group_manager=server.group_manager,
-                    job_manager=server.job_manager,
-                    actor=actor,
-                    group=agent.multi_agent_group,
-                )
-            else:
-                debug_log(at_user_id, "send_message: choosing LettaAgent")
-                agent_loop = LettaAgent(
-                    agent_id=agent_id,
-                    message_manager=server.message_manager,
-                    agent_manager=server.agent_manager,
-                    block_manager=server.block_manager,
-                    passage_manager=server.passage_manager,
-                    actor=actor,
-                    step_manager=server.step_manager,
-                    telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
-                    at_user_id=at_user_id,
-                )
-
-            result = await agent_loop.step(
-                request.messages,
-                max_steps=request.max_steps,
-                use_assistant_message=request.use_assistant_message,
-                request_start_timestamp_ns=request_start_timestamp_ns,
-                include_return_message_types=request.include_return_message_types,
-                use_vertex_experiment=request.use_vertex_experiment,
-                use_bedrock_experiment=request.use_bedrock_experiment,
-                model_override=request.model_override,
-                user_cohort=request.user_cohort,
-                thinking=request.thinking,
-                thinking_config=request.thinking_config,
-                output_config=request.output_config,
-                task_id=request.task_id,
-                latency_optimisation_flow=request.latencyOptimisationFlow,
-                llm_provider=request.llm_provider,
+        if agent.enable_sleeptime and agent.agent_type != AgentType.voice_convo_agent:
+            debug_log(at_user_id, "send_message: choosing SleeptimeMultiAgentV2")
+            agent_loop = SleeptimeMultiAgentV2(
+                agent_id=agent_id,
+                message_manager=server.message_manager,
+                agent_manager=server.agent_manager,
+                block_manager=server.block_manager,
+                passage_manager=server.passage_manager,
+                group_manager=server.group_manager,
+                job_manager=server.job_manager,
+                actor=actor,
+                group=agent.multi_agent_group,
             )
         else:
-            debug_log(
-                at_user_id,
-                f"send_message: falling back to legacy send_message_to_agent agent_eligible={agent_eligible} model_compatible={model_compatible}",
-            )
-            result = await server.send_message_to_agent(
+            debug_log(at_user_id, "send_message: choosing LettaAgent")
+            agent_loop = LettaAgent(
                 agent_id=agent_id,
+                message_manager=server.message_manager,
+                agent_manager=server.agent_manager,
+                block_manager=server.block_manager,
+                passage_manager=server.passage_manager,
                 actor=actor,
-                input_messages=request.messages,
-                stream_steps=False,
-                stream_tokens=False,
-                # Support for AssistantMessage
-                use_assistant_message=request.use_assistant_message,
-                assistant_message_tool_name=request.assistant_message_tool_name,
-                assistant_message_tool_kwarg=request.assistant_message_tool_kwarg,
-                include_return_message_types=request.include_return_message_types,
-                use_vertex_experiment=request.use_vertex_experiment,
-                use_bedrock_experiment=request.use_bedrock_experiment,
-                model_override=request.model_override,
-                user_cohort=request.user_cohort,
+                step_manager=server.step_manager,
+                telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
+                at_user_id=at_user_id,
             )
+
+        result = await agent_loop.step(
+            request.messages,
+            max_steps=request.max_steps,
+            use_assistant_message=request.use_assistant_message,
+            request_start_timestamp_ns=request_start_timestamp_ns,
+            include_return_message_types=request.include_return_message_types,
+            use_vertex_experiment=request.use_vertex_experiment,
+            use_bedrock_experiment=request.use_bedrock_experiment,
+            model_override=request.model_override,
+            user_cohort=request.user_cohort,
+            thinking=request.thinking,
+            thinking_config=request.thinking_config,
+            output_config=request.output_config,
+            task_id=request.task_id,
+            latency_optimisation_flow=request.latencyOptimisationFlow,
+            llm_provider=request.llm_provider,
+        )
         return result
     except Exception as e:
         status_code = getattr(e, "status_code", 500)
