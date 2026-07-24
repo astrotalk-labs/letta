@@ -1,7 +1,7 @@
 import json
 import uuid
 from dataclasses import dataclass
-from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from aiomultiprocess import Pool
 from anthropic.types.beta.messages import BetaMessageBatchCanceledResult, BetaMessageBatchErroredResult, BetaMessageBatchSucceededResult
@@ -19,9 +19,8 @@ from letta.log import get_logger
 from letta.orm.enums import ToolType
 from letta.otel.tracing import log_event, trace_method
 from letta.schemas.agent import AgentState, AgentStepState
-from letta.schemas.enums import AgentStepStatus, JobStatus, MessageStreamStatus, ProviderType
+from letta.schemas.enums import AgentStepStatus, JobStatus, ProviderType
 from letta.schemas.job import JobUpdate
-from letta.schemas.letta_message import LegacyLettaMessage, LettaMessage
 from letta.schemas.letta_message_content import OmittedReasoningContent, ReasoningContent, RedactedReasoningContent, TextContent
 from letta.schemas.letta_request import LettaBatchRequest
 from letta.schemas.letta_response import LettaBatchResponse, LettaResponse
@@ -621,9 +620,4 @@ class LettaAgentBatch(BaseAgent):
 
     # Not used in batch.
     async def step(self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS) -> LettaResponse:
-        raise NotImplementedError
-
-    async def step_stream(
-        self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS
-    ) -> AsyncGenerator[Union[LettaMessage, LegacyLettaMessage, MessageStreamStatus], None]:
         raise NotImplementedError

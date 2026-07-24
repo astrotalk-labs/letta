@@ -1,4 +1,4 @@
-from typing import AsyncGenerator, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple
 
 from letta.agents.helpers import _create_letta_response, serialize_message_history
 from letta.agents.letta_agent import LettaAgent
@@ -7,8 +7,7 @@ from letta.orm.enums import ToolType
 from letta.otel.tracing import trace_method
 from letta.schemas.agent import AgentState
 from letta.schemas.block import BlockUpdate
-from letta.schemas.enums import MessageStreamStatus
-from letta.schemas.letta_message import LegacyLettaMessage, LettaMessage, MessageType
+from letta.schemas.letta_message import MessageType
 from letta.schemas.letta_response import LettaResponse
 from letta.schemas.message import MessageCreate
 from letta.schemas.tool_rule import ChildToolRule, ContinueToolRule, InitToolRule, TerminalToolRule
@@ -170,11 +169,3 @@ class VoiceSleeptimeAgent(LettaAgent):
             return "", True
         except Exception as e:
             return f"Failed to store memory given start_index {start_index} and end_index {end_index}: {e}", False
-
-    async def step_stream(
-        self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS, use_assistant_message: bool = True
-    ) -> AsyncGenerator[Union[LettaMessage, LegacyLettaMessage, MessageStreamStatus], None]:
-        """
-        This agent is synchronous-only. If called in an async context, raise an error.
-        """
-        raise NotImplementedError("VoiceSleeptimeAgent does not support async step.")

@@ -1,6 +1,6 @@
 import asyncio
 from pathlib import Path
-from typing import AsyncGenerator, List, Optional
+from typing import List, Optional
 
 import anthropic
 from openai import AzureOpenAI
@@ -239,6 +239,3 @@ class EphemeralSummaryAgent(BaseAgent):
                 content=[TextContent(text=summary)],
             )
         ]
-
-    async def step_stream(self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS) -> AsyncGenerator[str, None]:
-        raise NotImplementedError("EphemeralAgent does not support async step.")

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, AsyncGenerator, List, Optional, Union
+from typing import Any, List, Optional
 
 import openai
 
@@ -9,7 +9,6 @@ from letta.helpers.datetime_helpers import get_utc_time, get_utc_timestamp_ns, n
 from letta.log import get_logger
 from letta.schemas.agent import AgentState
 from letta.schemas.enums import MessageStreamStatus
-from letta.schemas.letta_message import LegacyLettaMessage, LettaMessage
 from letta.schemas.letta_message_content import TextContent
 from letta.schemas.letta_response import LettaResponse
 from letta.schemas.letta_stop_reason import LettaStopReason, StopReasonType
@@ -54,15 +53,6 @@ class BaseAgent(ABC):
     async def step(self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS) -> LettaResponse:
         """
         Main execution loop for the agent.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def step_stream(
-        self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS
-    ) -> AsyncGenerator[Union[LettaMessage, LegacyLettaMessage, MessageStreamStatus], None]:
-        """
-        Main streaming execution loop for the agent.
         """
         raise NotImplementedError
 

@@ -1,4 +1,4 @@
-from typing import AsyncGenerator, Dict, List
+from typing import Dict, List
 
 import openai
 
@@ -64,9 +64,3 @@ class EphemeralAgent(BaseAgent):
             temperature=agent_state.llm_config.temperature,
         )
         return openai_request
-
-    async def step_stream(self, input_messages: List[MessageCreate]) -> AsyncGenerator[str, None]:
-        """
-        This agent is synchronous-only. If called in an async context, raise an error.
-        """
-        raise NotImplementedError("EphemeralAgent does not support async step.")
