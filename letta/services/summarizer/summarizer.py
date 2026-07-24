@@ -25,7 +25,7 @@ class Summarizer:
     def __init__(
         self,
         mode: SummarizationMode,
-        summarizer_agent: Optional[EphemeralSummaryAgent] = None,
+        summarizer_agent: Optional[Union[EphemeralSummaryAgent, "VoiceSleeptimeAgent"]] = None,
         message_buffer_limit: int = 10,
         message_buffer_min: int = 3,
     ):

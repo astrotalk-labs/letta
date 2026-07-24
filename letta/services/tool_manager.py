@@ -8,6 +8,8 @@ from letta.constants import (
     BASE_MEMORY_TOOLS,
     BASE_SLEEPTIME_TOOLS,
     BASE_TOOLS,
+    BASE_VOICE_SLEEPTIME_CHAT_TOOLS,
+    BASE_VOICE_SLEEPTIME_TOOLS,
     BUILTIN_TOOLS,
     FILES_TOOLS,
     LETTA_TOOL_MODULE_NAMES,
@@ -399,6 +401,9 @@ class ToolManager:
                 elif name in BASE_SLEEPTIME_TOOLS:
                     tool_type = ToolType.LETTA_SLEEPTIME_CORE
                     tags = [tool_type.value]
+                elif name in BASE_VOICE_SLEEPTIME_TOOLS or name in BASE_VOICE_SLEEPTIME_CHAT_TOOLS:
+                    tool_type = ToolType.LETTA_VOICE_SLEEPTIME_CORE
+                    tags = [tool_type.value]
                 elif name in BUILTIN_TOOLS:
                     tool_type = ToolType.LETTA_BUILTIN
                     tags = [tool_type.value]
@@ -407,7 +412,7 @@ class ToolManager:
                     tags = [tool_type.value]
                 else:
                     raise ValueError(
-                        f"Tool name {name} is not in the list of base tool names: {BASE_TOOLS + BASE_MEMORY_TOOLS + MULTI_AGENT_TOOLS + BASE_SLEEPTIME_TOOLS}"
+                        f"Tool name {name} is not in the list of base tool names: {BASE_TOOLS + BASE_MEMORY_TOOLS + MULTI_AGENT_TOOLS + BASE_SLEEPTIME_TOOLS + BASE_VOICE_SLEEPTIME_TOOLS + BASE_VOICE_SLEEPTIME_CHAT_TOOLS}"
                     )
 
                 # create to tool
@@ -459,6 +464,8 @@ class ToolManager:
                 tool_type = ToolType.LETTA_SLEEPTIME_CORE
             elif name in MULTI_AGENT_TOOLS:
                 tool_type = ToolType.LETTA_MULTI_AGENT_CORE
+            elif name in BASE_VOICE_SLEEPTIME_TOOLS or name in BASE_VOICE_SLEEPTIME_CHAT_TOOLS:
+                tool_type = ToolType.LETTA_VOICE_SLEEPTIME_CORE
             elif name in BUILTIN_TOOLS:
                 tool_type = ToolType.LETTA_BUILTIN
             elif name in FILES_TOOLS:

@@ -1937,6 +1937,7 @@ class LettaAgent(BaseAgent):
                 ToolType.LETTA_MEMORY_CORE,
                 ToolType.LETTA_MULTI_AGENT_CORE,
                 ToolType.LETTA_SLEEPTIME_CORE,
+                ToolType.LETTA_VOICE_SLEEPTIME_CORE,
                 ToolType.LETTA_BUILTIN,
                 ToolType.LETTA_FILES_CORE,
                 ToolType.EXTERNAL_COMPOSIO,
