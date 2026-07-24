@@ -5,8 +5,6 @@
 openapi_letta.json
 openapi_openai.json
 
-CLAUDE.md
-
 ### Eclipse ###
 .metadata
 bin/
@@ -107,6 +105,8 @@ ipython_config.py
 .DS_Store
 .AppleDouble
 .LSOverride
+
+AGENTS.md
 
 # Icon must end with two \r
 Icon
