@@ -10,7 +10,7 @@ from opentelemetry.trace import Span
 from letta.agents.base_agent import BaseAgent
 from letta.debug_util import debug_log
 from letta.agents.ephemeral_summary_agent import EphemeralSummaryAgent
-from letta.agents.helpers import _create_letta_response, _prepare_in_context_messages_no_persist_async, generate_step_id
+from letta.agents.helpers import _create_letta_response, prepare_in_context_messages_no_persist_async, generate_step_id
 from letta.constants import DEFAULT_MAX_STEPS
 from letta.errors import ContextWindowExceededError
 from letta.helpers import ToolRulesSolver
@@ -599,8 +599,15 @@ class LettaAgent(BaseAgent):
             debug_log(self.at_user_id, f"_step: cascade gate passed latency_optimisation_flow={latency_optimisation_flow}")
 
         _ctx_prep_start = get_utc_timestamp_ns() if task_id else None
+        _raw_msg_ids = agent_state.message_ids or []
+        _unique_msg_ids = set(_raw_msg_ids)
+        debug_log(
+            self.at_user_id,
+            f"_step: [MSG_DUP_DIAG] message_ids total={len(_raw_msg_ids)} unique={len(_unique_msg_ids)} "
+            f"has_dupes={len(_raw_msg_ids) != len(_unique_msg_ids)} ids={_raw_msg_ids}",
+        )
         async with AsyncTimer() as _t:
-            current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
+            current_in_context_messages, new_in_context_messages = await prepare_in_context_messages_no_persist_async(
                 input_messages, agent_state, self.message_manager, self.actor
             )
         if task_id and _ctx_prep_start:
@@ -609,7 +616,7 @@ class LettaAgent(BaseAgent):
             )
         _log_step_timing(
             "message_buffer_load",
-            _t.elapsed_ms,
+            _t.elapsed_ms or 0.0,
             agent_id=agent_state.id,
             user_id=self.at_user_id,
             msg_count=len(current_in_context_messages),
@@ -1020,6 +1027,14 @@ class LettaAgent(BaseAgent):
                     f"[TASK_LATENCY] task_id={task_id} step={i} phase=tool_exec duration_ms={ns_to_ms(get_utc_timestamp_ns() - _tool_start)}"
                 )
             self.response_messages.extend(persisted_messages)
+            _pre_extend_ids = [m.id for m in new_in_context_messages]
+            _persisted_ids = [m.id for m in persisted_messages]
+            _overlap = set(_pre_extend_ids) & set(_persisted_ids)
+            debug_log(
+                self.at_user_id,
+                f"_step: step={i} [MSG_DUP_DIAG] pre_extend_ids={_pre_extend_ids} "
+                f"persisted_ids={_persisted_ids} overlap={list(_overlap)}",
+            )
             new_in_context_messages.extend(persisted_messages)
             initial_messages = None
             _prev_tool_name = tool_call.function.name  # used by next iteration for cascade decision
@@ -1803,9 +1818,14 @@ class LettaAgent(BaseAgent):
             except Exception:
                 pass
         _t_setctx = get_utc_timestamp_ns()
-        await self.agent_manager.set_in_context_messages_async(
-            agent_id=self.agent_id, message_ids=[m.id for m in new_in_context_messages], actor=self.actor
+        _final_ids = [m.id for m in new_in_context_messages]
+        _final_unique = set(_final_ids)
+        debug_log(
+            getattr(self, "at_user_id", None),
+            f"_rebuild_context_window: [MSG_DUP_DIAG] saving message_ids total={len(_final_ids)} "
+            f"unique={len(_final_unique)} has_dupes={len(_final_ids) != len(_final_unique)} ids={_final_ids}",
         )
+        await self.agent_manager.set_in_context_messages_async(agent_id=self.agent_id, message_ids=_final_ids, actor=self.actor)
         if self._task_id:
             logger.info(
                 f"[CTXWIN_TIMING] task_id={self._task_id} agent_id={self.agent_id} "
