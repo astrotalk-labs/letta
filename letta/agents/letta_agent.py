@@ -400,6 +400,7 @@ class LettaAgent(BaseAgent):
                     thinking=thinking,
                     thinking_config=thinking_config,
                     output_config=output_config,
+                    step_id=step_id,
                 )
             )
             in_context_messages = current_in_context_messages + new_in_context_messages
@@ -814,6 +815,7 @@ class LettaAgent(BaseAgent):
                     thinking_config=thinking_config,
                     output_config=output_config,
                     excluded_tool_names=_excluded_for_haiku,
+                    step_id=step_id,
                 )
                 # Timeout circuit-breaker: if Haiku is slower than _HAIKU_TIMEOUT_SECONDS
                 # (Bedrock degradation), fall through to primary instead of blocking.
@@ -837,7 +839,7 @@ class LettaAgent(BaseAgent):
                     request_data, response_data, current_in_context_messages, new_in_context_messages, valid_tool_names = result
                     if task_id and _llm_start:
                         logger.warning(
-                            f"[TASK_LATENCY] task_id={task_id} step={i} phase=llm_call duration_ms={ns_to_ms(get_utc_timestamp_ns() - _llm_start)}"
+                            f"[TASK_LATENCY] task_id={task_id} step_id={step_id} step={i} phase=llm_call duration_ms={ns_to_ms(get_utc_timestamp_ns() - _llm_start)}"
                         )
                     in_context_messages = current_in_context_messages + new_in_context_messages
                     log_event("agent.step.llm_response.received")  # [3^]
@@ -868,11 +870,12 @@ class LettaAgent(BaseAgent):
                         thinking=thinking,
                         thinking_config=thinking_config,
                         output_config=output_config,
+                        step_id=step_id,
                     )
                 )
                 if task_id and _llm_timeout_retry_start:
                     logger.warning(
-                        f"[TASK_LATENCY] task_id={task_id} step={i} phase=llm_call_timeout_fallback "
+                        f"[TASK_LATENCY] task_id={task_id} step_id={step_id} step={i} phase=llm_call_timeout_fallback "
                         f"duration_ms={ns_to_ms(get_utc_timestamp_ns() - _llm_timeout_retry_start)}"
                     )
                 in_context_messages = current_in_context_messages + new_in_context_messages
@@ -946,11 +949,12 @@ class LettaAgent(BaseAgent):
                             thinking=thinking,
                             thinking_config=thinking_config,
                             output_config=output_config,
+                            step_id=step_id,
                         )
                     )
                     if task_id and _llm_retry_start:
                         logger.warning(
-                            f"[TASK_LATENCY] task_id={task_id} step={i} phase=llm_call_retry "
+                            f"[TASK_LATENCY] task_id={task_id} step_id={step_id} step={i} phase=llm_call_retry "
                             f"duration_ms={ns_to_ms(get_utc_timestamp_ns() - _llm_retry_start)}"
                         )
                     in_context_messages = current_in_context_messages + new_in_context_messages
@@ -1027,7 +1031,7 @@ class LettaAgent(BaseAgent):
             )
             if task_id and _tool_start:
                 logger.warning(
-                    f"[TASK_LATENCY] task_id={task_id} step={i} phase=tool_exec duration_ms={ns_to_ms(get_utc_timestamp_ns() - _tool_start)}"
+                    f"[TASK_LATENCY] task_id={task_id} step_id={step_id} step={i} phase=tool_exec duration_ms={ns_to_ms(get_utc_timestamp_ns() - _tool_start)}"
                 )
             self.response_messages.extend(persisted_messages)
             _existing_ids = {m.id for m in new_in_context_messages}
@@ -1068,7 +1072,9 @@ class LettaAgent(BaseAgent):
             step_ns = now - step_start
             agent_step_span.add_event(name="step_ms", attributes={"duration_ms": ns_to_ms(step_ns)})
             if task_id:
-                logger.warning(f"[TASK_LATENCY] task_id={task_id} step={i} phase=total_step duration_ms={ns_to_ms(step_ns)}")
+                logger.warning(
+                    f"[TASK_LATENCY] task_id={task_id} step_id={step_id} step={i} phase=total_step duration_ms={ns_to_ms(step_ns)}"
+                )
 
             # OTel: per-step latency tagged with cascade outcome. Lets us answer
             # "how long do Haiku-kept steps take vs primary-retried steps?".
@@ -1500,6 +1506,7 @@ class LettaAgent(BaseAgent):
         thinking_config: Optional[dict] = None,
         output_config: Optional[dict] = None,
         excluded_tool_names: Optional[frozenset] = None,
+        step_id: Optional[str] = None,
     ) -> Tuple[Dict, Dict, List[Message], List[Message], List[str]] | None:
         for attempt in range(self.max_summarization_retries + 1):
             try:
@@ -1512,6 +1519,7 @@ class LettaAgent(BaseAgent):
                         agent_state=agent_state,
                         tool_rules_solver=tool_rules_solver,
                         step_index=step_index,
+                        step_id=step_id,
                     )
                 _log_step_timing(
                     "llm_request_build",
@@ -1680,6 +1688,7 @@ class LettaAgent(BaseAgent):
         step_index: int = 0,
         thinking: Optional[dict] = None,
         output_config: Optional[dict] = None,
+        step_id: Optional[str] = None,
     ) -> Tuple[Dict, AsyncStream[ChatCompletionChunk], List[Message], List[Message], List[str], int] | None:
         for attempt in range(self.max_summarization_retries + 1):
             try:
@@ -1691,6 +1700,7 @@ class LettaAgent(BaseAgent):
                     agent_state=agent_state,
                     tool_rules_solver=tool_rules_solver,
                     step_index=step_index,
+                    step_id=step_id,
                 )
                 log_event("agent.stream.llm_request.created")  # [2^]
 
@@ -1860,18 +1870,31 @@ class LettaAgent(BaseAgent):
         agent_state: AgentState,
         tool_rules_solver: ToolRulesSolver,
         step_index: int = 0,
+        step_id: Optional[str] = None,
     ) -> Tuple[dict, List[str]]:
+        async def _timed_message_size():
+            _t0 = get_utc_timestamp_ns() if self._task_id else None
+            result = await self.message_manager.size_async(actor=self.actor, agent_id=agent_state.id)
+            if self._task_id and _t0:
+                logger.warning(
+                    f"[TASK_LATENCY] task_id={self._task_id} step_id={step_id} step={step_index} "
+                    f"phase=message_size_async duration_ms={ns_to_ms(get_utc_timestamp_ns() - _t0)}"
+                )
+            return result
+
+        async def _timed_passage_size():
+            _t0 = get_utc_timestamp_ns() if self._task_id else None
+            result = await self.passage_manager.agent_passage_size_async(actor=self.actor, agent_id=agent_state.id)
+            if self._task_id and _t0:
+                logger.warning(
+                    f"[TASK_LATENCY] task_id={self._task_id} step_id={step_id} step={step_index} "
+                    f"phase=passage_size_async duration_ms={ns_to_ms(get_utc_timestamp_ns() - _t0)}"
+                )
+            return result
+
         self.num_messages, self.num_archival_memories = await asyncio.gather(
-            (
-                self.message_manager.size_async(actor=self.actor, agent_id=agent_state.id)
-                if self.num_messages is None
-                else asyncio.sleep(0, result=self.num_messages)
-            ),
-            (
-                self.passage_manager.agent_passage_size_async(actor=self.actor, agent_id=agent_state.id)
-                if self.num_archival_memories is None
-                else asyncio.sleep(0, result=self.num_archival_memories)
-            ),
+            (_timed_message_size() if self.num_messages is None else asyncio.sleep(0, result=self.num_messages)),
+            (_timed_passage_size() if self.num_archival_memories is None else asyncio.sleep(0, result=self.num_archival_memories)),
         )
 
         self._current_step_index = step_index
