@@ -1,13 +1,14 @@
 import json
 from datetime import datetime
+from typing import Any
 
 
-def json_loads(data):
+def json_loads(data: Any):
     return json.loads(data, strict=False)
 
 
-def json_dumps(data, indent=2):
-    def safe_serializer(obj):
+def json_dumps(data: Any, indent: int = 2):
+    def safe_serializer(obj: Any):
         if isinstance(obj, datetime):
             return obj.isoformat()
         if isinstance(obj, bytes):
