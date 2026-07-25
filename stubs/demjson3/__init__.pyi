@@ -1,0 +1,6 @@
+from typing import Any
+
+def decode(txt: str, **kwargs: Any) -> Any: ...
+
+class JSONDecodeError(ValueError):
+    def __init__(self, *args: Any, **kwargs: Any) -> None: ...
