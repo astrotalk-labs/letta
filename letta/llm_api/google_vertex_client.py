@@ -1,9 +1,14 @@
 import json
 import uuid
-from typing import List, Optional
 
 from google import genai
-from google.genai.types import FunctionCallingConfig, FunctionCallingConfigMode, GenerateContentResponse, ThinkingConfig, ToolConfig
+from google.genai.types import (
+    FunctionCallingConfig,
+    FunctionCallingConfigMode,
+    GenerateContentResponse,
+    ThinkingConfig,
+    ToolConfig,
+)
 
 from letta.constants import NON_USER_MSG_PREFIX
 from letta.helpers.datetime_helpers import get_utc_time_int
@@ -16,7 +21,14 @@ from letta.otel.tracing import trace_method
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.message import Message as PydanticMessage
 from letta.schemas.openai.chat_completion_request import Tool
-from letta.schemas.openai.chat_completion_response import ChatCompletionResponse, Choice, FunctionCall, Message, ToolCall, UsageStatistics
+from letta.schemas.openai.chat_completion_response import (
+    ChatCompletionResponse,
+    Choice,
+    FunctionCall,
+    Message,
+    ToolCall,
+    UsageStatistics,
+)
 from letta.settings import model_settings, settings
 from letta.utils import get_tool_call_id
 
@@ -61,7 +73,7 @@ class GoogleVertexClient(LLMClientBase):
         )
         return response.model_dump()
 
-    def add_dummy_model_messages(self, messages: List[dict]) -> List[dict]:
+    def add_dummy_model_messages(self, messages: list[dict]) -> list[dict]:
         """Google AI API requires all function call returns are immediately followed by a 'model' role message.
 
         In Letta, the 'model' will often call a function (e.g. send_message) that itself yields to the user,
@@ -119,7 +131,7 @@ class GoogleVertexClient(LLMClientBase):
                 for item_schema in schema_part[key]:
                     self._clean_google_ai_schema_properties(item_schema)
 
-    def convert_tools_to_google_ai_format(self, tools: List[Tool], llm_config: LLMConfig) -> List[dict]:
+    def convert_tools_to_google_ai_format(self, tools: list[Tool], llm_config: LLMConfig) -> list[dict]:
         """
         OpenAI style:
         "tools": [{
@@ -184,7 +196,10 @@ class GoogleVertexClient(LLMClientBase):
 
             # Add inner thoughts
             if llm_config.put_inner_thoughts_in_kwargs:
-                from letta.local_llm.constants import INNER_THOUGHTS_KWARG_DESCRIPTION, INNER_THOUGHTS_KWARG_VERTEX
+                from letta.local_llm.constants import (
+                    INNER_THOUGHTS_KWARG_DESCRIPTION,
+                    INNER_THOUGHTS_KWARG_VERTEX,
+                )
 
                 func["parameters"]["properties"][INNER_THOUGHTS_KWARG_VERTEX] = {
                     "type": "string",
@@ -197,10 +212,10 @@ class GoogleVertexClient(LLMClientBase):
     @trace_method
     def build_request_data(
         self,
-        messages: List[PydanticMessage],
+        messages: list[PydanticMessage],
         llm_config: LLMConfig,
-        tools: List[dict],
-        force_tool_call: Optional[str] = None,
+        tools: list[dict],
+        force_tool_call: str | None = None,
     ) -> dict:
         """
         Constructs a request object in the expected data format for this client.
@@ -258,7 +273,7 @@ class GoogleVertexClient(LLMClientBase):
     def convert_response_to_chat_completion(
         self,
         response_data: dict,
-        input_messages: List[PydanticMessage],
+        input_messages: list[PydanticMessage],
         llm_config: LLMConfig,
     ) -> ChatCompletionResponse:
         """
@@ -330,7 +345,9 @@ class GoogleVertexClient(LLMClientBase):
 
                         # NOTE: this also involves stripping the inner monologue out of the function
                         if llm_config.put_inner_thoughts_in_kwargs:
-                            from letta.local_llm.constants import INNER_THOUGHTS_KWARG_VERTEX
+                            from letta.local_llm.constants import (
+                                INNER_THOUGHTS_KWARG_VERTEX,
+                            )
 
                             assert (
                                 INNER_THOUGHTS_KWARG_VERTEX in function_args
@@ -366,7 +383,9 @@ class GoogleVertexClient(LLMClientBase):
 
                             # NOTE: this also involves stripping the inner monologue out of the function
                             if llm_config.put_inner_thoughts_in_kwargs:
-                                from letta.local_llm.constants import INNER_THOUGHTS_KWARG_VERTEX
+                                from letta.local_llm.constants import (
+                                    INNER_THOUGHTS_KWARG_VERTEX,
+                                )
 
                                 assert (
                                     INNER_THOUGHTS_KWARG_VERTEX in function_args
@@ -394,7 +413,7 @@ class GoogleVertexClient(LLMClientBase):
 
                         except json.decoder.JSONDecodeError:
                             if candidate.finish_reason == "MAX_TOKENS":
-                                raise ValueError(f"Could not parse response data from LLM: exceeded max token limit")
+                                raise ValueError("Could not parse response data from LLM: exceeded max token limit")
                             # Inner thoughts are the content by default
                             inner_thoughts = response_message.text
 
@@ -418,9 +437,7 @@ class GoogleVertexClient(LLMClientBase):
                         )
                     elif finish_reason == "MAX_TOKENS":
                         openai_finish_reason = "length"
-                    elif finish_reason == "SAFETY":
-                        openai_finish_reason = "content_filter"
-                    elif finish_reason == "RECITATION":
+                    elif finish_reason == "SAFETY" or finish_reason == "RECITATION":
                         openai_finish_reason = "content_filter"
                     else:
                         raise ValueError(f"Unrecognized finish reason in Google AI response: {finish_reason}")
@@ -451,7 +468,7 @@ class GoogleVertexClient(LLMClientBase):
                 )
             else:
                 # Count it ourselves
-                assert input_messages is not None, f"Didn't get UsageMetadata from the API response, so input_messages is required"
+                assert input_messages is not None, "Didn't get UsageMetadata from the API response, so input_messages is required"
                 prompt_tokens = count_tokens(json_dumps(input_messages))  # NOTE: this is a very rough approximation
                 completion_tokens = count_tokens(json_dumps(openai_response_message.model_dump()))  # NOTE: this is also approximate
                 total_tokens = prompt_tokens + completion_tokens

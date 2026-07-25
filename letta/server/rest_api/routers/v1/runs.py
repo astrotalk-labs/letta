@@ -1,4 +1,4 @@
-from typing import Annotated, List, Optional
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import Field
@@ -16,11 +16,11 @@ from letta.server.server import SyncServer
 router = APIRouter(prefix="/runs", tags=["runs"])
 
 
-@router.get("/", response_model=List[Run], operation_id="list_runs")
+@router.get("/", response_model=list[Run], operation_id="list_runs")
 def list_runs(
     server: "SyncServer" = Depends(get_letta_server),
-    agent_ids: Optional[List[str]] = Query(None, description="The unique identifier of the agent associated with the run."),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    agent_ids: list[str] | None = Query(None, description="The unique identifier of the agent associated with the run."),
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     List all runs.
@@ -35,11 +35,11 @@ def list_runs(
     return [run for run in runs if "agent_id" in run.metadata and run.metadata["agent_id"] in agent_ids]
 
 
-@router.get("/active", response_model=List[Run], operation_id="list_active_runs")
+@router.get("/active", response_model=list[Run], operation_id="list_active_runs")
 def list_active_runs(
     server: "SyncServer" = Depends(get_letta_server),
-    agent_ids: Optional[List[str]] = Query(None, description="The unique identifier of the agent associated with the run."),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    agent_ids: list[str] | None = Query(None, description="The unique identifier of the agent associated with the run."),
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     List all active runs.
@@ -59,7 +59,7 @@ def list_active_runs(
 @router.get("/{run_id}", response_model=Run, operation_id="retrieve_run")
 def retrieve_run(
     run_id: str,
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
     server: "SyncServer" = Depends(get_letta_server),
 ):
     """
@@ -75,7 +75,7 @@ def retrieve_run(
 
 
 RunMessagesResponse = Annotated[
-    List[LettaMessageUnion], Field(json_schema_extra={"type": "array", "items": {"$ref": "#/components/schemas/LettaMessageUnion"}})
+    list[LettaMessageUnion], Field(json_schema_extra={"type": "array", "items": {"$ref": "#/components/schemas/LettaMessageUnion"}})
 ]
 
 
@@ -87,14 +87,14 @@ RunMessagesResponse = Annotated[
 async def list_run_messages(
     run_id: str,
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
-    before: Optional[str] = Query(None, description="Cursor for pagination"),
-    after: Optional[str] = Query(None, description="Cursor for pagination"),
-    limit: Optional[int] = Query(100, description="Maximum number of messages to return"),
+    actor_id: str | None = Header(None, alias="user_id"),
+    before: str | None = Query(None, description="Cursor for pagination"),
+    after: str | None = Query(None, description="Cursor for pagination"),
+    limit: int | None = Query(100, description="Maximum number of messages to return"),
     order: str = Query(
         "desc", description="Sort order by the created_at timestamp of the objects. asc for ascending order and desc for descending order."
     ),
-    role: Optional[MessageRole] = Query(None, description="Filter by role"),
+    role: MessageRole | None = Query(None, description="Filter by role"),
 ):
     """
     Get messages associated with a run with filtering options.
@@ -135,7 +135,7 @@ async def list_run_messages(
 @router.get("/{run_id}/usage", response_model=UsageStatistics, operation_id="retrieve_run_usage")
 def retrieve_run_usage(
     run_id: str,
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
     server: "SyncServer" = Depends(get_letta_server),
 ):
     """
@@ -152,16 +152,16 @@ def retrieve_run_usage(
 
 @router.get(
     "/{run_id}/steps",
-    response_model=List[Step],
+    response_model=list[Step],
     operation_id="list_run_steps",
 )
 async def list_run_steps(
     run_id: str,
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
-    before: Optional[str] = Query(None, description="Cursor for pagination"),
-    after: Optional[str] = Query(None, description="Cursor for pagination"),
-    limit: Optional[int] = Query(100, description="Maximum number of messages to return"),
+    actor_id: str | None = Header(None, alias="user_id"),
+    before: str | None = Query(None, description="Cursor for pagination"),
+    after: str | None = Query(None, description="Cursor for pagination"),
+    limit: int | None = Query(100, description="Maximum number of messages to return"),
     order: str = Query(
         "desc", description="Sort order by the created_at timestamp of the objects. asc for ascending order and desc for descending order."
     ),
@@ -201,7 +201,7 @@ async def list_run_steps(
 @router.delete("/{run_id}", response_model=Run, operation_id="delete_run")
 async def delete_run(
     run_id: str,
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
     server: "SyncServer" = Depends(get_letta_server),
 ):
     """

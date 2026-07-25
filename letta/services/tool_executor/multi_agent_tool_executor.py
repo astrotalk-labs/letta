@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from letta.schemas.agent import AgentState
 from letta.schemas.enums import MessageRole
@@ -23,9 +23,9 @@ class LettaMultiAgentToolExecutor(ToolExecutor):
         function_args: dict,
         tool: Tool,
         actor: User,
-        agent_state: Optional[AgentState] = None,
-        sandbox_config: Optional[SandboxConfig] = None,
-        sandbox_env_vars: Optional[Dict[str, Any]] = None,
+        agent_state: AgentState | None = None,
+        sandbox_config: SandboxConfig | None = None,
+        sandbox_env_vars: dict[str, Any] | None = None,
     ) -> ToolExecutionResult:
         assert agent_state is not None, "Agent state is required for multi-agent tools"
         function_map = {
@@ -70,7 +70,7 @@ class LettaMultiAgentToolExecutor(ToolExecutor):
         return "Successfully sent message"
 
     async def send_message_to_agents_matching_tags_async(
-        self, agent_state: AgentState, message: str, match_all: List[str], match_some: List[str]
+        self, agent_state: AgentState, message: str, match_all: list[str], match_some: list[str]
     ) -> str:
         # Find matching agents
         matching_agents = await self.agent_manager.list_agents_matching_tags_async(
@@ -92,7 +92,7 @@ class LettaMultiAgentToolExecutor(ToolExecutor):
         results = await asyncio.gather(*tasks)
         return str(results)
 
-    async def _process_agent(self, agent_id: str, message: str) -> Dict[str, Any]:
+    async def _process_agent(self, agent_id: str, message: str) -> dict[str, Any]:
         from letta.agents.letta_agent import LettaAgent
 
         try:

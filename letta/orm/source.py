@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING
 
 from sqlalchemy import JSON, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -24,7 +24,7 @@ class Source(SqlalchemyBase, OrganizationMixin):
     __pydantic_model__ = PydanticSource
 
     __table_args__ = (
-        Index(f"source_created_at_id_idx", "created_at", "id"),
+        Index("source_created_at_id_idx", "created_at", "id"),
         {"extend_existing": True},
     )
 
@@ -32,13 +32,13 @@ class Source(SqlalchemyBase, OrganizationMixin):
     description: Mapped[str] = mapped_column(nullable=True, doc="a human-readable description of the source")
     instructions: Mapped[str] = mapped_column(nullable=True, doc="instructions for how to use the source")
     embedding_config: Mapped[EmbeddingConfig] = mapped_column(EmbeddingConfigColumn, doc="Configuration settings for embedding.")
-    metadata_: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, doc="metadata for the source.")
+    metadata_: Mapped[dict | None] = mapped_column(JSON, nullable=True, doc="metadata for the source.")
 
     # relationships
     organization: Mapped["Organization"] = relationship("Organization", back_populates="sources")
-    files: Mapped[List["FileMetadata"]] = relationship("FileMetadata", back_populates="source", cascade="all, delete-orphan")
-    passages: Mapped[List["SourcePassage"]] = relationship("SourcePassage", back_populates="source", cascade="all, delete-orphan")
-    agents: Mapped[List["Agent"]] = relationship(
+    files: Mapped[list["FileMetadata"]] = relationship("FileMetadata", back_populates="source", cascade="all, delete-orphan")
+    passages: Mapped[list["SourcePassage"]] = relationship("SourcePassage", back_populates="source", cascade="all, delete-orphan")
+    agents: Mapped[list["Agent"]] = relationship(
         "Agent",
         secondary="sources_agents",
         back_populates="sources",

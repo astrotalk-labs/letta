@@ -2,7 +2,7 @@ import inspect
 import re
 import time
 from functools import wraps
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -22,7 +22,7 @@ logger = get_logger(__name__)  # TODO: set up logger config for this
 tracer = trace.get_tracer(__name__)
 _is_tracing_initialized = False
 
-_excluded_v1_endpoints_regex: List[str] = [
+_excluded_v1_endpoints_regex: list[str] = [
     # "^GET /v1/agents/(?P<agent_id>[^/]+)/messages$",
     # "^GET /v1/agents/(?P<agent_id>[^/]+)/context$",
     # "^GET /v1/agents/(?P<agent_id>[^/]+)/archival-memory$",
@@ -136,7 +136,7 @@ async def _trace_error_handler(_request: Request, exc: Exception) -> JSONRespons
 
 def setup_tracing(
     endpoint: str,
-    app: Optional[FastAPI] = None,
+    app: FastAPI | None = None,
     service_name: str = "memgpt-server",
 ) -> None:
     if is_pytest_environment():
@@ -236,13 +236,13 @@ def trace_method(func):
     return async_wrapper if inspect.iscoroutinefunction(func) else sync_wrapper
 
 
-def log_attributes(attributes: Dict[str, Any]) -> None:
+def log_attributes(attributes: dict[str, Any]) -> None:
     current_span = trace.get_current_span()
     if current_span:
         current_span.set_attributes(attributes)
 
 
-def log_event(name: str, attributes: Optional[Dict[str, Any]] = None, timestamp: Optional[int] = None) -> None:
+def log_event(name: str, attributes: dict[str, Any] | None = None, timestamp: int | None = None) -> None:
     current_span = trace.get_current_span()
     if current_span:
         if timestamp is None:
@@ -257,7 +257,7 @@ def log_event(name: str, attributes: Optional[Dict[str, Any]] = None, timestamp:
         current_span.add_event(name=name, attributes=attributes, timestamp=timestamp)
 
 
-def get_trace_id() -> Optional[str]:
+def get_trace_id() -> str | None:
     span = trace.get_current_span()
     if span and span.get_span_context().trace_id:
         return format(span.get_span_context().trace_id, "032x")

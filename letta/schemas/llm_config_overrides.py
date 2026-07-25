@@ -1,6 +1,5 @@
-from typing import Dict
 
-LLM_HANDLE_OVERRIDES: Dict[str, Dict[str, str]] = {
+LLM_HANDLE_OVERRIDES: dict[str, dict[str, str]] = {
     "anthropic": {
         "claude-3-5-haiku-20241022": "claude-3-5-haiku",
         "claude-3-5-sonnet-20241022": "claude-3-5-sonnet",

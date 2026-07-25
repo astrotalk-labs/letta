@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from typing import List, Optional
 
 from sqlalchemy import and_, func, select, update
 
@@ -26,7 +25,7 @@ class FileAgentManager:
         file_name: str,
         actor: PydanticUser,
         is_open: bool = True,
-        visible_content: Optional[str] = None,
+        visible_content: str | None = None,
     ) -> PydanticFileAgent:
         """
         Idempotently attach *file_id* to *agent_id*.
@@ -81,8 +80,8 @@ class FileAgentManager:
         agent_id: str,
         file_id: str,
         actor: PydanticUser,
-        is_open: Optional[bool] = None,
-        visible_content: Optional[str] = None,
+        is_open: bool | None = None,
+        visible_content: str | None = None,
     ) -> PydanticFileAgent:
         """Patch an existing association row."""
         async with db_registry.async_session() as session:
@@ -107,8 +106,8 @@ class FileAgentManager:
         agent_id: str,
         file_name: str,
         actor: PydanticUser,
-        is_open: Optional[bool] = None,
-        visible_content: Optional[str] = None,
+        is_open: bool | None = None,
+        visible_content: str | None = None,
     ) -> PydanticFileAgent:
         """Patch an existing association row."""
         async with db_registry.async_session() as session:
@@ -135,7 +134,7 @@ class FileAgentManager:
 
     @enforce_types
     @trace_method
-    async def get_file_agent_by_id(self, *, agent_id: str, file_id: str, actor: PydanticUser) -> Optional[PydanticFileAgent]:
+    async def get_file_agent_by_id(self, *, agent_id: str, file_id: str, actor: PydanticUser) -> PydanticFileAgent | None:
         async with db_registry.async_session() as session:
             try:
                 assoc = await self._get_association_by_file_id(session, agent_id, file_id, actor)
@@ -148,9 +147,9 @@ class FileAgentManager:
     async def get_all_file_blocks_by_name(
         self,
         *,
-        file_names: List[str],
+        file_names: list[str],
         actor: PydanticUser,
-    ) -> List[PydanticBlock]:
+    ) -> list[PydanticBlock]:
         """
         Retrieve multiple FileAgent associations by their IDs in a single query.
 
@@ -181,7 +180,7 @@ class FileAgentManager:
 
     @enforce_types
     @trace_method
-    async def get_file_agent_by_file_name(self, *, agent_id: str, file_name: str, actor: PydanticUser) -> Optional[PydanticFileAgent]:
+    async def get_file_agent_by_file_name(self, *, agent_id: str, file_name: str, actor: PydanticUser) -> PydanticFileAgent | None:
         async with db_registry.async_session() as session:
             try:
                 assoc = await self._get_association_by_file_name(session, agent_id, file_name, actor)
@@ -196,7 +195,7 @@ class FileAgentManager:
         agent_id: str,
         actor: PydanticUser,
         is_open_only: bool = False,
-    ) -> List[PydanticFileAgent]:
+    ) -> list[PydanticFileAgent]:
         """Return associations for *agent_id* (filtering by `is_open` if asked)."""
         async with db_registry.async_session() as session:
             conditions = [
@@ -216,7 +215,7 @@ class FileAgentManager:
         file_id: str,
         actor: PydanticUser,
         is_open_only: bool = False,
-    ) -> List[PydanticFileAgent]:
+    ) -> list[PydanticFileAgent]:
         """Return associations for *file_id* (filtering by `is_open` if asked)."""
         async with db_registry.async_session() as session:
             conditions = [

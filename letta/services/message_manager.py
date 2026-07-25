@@ -1,6 +1,6 @@
 import json
 import uuid
-from typing import List, Optional, Sequence
+from collections.abc import Sequence
 
 from sqlalchemy import delete, exists, func, select, text
 
@@ -11,7 +11,11 @@ from letta.orm.message import Message as MessageModel
 from letta.otel.tracing import trace_method
 from letta.schemas.enums import MessageRole
 from letta.schemas.letta_message import LettaMessageUpdateUnion
-from letta.schemas.letta_message_content import ImageSourceType, LettaImage, MessageContentType
+from letta.schemas.letta_message_content import (
+    ImageSourceType,
+    LettaImage,
+    MessageContentType,
+)
 from letta.schemas.message import Message as PydanticMessage
 from letta.schemas.message import MessageUpdate
 from letta.schemas.user import User as PydanticUser
@@ -31,7 +35,7 @@ class MessageManager:
 
     @enforce_types
     @trace_method
-    def get_message_by_id(self, message_id: str, actor: PydanticUser) -> Optional[PydanticMessage]:
+    def get_message_by_id(self, message_id: str, actor: PydanticUser) -> PydanticMessage | None:
         """Fetch a message by ID."""
         with db_registry.session() as session:
             try:
@@ -42,7 +46,7 @@ class MessageManager:
 
     @enforce_types
     @trace_method
-    async def get_message_by_id_async(self, message_id: str, actor: PydanticUser) -> Optional[PydanticMessage]:
+    async def get_message_by_id_async(self, message_id: str, actor: PydanticUser) -> PydanticMessage | None:
         """Fetch a message by ID."""
         async with db_registry.async_session() as session:
             try:
@@ -53,7 +57,7 @@ class MessageManager:
 
     @enforce_types
     @trace_method
-    def get_messages_by_ids(self, message_ids: List[str], actor: PydanticUser) -> List[PydanticMessage]:
+    def get_messages_by_ids(self, message_ids: list[str], actor: PydanticUser) -> list[PydanticMessage]:
         """Fetch messages by ID and return them in the requested order."""
         with db_registry.session() as session:
             results = MessageModel.read_multiple(db_session=session, identifiers=message_ids, actor=actor)
@@ -61,7 +65,7 @@ class MessageManager:
 
     @enforce_types
     @trace_method
-    async def get_messages_by_ids_async(self, message_ids: List[str], actor: PydanticUser) -> List[PydanticMessage]:
+    async def get_messages_by_ids_async(self, message_ids: list[str], actor: PydanticUser) -> list[PydanticMessage]:
         """Fetch messages by ID and return them in the requested order. Async version of above function."""
         async with db_registry.async_session() as session:
             results = await MessageModel.read_multiple_async(db_session=session, identifiers=message_ids, actor=actor)
@@ -69,9 +73,9 @@ class MessageManager:
 
     def _get_messages_by_id_postprocess(
         self,
-        results: List[MessageModel],
-        message_ids: List[str],
-    ) -> List[PydanticMessage]:
+        results: list[MessageModel],
+        message_ids: list[str],
+    ) -> list[PydanticMessage]:
         if len(results) != len(message_ids):
             logger.warning(
                 f"Expected {len(message_ids)} messages, but found {len(results)}. Missing ids={set(message_ids) - set([r.id for r in results])}"
@@ -92,7 +96,7 @@ class MessageManager:
             msg.create(session, actor=actor)  # Persist to database
             return msg.to_pydantic()
 
-    def _create_many_preprocess(self, pydantic_msgs: List[PydanticMessage], actor: PydanticUser) -> List[MessageModel]:
+    def _create_many_preprocess(self, pydantic_msgs: list[PydanticMessage], actor: PydanticUser) -> list[MessageModel]:
         # Create ORM model instances for all messages
         orm_messages = []
         for pydantic_msg in pydantic_msgs:
@@ -104,7 +108,7 @@ class MessageManager:
 
     @enforce_types
     @trace_method
-    def create_many_messages(self, pydantic_msgs: List[PydanticMessage], actor: PydanticUser) -> List[PydanticMessage]:
+    def create_many_messages(self, pydantic_msgs: list[PydanticMessage], actor: PydanticUser) -> list[PydanticMessage]:
         """
         Create multiple messages in a single database transaction.
         Args:
@@ -124,7 +128,7 @@ class MessageManager:
 
     @enforce_types
     @trace_method
-    async def create_many_messages_async(self, pydantic_msgs: List[PydanticMessage], actor: PydanticUser) -> List[PydanticMessage]:
+    async def create_many_messages_async(self, pydantic_msgs: list[PydanticMessage], actor: PydanticUser) -> list[PydanticMessage]:
         """
         Create multiple messages in a single database transaction asynchronously.
 
@@ -328,8 +332,8 @@ class MessageManager:
     def size(
         self,
         actor: PydanticUser,
-        role: Optional[MessageRole] = None,
-        agent_id: Optional[str] = None,
+        role: MessageRole | None = None,
+        agent_id: str | None = None,
     ) -> int:
         """Get the total count of messages with optional filters.
 
@@ -345,8 +349,8 @@ class MessageManager:
     async def size_async(
         self,
         actor: PydanticUser,
-        role: Optional[MessageRole] = None,
-        agent_id: Optional[str] = None,
+        role: MessageRole | None = None,
+        agent_id: str | None = None,
     ) -> int:
         """Get the total count of messages with optional filters.
         Args:
@@ -362,12 +366,12 @@ class MessageManager:
         self,
         agent_id: str,
         actor: PydanticUser,
-        after: Optional[str] = None,
-        before: Optional[str] = None,
-        query_text: Optional[str] = None,
-        limit: Optional[int] = 50,
+        after: str | None = None,
+        before: str | None = None,
+        query_text: str | None = None,
+        limit: int | None = 50,
         ascending: bool = True,
-    ) -> List[PydanticMessage]:
+    ) -> list[PydanticMessage]:
         return self.list_messages_for_agent(
             agent_id=agent_id,
             actor=actor,
@@ -385,12 +389,12 @@ class MessageManager:
         self,
         agent_id: str,
         actor: PydanticUser,
-        after: Optional[str] = None,
-        before: Optional[str] = None,
-        query_text: Optional[str] = None,
-        limit: Optional[int] = 50,
+        after: str | None = None,
+        before: str | None = None,
+        query_text: str | None = None,
+        limit: int | None = 50,
         ascending: bool = True,
-    ) -> List[PydanticMessage]:
+    ) -> list[PydanticMessage]:
         return await self.list_messages_for_agent_async(
             agent_id=agent_id,
             actor=actor,
@@ -408,14 +412,14 @@ class MessageManager:
         self,
         agent_id: str,
         actor: PydanticUser,
-        after: Optional[str] = None,
-        before: Optional[str] = None,
-        query_text: Optional[str] = None,
-        roles: Optional[Sequence[MessageRole]] = None,
-        limit: Optional[int] = 50,
+        after: str | None = None,
+        before: str | None = None,
+        query_text: str | None = None,
+        roles: Sequence[MessageRole] | None = None,
+        limit: int | None = 50,
         ascending: bool = True,
-        group_id: Optional[str] = None,
-    ) -> List[PydanticMessage]:
+        group_id: str | None = None,
+    ) -> list[PydanticMessage]:
         """
         Most performant query to list messages for an agent by directly querying the Message table.
 
@@ -505,14 +509,14 @@ class MessageManager:
         self,
         agent_id: str,
         actor: PydanticUser,
-        after: Optional[str] = None,
-        before: Optional[str] = None,
-        query_text: Optional[str] = None,
-        roles: Optional[Sequence[MessageRole]] = None,
-        limit: Optional[int] = 50,
+        after: str | None = None,
+        before: str | None = None,
+        query_text: str | None = None,
+        roles: Sequence[MessageRole] | None = None,
+        limit: int | None = 50,
         ascending: bool = True,
-        group_id: Optional[str] = None,
-    ) -> List[PydanticMessage]:
+        group_id: str | None = None,
+    ) -> list[PydanticMessage]:
         """
         Most performant query to list messages for an agent by directly querying the Message table.
 
@@ -603,7 +607,7 @@ class MessageManager:
 
     @enforce_types
     @trace_method
-    async def delete_all_messages_for_agent_async(self, agent_id: str, actor: PydanticUser, exclude_ids: Optional[List[str]] = None) -> int:
+    async def delete_all_messages_for_agent_async(self, agent_id: str, actor: PydanticUser, exclude_ids: list[str] | None = None) -> int:
         """
         Efficiently deletes all messages associated with a given agent_id,
         while enforcing permission checks and avoiding any ORM‑level loads.
@@ -632,7 +636,7 @@ class MessageManager:
 
     @enforce_types
     @trace_method
-    async def delete_messages_by_ids_async(self, message_ids: List[str], actor: PydanticUser) -> int:
+    async def delete_messages_by_ids_async(self, message_ids: list[str], actor: PydanticUser) -> int:
         """
         Efficiently deletes messages by their specific IDs,
         while enforcing permission checks.

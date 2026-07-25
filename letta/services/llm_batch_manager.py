@@ -1,10 +1,18 @@
 import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-from anthropic.types.beta.messages import BetaMessageBatch, BetaMessageBatchIndividualResponse
+from anthropic.types.beta.messages import (
+    BetaMessageBatch,
+    BetaMessageBatchIndividualResponse,
+)
 from sqlalchemy import desc, func, select, tuple_
 
-from letta.jobs.types import BatchPollingResult, ItemUpdateInfo, RequestStatusUpdateInfo, StepStatusUpdateInfo
+from letta.jobs.types import (
+    BatchPollingResult,
+    ItemUpdateInfo,
+    RequestStatusUpdateInfo,
+    StepStatusUpdateInfo,
+)
 from letta.log import get_logger
 from letta.orm import Message as MessageModel
 from letta.orm.llm_batch_items import LLMBatchItem
@@ -50,7 +58,7 @@ class LLMBatchManager:
 
     @enforce_types
     @trace_method
-    async def get_llm_batch_job_by_id_async(self, llm_batch_id: str, actor: Optional[PydanticUser] = None) -> PydanticLLMBatchJob:
+    async def get_llm_batch_job_by_id_async(self, llm_batch_id: str, actor: PydanticUser | None = None) -> PydanticLLMBatchJob:
         """Retrieve a single batch job by ID."""
         async with db_registry.async_session() as session:
             batch = await LLMBatchJob.read_async(db_session=session, identifier=llm_batch_id, actor=actor)
@@ -62,8 +70,8 @@ class LLMBatchManager:
         self,
         llm_batch_id: str,
         status: JobStatus,
-        actor: Optional[PydanticUser] = None,
-        latest_polling_response: Optional[BetaMessageBatch] = None,
+        actor: PydanticUser | None = None,
+        latest_polling_response: BetaMessageBatch | None = None,
     ) -> PydanticLLMBatchJob:
         """Update a batch job’s status and optionally its polling response."""
         async with db_registry.async_session() as session:
@@ -76,7 +84,7 @@ class LLMBatchManager:
 
     async def bulk_update_llm_batch_statuses_async(
         self,
-        updates: List[BatchPollingResult],
+        updates: list[BatchPollingResult],
     ) -> None:
         """
         Efficiently update many LLMBatchJob rows. This is used by the cron jobs.
@@ -105,10 +113,10 @@ class LLMBatchManager:
     async def list_llm_batch_jobs_async(
         self,
         letta_batch_id: str,
-        limit: Optional[int] = None,
-        actor: Optional[PydanticUser] = None,
-        after: Optional[str] = None,
-    ) -> List[PydanticLLMBatchJob]:
+        limit: int | None = None,
+        actor: PydanticUser | None = None,
+        after: str | None = None,
+    ) -> list[PydanticLLMBatchJob]:
         """
         List all batch items for a given llm_batch_id, optionally filtered by additional criteria and limited in count.
 
@@ -152,11 +160,11 @@ class LLMBatchManager:
         self,
         letta_batch_job_id: str,
         limit: int = 100,
-        actor: Optional[PydanticUser] = None,
-        agent_id: Optional[str] = None,
+        actor: PydanticUser | None = None,
+        agent_id: str | None = None,
         sort_descending: bool = True,
-        cursor: Optional[str] = None,  # Message ID as cursor
-    ) -> List[PydanticMessage]:
+        cursor: str | None = None,  # Message ID as cursor
+    ) -> list[PydanticMessage]:
         """
         Retrieve messages across all LLM batch jobs associated with a Letta batch job.
         Optimized for PostgreSQL performance using ID-based keyset pagination.
@@ -206,8 +214,8 @@ class LLMBatchManager:
     @enforce_types
     @trace_method
     async def list_running_llm_batches_async(
-        self, actor: Optional[PydanticUser] = None, weeks: Optional[int] = None, batch_size: Optional[int] = None
-    ) -> List[PydanticLLMBatchJob]:
+        self, actor: PydanticUser | None = None, weeks: int | None = None, batch_size: int | None = None
+    ) -> list[PydanticLLMBatchJob]:
         """Return all running LLM batch jobs, optionally filtered by actor's organization and recent weeks."""
         async with db_registry.async_session() as session:
             query = select(LLMBatchJob).where(LLMBatchJob.status == JobStatus.running)
@@ -235,7 +243,7 @@ class LLMBatchManager:
         actor: PydanticUser,
         request_status: JobStatus = JobStatus.created,
         step_status: AgentStepStatus = AgentStepStatus.paused,
-        step_state: Optional[AgentStepState] = None,
+        step_state: AgentStepState | None = None,
     ) -> PydanticLLMBatchItem:
         """Create a new batch item."""
         async with db_registry.async_session() as session:
@@ -254,8 +262,8 @@ class LLMBatchManager:
     @enforce_types
     @trace_method
     async def create_llm_batch_items_bulk_async(
-        self, llm_batch_items: List[PydanticLLMBatchItem], actor: PydanticUser
-    ) -> List[PydanticLLMBatchItem]:
+        self, llm_batch_items: list[PydanticLLMBatchItem], actor: PydanticUser
+    ) -> list[PydanticLLMBatchItem]:
         """
         Create multiple batch items in bulk for better performance.
 
@@ -301,10 +309,10 @@ class LLMBatchManager:
         self,
         item_id: str,
         actor: PydanticUser,
-        request_status: Optional[JobStatus] = None,
-        step_status: Optional[AgentStepStatus] = None,
-        llm_request_response: Optional[BetaMessageBatchIndividualResponse] = None,
-        step_state: Optional[AgentStepState] = None,
+        request_status: JobStatus | None = None,
+        step_status: AgentStepStatus | None = None,
+        llm_request_response: BetaMessageBatchIndividualResponse | None = None,
+        step_state: AgentStepState | None = None,
     ) -> PydanticLLMBatchItem:
         """Update fields on a batch item."""
         async with db_registry.async_session() as session:
@@ -327,13 +335,13 @@ class LLMBatchManager:
     async def list_llm_batch_items_async(
         self,
         llm_batch_id: str,
-        limit: Optional[int] = None,
-        actor: Optional[PydanticUser] = None,
-        after: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        request_status: Optional[JobStatus] = None,
-        step_status: Optional[AgentStepStatus] = None,
-    ) -> List[PydanticLLMBatchItem]:
+        limit: int | None = None,
+        actor: PydanticUser | None = None,
+        after: str | None = None,
+        agent_id: str | None = None,
+        request_status: JobStatus | None = None,
+        step_status: AgentStepStatus | None = None,
+    ) -> list[PydanticLLMBatchItem]:
         """
         List all batch items for a given llm_batch_id, optionally filtered by additional criteria and limited in count.
 
@@ -371,7 +379,7 @@ class LLMBatchManager:
 
     @trace_method
     async def bulk_update_llm_batch_items_async(
-        self, llm_batch_id_agent_id_pairs: List[Tuple[str, str]], field_updates: List[Dict[str, Any]], strict: bool = True
+        self, llm_batch_id_agent_id_pairs: list[tuple[str, str]], field_updates: list[dict[str, Any]], strict: bool = True
     ) -> None:
         """
         Efficiently update multiple LLMBatchItem rows by (llm_batch_id, agent_id) pairs.
@@ -424,7 +432,7 @@ class LLMBatchManager:
 
     @enforce_types
     @trace_method
-    async def bulk_update_batch_llm_items_results_by_agent_async(self, updates: List[ItemUpdateInfo], strict: bool = True) -> None:
+    async def bulk_update_batch_llm_items_results_by_agent_async(self, updates: list[ItemUpdateInfo], strict: bool = True) -> None:
         """Update request status and batch results for multiple batch items."""
         batch_id_agent_id_pairs = [(update.llm_batch_id, update.agent_id) for update in updates]
         field_updates = [
@@ -440,7 +448,7 @@ class LLMBatchManager:
     @enforce_types
     @trace_method
     async def bulk_update_llm_batch_items_step_status_by_agent_async(
-        self, updates: List[StepStatusUpdateInfo], strict: bool = True
+        self, updates: list[StepStatusUpdateInfo], strict: bool = True
     ) -> None:
         """Update step status for multiple batch items."""
         batch_id_agent_id_pairs = [(update.llm_batch_id, update.agent_id) for update in updates]
@@ -451,7 +459,7 @@ class LLMBatchManager:
     @enforce_types
     @trace_method
     async def bulk_update_llm_batch_items_request_status_by_agent_async(
-        self, updates: List[RequestStatusUpdateInfo], strict: bool = True
+        self, updates: list[RequestStatusUpdateInfo], strict: bool = True
     ) -> None:
         """Update request status for multiple batch items."""
         batch_id_agent_id_pairs = [(update.llm_batch_id, update.agent_id) for update in updates]

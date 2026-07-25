@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Literal, Union
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -6,13 +6,13 @@ from pydantic import BaseModel, Field, field_validator
 class SystemMessage(BaseModel):
     content: str
     role: str = "system"
-    name: Optional[str] = None
+    name: str | None = None
 
 
 class UserMessage(BaseModel):
-    content: Union[str, List[str], List[dict]]
+    content: str | list[str] | list[dict]
     role: str = "user"
-    name: Optional[str] = None
+    name: str | None = None
 
 
 class ToolCallFunction(BaseModel):
@@ -27,10 +27,10 @@ class ToolCall(BaseModel):
 
 
 class AssistantMessage(BaseModel):
-    content: Optional[str] = None
+    content: str | None = None
     role: str = "assistant"
-    name: Optional[str] = None
-    tool_calls: Optional[List[ToolCall]] = None
+    name: str | None = None
+    tool_calls: list[ToolCall] | None = None
 
 
 class ToolMessage(BaseModel):
@@ -77,17 +77,17 @@ class ToolFunctionChoice(BaseModel):
 class AnthropicToolChoiceTool(BaseModel):
     type: str = "tool"
     name: str
-    disable_parallel_tool_use: Optional[bool] = False
+    disable_parallel_tool_use: bool | None = False
 
 
 class AnthropicToolChoiceAny(BaseModel):
     type: str = "any"
-    disable_parallel_tool_use: Optional[bool] = False
+    disable_parallel_tool_use: bool | None = False
 
 
 class AnthropicToolChoiceAuto(BaseModel):
     type: str = "auto"
-    disable_parallel_tool_use: Optional[bool] = False
+    disable_parallel_tool_use: bool | None = False
 
 
 ToolChoice = Union[
@@ -98,8 +98,8 @@ ToolChoice = Union[
 ## tools ##
 class FunctionSchema(BaseModel):
     name: str
-    description: Optional[str] = None
-    parameters: Optional[Dict[str, Any]] = None  # JSON Schema for the parameters
+    description: str | None = None
+    parameters: dict[str, Any] | None = None  # JSON Schema for the parameters
     strict: bool = False
 
 
@@ -118,31 +118,31 @@ class ChatCompletionRequest(BaseModel):
     """https://platform.openai.com/docs/api-reference/chat/create"""
 
     model: str
-    messages: List[Union[ChatMessage, Dict]]
-    frequency_penalty: Optional[float] = 0
-    logit_bias: Optional[Dict[str, int]] = None
-    logprobs: Optional[bool] = False
-    top_logprobs: Optional[int] = None
-    max_completion_tokens: Optional[int] = None
-    n: Optional[int] = 1
-    presence_penalty: Optional[float] = 0
-    response_format: Optional[ResponseFormat] = None
-    seed: Optional[int] = None
-    stop: Optional[Union[str, List[str]]] = None
-    stream: Optional[bool] = False
-    temperature: Optional[float] = 1
-    top_p: Optional[float] = 1
-    user: Optional[str] = None  # unique ID of the end-user (for monitoring)
-    parallel_tool_calls: Optional[bool] = None
-    instructions: Optional[str] = None
-    max_tokens: Optional[int] = None
+    messages: list[ChatMessage | dict]
+    frequency_penalty: float | None = 0
+    logit_bias: dict[str, int] | None = None
+    logprobs: bool | None = False
+    top_logprobs: int | None = None
+    max_completion_tokens: int | None = None
+    n: int | None = 1
+    presence_penalty: float | None = 0
+    response_format: ResponseFormat | None = None
+    seed: int | None = None
+    stop: str | list[str] | None = None
+    stream: bool | None = False
+    temperature: float | None = 1
+    top_p: float | None = 1
+    user: str | None = None  # unique ID of the end-user (for monitoring)
+    parallel_tool_calls: bool | None = None
+    instructions: str | None = None
+    max_tokens: int | None = None
 
     # function-calling related
-    tools: Optional[List[Tool]] = None
-    tool_choice: Optional[ToolChoice] = None  # "none" means don't call a tool
+    tools: list[Tool] | None = None
+    tool_choice: ToolChoice | None = None  # "none" means don't call a tool
     # deprecated scheme
-    functions: Optional[List[FunctionSchema]] = None
-    function_call: Optional[FunctionCallChoice] = None
+    functions: list[FunctionSchema] | None = None
+    function_call: FunctionCallChoice | None = None
 
     @field_validator("messages", mode="before")
     @classmethod

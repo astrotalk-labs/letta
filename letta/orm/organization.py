@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, List, Union
+from typing import TYPE_CHECKING, Union
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -34,38 +34,38 @@ class Organization(SqlalchemyBase):
     privileged_tools: Mapped[bool] = mapped_column(doc="Whether the organization has access to privileged tools.")
 
     # relationships
-    users: Mapped[List["User"]] = relationship("User", back_populates="organization", cascade="all, delete-orphan")
-    tools: Mapped[List["Tool"]] = relationship("Tool", back_populates="organization", cascade="all, delete-orphan")
+    users: Mapped[list["User"]] = relationship("User", back_populates="organization", cascade="all, delete-orphan")
+    tools: Mapped[list["Tool"]] = relationship("Tool", back_populates="organization", cascade="all, delete-orphan")
     # mcp_servers: Mapped[List["MCPServer"]] = relationship("MCPServer", back_populates="organization", cascade="all, delete-orphan")
-    blocks: Mapped[List["Block"]] = relationship("Block", back_populates="organization", cascade="all, delete-orphan")
-    sources: Mapped[List["Source"]] = relationship("Source", back_populates="organization", cascade="all, delete-orphan")
-    files: Mapped[List["FileMetadata"]] = relationship("FileMetadata", back_populates="organization", cascade="all, delete-orphan")
-    sandbox_configs: Mapped[List["SandboxConfig"]] = relationship(
+    blocks: Mapped[list["Block"]] = relationship("Block", back_populates="organization", cascade="all, delete-orphan")
+    sources: Mapped[list["Source"]] = relationship("Source", back_populates="organization", cascade="all, delete-orphan")
+    files: Mapped[list["FileMetadata"]] = relationship("FileMetadata", back_populates="organization", cascade="all, delete-orphan")
+    sandbox_configs: Mapped[list["SandboxConfig"]] = relationship(
         "SandboxConfig", back_populates="organization", cascade="all, delete-orphan"
     )
-    sandbox_environment_variables: Mapped[List["SandboxEnvironmentVariable"]] = relationship(
+    sandbox_environment_variables: Mapped[list["SandboxEnvironmentVariable"]] = relationship(
         "SandboxEnvironmentVariable", back_populates="organization", cascade="all, delete-orphan"
     )
-    agent_environment_variables: Mapped[List["AgentEnvironmentVariable"]] = relationship(
+    agent_environment_variables: Mapped[list["AgentEnvironmentVariable"]] = relationship(
         "AgentEnvironmentVariable", back_populates="organization", cascade="all, delete-orphan"
     )
 
     # relationships
-    agents: Mapped[List["Agent"]] = relationship("Agent", back_populates="organization", cascade="all, delete-orphan")
-    messages: Mapped[List["Message"]] = relationship("Message", back_populates="organization", cascade="all, delete-orphan")
-    source_passages: Mapped[List["SourcePassage"]] = relationship(
+    agents: Mapped[list["Agent"]] = relationship("Agent", back_populates="organization", cascade="all, delete-orphan")
+    messages: Mapped[list["Message"]] = relationship("Message", back_populates="organization", cascade="all, delete-orphan")
+    source_passages: Mapped[list["SourcePassage"]] = relationship(
         "SourcePassage", back_populates="organization", cascade="all, delete-orphan"
     )
-    agent_passages: Mapped[List["AgentPassage"]] = relationship("AgentPassage", back_populates="organization", cascade="all, delete-orphan")
-    providers: Mapped[List["Provider"]] = relationship("Provider", back_populates="organization", cascade="all, delete-orphan")
-    identities: Mapped[List["Identity"]] = relationship("Identity", back_populates="organization", cascade="all, delete-orphan")
-    groups: Mapped[List["Group"]] = relationship("Group", back_populates="organization", cascade="all, delete-orphan")
-    llm_batch_jobs: Mapped[List["LLMBatchJob"]] = relationship("LLMBatchJob", back_populates="organization", cascade="all, delete-orphan")
-    llm_batch_items: Mapped[List["LLMBatchItem"]] = relationship(
+    agent_passages: Mapped[list["AgentPassage"]] = relationship("AgentPassage", back_populates="organization", cascade="all, delete-orphan")
+    providers: Mapped[list["Provider"]] = relationship("Provider", back_populates="organization", cascade="all, delete-orphan")
+    identities: Mapped[list["Identity"]] = relationship("Identity", back_populates="organization", cascade="all, delete-orphan")
+    groups: Mapped[list["Group"]] = relationship("Group", back_populates="organization", cascade="all, delete-orphan")
+    llm_batch_jobs: Mapped[list["LLMBatchJob"]] = relationship("LLMBatchJob", back_populates="organization", cascade="all, delete-orphan")
+    llm_batch_items: Mapped[list["LLMBatchItem"]] = relationship(
         "LLMBatchItem", back_populates="organization", cascade="all, delete-orphan"
     )
 
     @property
-    def passages(self) -> List[Union["SourcePassage", "AgentPassage"]]:
+    def passages(self) -> list[Union["SourcePassage", "AgentPassage"]]:
         """Convenience property to get all passages"""
         return self.source_passages + self.agent_passages

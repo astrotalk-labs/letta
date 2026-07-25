@@ -2,7 +2,6 @@
 
 from copy import deepcopy
 from enum import Enum
-from typing import Optional, Tuple, Union
 
 from letta.helpers.json_helpers import json_dumps
 
@@ -33,15 +32,15 @@ class OpenAIResponse:
         self.data = data
 
     @property
-    def request_id(self) -> Optional[str]:
+    def request_id(self) -> str | None:
         return self._headers.get("request-id")
 
     @property
-    def organization(self) -> Optional[str]:
+    def organization(self) -> str | None:
         return self._headers.get("OpenAI-Organization")
 
     @property
-    def response_ms(self) -> Optional[int]:
+    def response_ms(self) -> int | None:
         h = self._headers.get("Openai-Processing-Ms")
         return None if h is None else round(float(h))
 
@@ -76,12 +75,12 @@ class OpenAIObject(dict):
         api_version=None,
         api_type=None,
         organization=None,
-        response_ms: Optional[int] = None,
+        response_ms: int | None = None,
         api_base=None,
         engine=None,
         **params,
     ):
-        super(OpenAIObject, self).__init__()
+        super().__init__()
 
         if response_ms is not None and not isinstance(response_ms, int):
             raise TypeError(f"response_ms is a {type(response_ms).__name__}.")
@@ -100,12 +99,12 @@ class OpenAIObject(dict):
             self["id"] = id
 
     @property
-    def response_ms(self) -> Optional[int]:
+    def response_ms(self) -> int | None:
         return self._response_ms
 
     def __setattr__(self, k, v):
         if k[0] == "_" or k in self.__dict__:
-            return super(OpenAIObject, self).__setattr__(k, v)
+            return super().__setattr__(k, v)
 
         self[k] = v
         return None
@@ -120,7 +119,7 @@ class OpenAIObject(dict):
 
     def __delattr__(self, k):
         if k[0] == "_" or k in self.__dict__:
-            return super(OpenAIObject, self).__delattr__(k)
+            return super().__delattr__(k)
         else:
             del self[k]
 
@@ -131,7 +130,7 @@ class OpenAIObject(dict):
                 "We interpret empty strings as None in requests."
                 "You may set %s.%s = None to delete the property" % (k, str(self), k)
             )
-        super(OpenAIObject, self).__setitem__(k, v)
+        super().__setitem__(k, v)
 
     def __delitem__(self, k):
         raise NotImplementedError("del is not supported")
@@ -163,11 +162,11 @@ class OpenAIObject(dict):
     def construct_from(
         cls,
         values,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         api_version=None,
         organization=None,
         engine=None,
-        response_ms: Optional[int] = None,
+        response_ms: int | None = None,
     ):
         instance = cls(
             values.get("id"),
@@ -193,7 +192,7 @@ class OpenAIObject(dict):
         api_version=None,
         api_type=None,
         organization=None,
-        response_ms: Optional[int] = None,
+        response_ms: int | None = None,
     ):
         self.api_key = api_key or getattr(values, "api_key", None)
         self.api_version = api_version or getattr(values, "api_version", None)
@@ -204,7 +203,7 @@ class OpenAIObject(dict):
         # Wipe old state before setting new.
         self.clear()
         for k, v in values.items():
-            super(OpenAIObject, self).__setitem__(k, convert_to_openai_object(v, api_key, api_version, organization))
+            super().__setitem__(k, convert_to_openai_object(v, api_key, api_version, organization))
 
         self._previous = values
 
@@ -220,8 +219,8 @@ class OpenAIObject(dict):
         headers=None,
         stream=False,
         plain_old_data=False,
-        request_id: Optional[str] = None,
-        request_timeout: Optional[Union[float, Tuple[float, float]]] = None,
+        request_id: str | None = None,
+        request_timeout: float | tuple[float, float] | None = None,
     ):
         if params is None:
             params = self._retrieve_params
@@ -271,8 +270,8 @@ class OpenAIObject(dict):
         headers=None,
         stream=False,
         plain_old_data=False,
-        request_id: Optional[str] = None,
-        request_timeout: Optional[Union[float, Tuple[float, float]]] = None,
+        request_id: str | None = None,
+        request_timeout: float | tuple[float, float] | None = None,
     ):
         if params is None:
             params = self._retrieve_params
@@ -407,7 +406,7 @@ def convert_to_openai_object(
 ):
     # If we get a OpenAIResponse, we'll want to return a OpenAIObject.
 
-    response_ms: Optional[int] = None
+    response_ms: int | None = None
     if isinstance(resp, OpenAIResponse):
         organization = resp.organization
         response_ms = resp.response_ms

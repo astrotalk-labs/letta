@@ -1,5 +1,4 @@
 import asyncio
-from typing import Dict, List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -55,7 +54,7 @@ class BlockManager:
 
     @trace_method
     @enforce_types
-    def batch_create_blocks(self, blocks: List[PydanticBlock], actor: PydanticUser) -> List[PydanticBlock]:
+    def batch_create_blocks(self, blocks: list[PydanticBlock], actor: PydanticUser) -> list[PydanticBlock]:
         """
         Batch-create multiple Blocks in one transaction for better performance.
         Args:
@@ -79,7 +78,7 @@ class BlockManager:
 
     @trace_method
     @enforce_types
-    async def batch_create_blocks_async(self, blocks: List[PydanticBlock], actor: PydanticUser) -> List[PydanticBlock]:
+    async def batch_create_blocks_async(self, blocks: list[PydanticBlock], actor: PydanticUser) -> list[PydanticBlock]:
         """
         Batch-create multiple Blocks in one transaction for better performance.
         Args:
@@ -156,13 +155,13 @@ class BlockManager:
     async def get_blocks_async(
         self,
         actor: PydanticUser,
-        label: Optional[str] = None,
-        is_template: Optional[bool] = None,
-        template_name: Optional[str] = None,
-        identity_id: Optional[str] = None,
-        identifier_keys: Optional[List[str]] = None,
-        limit: Optional[int] = 50,
-    ) -> List[PydanticBlock]:
+        label: str | None = None,
+        is_template: bool | None = None,
+        template_name: str | None = None,
+        identity_id: str | None = None,
+        identifier_keys: list[str] | None = None,
+        limit: int | None = 50,
+    ) -> list[PydanticBlock]:
         """Async version of get_blocks method. Retrieve blocks based on various optional filters."""
         from sqlalchemy import select
         from sqlalchemy.orm import noload
@@ -216,7 +215,7 @@ class BlockManager:
 
     @trace_method
     @enforce_types
-    def get_block_by_id(self, block_id: str, actor: Optional[PydanticUser] = None) -> Optional[PydanticBlock]:
+    def get_block_by_id(self, block_id: str, actor: PydanticUser | None = None) -> PydanticBlock | None:
         """Retrieve a block by its name."""
         with db_registry.session() as session:
             try:
@@ -227,7 +226,7 @@ class BlockManager:
 
     @trace_method
     @enforce_types
-    async def get_block_by_id_async(self, block_id: str, actor: Optional[PydanticUser] = None) -> Optional[PydanticBlock]:
+    async def get_block_by_id_async(self, block_id: str, actor: PydanticUser | None = None) -> PydanticBlock | None:
         """Retrieve a block by its name."""
         async with db_registry.async_session() as session:
             try:
@@ -238,7 +237,7 @@ class BlockManager:
 
     @trace_method
     @enforce_types
-    async def get_all_blocks_by_ids_async(self, block_ids: List[str], actor: Optional[PydanticUser] = None) -> List[PydanticBlock]:
+    async def get_all_blocks_by_ids_async(self, block_ids: list[str], actor: PydanticUser | None = None) -> list[PydanticBlock]:
         """Retrieve blocks by their ids without loading unnecessary relationships. Async implementation."""
         from sqlalchemy import select
         from sqlalchemy.orm import noload
@@ -286,7 +285,7 @@ class BlockManager:
 
     @trace_method
     @enforce_types
-    async def get_agents_for_block_async(self, block_id: str, actor: PydanticUser) -> List[PydanticAgentState]:
+    async def get_agents_for_block_async(self, block_id: str, actor: PydanticUser) -> list[PydanticAgentState]:
         """
         Retrieve all agents associated with a given block.
         """
@@ -312,8 +311,8 @@ class BlockManager:
         self,
         block_id: str,
         actor: PydanticUser,
-        agent_id: Optional[str] = None,
-        use_preloaded_block: Optional[BlockModel] = None,  # For concurrency tests
+        agent_id: str | None = None,
+        use_preloaded_block: BlockModel | None = None,  # For concurrency tests
     ) -> PydanticBlock:
         """
         Create a new checkpoint for the given Block by copying its
@@ -412,7 +411,7 @@ class BlockManager:
 
     @trace_method
     @enforce_types
-    def undo_checkpoint_block(self, block_id: str, actor: PydanticUser, use_preloaded_block: Optional[BlockModel] = None) -> PydanticBlock:
+    def undo_checkpoint_block(self, block_id: str, actor: PydanticUser, use_preloaded_block: BlockModel | None = None) -> PydanticBlock:
         """
         Move the block to the immediately previous checkpoint in BlockHistory.
         If older sequences have been pruned, we jump to the largest sequence
@@ -455,7 +454,7 @@ class BlockManager:
 
     @trace_method
     @enforce_types
-    def redo_checkpoint_block(self, block_id: str, actor: PydanticUser, use_preloaded_block: Optional[BlockModel] = None) -> PydanticBlock:
+    def redo_checkpoint_block(self, block_id: str, actor: PydanticUser, use_preloaded_block: BlockModel | None = None) -> PydanticBlock:
         """
         Move the block to the next checkpoint if it exists.
         If some middle checkpoints have been pruned, we jump to the smallest
@@ -495,8 +494,8 @@ class BlockManager:
     @trace_method
     @enforce_types
     async def bulk_update_block_values_async(
-        self, updates: Dict[str, str], actor: PydanticUser, return_hydrated: bool = False
-    ) -> Optional[List[PydanticBlock]]:
+        self, updates: dict[str, str], actor: PydanticUser, return_hydrated: bool = False
+    ) -> list[PydanticBlock] | None:
         """
         Bulk-update the `value` field for multiple blocks in one transaction.
 

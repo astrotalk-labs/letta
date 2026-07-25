@@ -1,4 +1,3 @@
-from typing import Dict, List
 
 import openai
 
@@ -36,7 +35,7 @@ class EphemeralAgent(BaseAgent):
             actor=actor,
         )
 
-    async def step(self, input_messages: List[MessageCreate]) -> List[Message]:
+    async def step(self, input_messages: list[MessageCreate]) -> list[Message]:
         """
         Synchronous method that takes a user's input text and returns a summary from OpenAI.
         Returns a list of ephemeral Message objects containing both the user text and the assistant summary.
@@ -55,7 +54,7 @@ class EphemeralAgent(BaseAgent):
             )
         ]
 
-    def _build_openai_request(self, openai_messages: List[Dict], agent_state: AgentState) -> ChatCompletionRequest:
+    def _build_openai_request(self, openai_messages: list[dict], agent_state: AgentState) -> ChatCompletionRequest:
         openai_request = ChatCompletionRequest(
             model=agent_state.llm_config.model,
             messages=openai_messages,

@@ -2,7 +2,8 @@ import json
 import re
 import time
 import warnings
-from typing import Any, Generator, List, Optional, Union
+from collections.abc import Generator
+from typing import Any
 
 import anthropic
 from anthropic import AnthropicVertex, PermissionDeniedError
@@ -19,11 +20,20 @@ from anthropic.types.beta import (
     BetaToolUseBlock,
 )
 
-from letta.errors import BedrockError, BedrockPermissionError, ErrorCode, LLMAuthenticationError, LLMError
+from letta.errors import (
+    BedrockError,
+    BedrockPermissionError,
+    ErrorCode,
+    LLMAuthenticationError,
+    LLMError,
+)
 from letta.helpers.datetime_helpers import get_utc_time_int, timestamp_to_datetime
 from letta.llm_api.aws_bedrock import get_bedrock_client
 from letta.llm_api.helpers import add_inner_thoughts_to_functions
-from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION
+from letta.local_llm.constants import (
+    INNER_THOUGHTS_KWARG,
+    INNER_THOUGHTS_KWARG_DESCRIPTION,
+)
 from letta.local_llm.utils import num_tokens_from_functions, num_tokens_from_messages
 from letta.log import get_logger
 from letta.otel.tracing import log_event
@@ -38,14 +48,20 @@ from letta.schemas.openai.chat_completion_response import (
     ChunkChoice,
     FunctionCall,
     FunctionCallDelta,
+    Message,
+    MessageDelta,
+    ToolCall,
+    ToolCallDelta,
+    UsageStatistics,
 )
-from letta.schemas.openai.chat_completion_response import Message
 from letta.schemas.openai.chat_completion_response import Message as ChoiceMessage
-from letta.schemas.openai.chat_completion_response import MessageDelta, ToolCall, ToolCallDelta, UsageStatistics
 from letta.services.provider_manager import ProviderManager
 from letta.services.user_manager import UserManager
 from letta.settings import model_settings
-from letta.streaming_interface import AgentChunkStreamingInterface, AgentRefreshStreamingInterface
+from letta.streaming_interface import (
+    AgentChunkStreamingInterface,
+    AgentRefreshStreamingInterface,
+)
 
 logger = get_logger(__name__)
 
@@ -152,7 +168,7 @@ DUMMY_FIRST_USER_MESSAGE = "User initializing bootup sequence."
 VALID_EVENT_TYPES = {"content_block_stop", "message_stop"}
 
 
-def anthropic_check_valid_api_key(api_key: Union[str, None]) -> None:
+def anthropic_check_valid_api_key(api_key: str | None) -> None:
     if api_key:
         anthropic_client = anthropic.Anthropic(api_key=api_key)
         try:
@@ -166,14 +182,14 @@ def anthropic_check_valid_api_key(api_key: Union[str, None]) -> None:
         raise ValueError("No API key provided")
 
 
-def antropic_get_model_context_window(url: str, api_key: Union[str, None], model: str) -> int:
+def antropic_get_model_context_window(url: str, api_key: str | None, model: str) -> int:
     for model_dict in anthropic_get_model_list(api_key=api_key):
         if model_dict["name"] == model:
             return model_dict["context_window"]
     raise ValueError(f"Can't find model '{model}' in Anthropic model list")
 
 
-def anthropic_get_model_list(api_key: Optional[str]) -> dict:
+def anthropic_get_model_list(api_key: str | None) -> dict:
     """https://docs.anthropic.com/claude/docs/models-overview"""
 
     # NOTE: currently there is no GET /models, so we need to hardcode
@@ -192,7 +208,7 @@ def anthropic_get_model_list(api_key: Optional[str]) -> dict:
     return models_json["data"]
 
 
-async def anthropic_get_model_list_async(api_key: Optional[str]) -> dict:
+async def anthropic_get_model_list_async(api_key: str | None) -> dict:
     """https://docs.anthropic.com/claude/docs/models-overview"""
 
     # NOTE: currently there is no GET /models, so we need to hardcode
@@ -211,7 +227,7 @@ async def anthropic_get_model_list_async(api_key: Optional[str]) -> dict:
     return models_json["data"]
 
 
-def convert_tools_to_anthropic_format(tools: List[Tool]) -> List[dict]:
+def convert_tools_to_anthropic_format(tools: list[Tool]) -> list[dict]:
     """See: https://docs.anthropic.com/claude/docs/tool-use
 
     OpenAI style:
@@ -269,7 +285,7 @@ def convert_tools_to_anthropic_format(tools: List[Tool]) -> List[dict]:
     return formatted_tools
 
 
-def merge_tool_results_into_user_messages(messages: List[dict]):
+def merge_tool_results_into_user_messages(messages: list[dict]):
     """Anthropic API doesn't allow role 'tool'->'user' sequences
 
     Example HTTP error:
@@ -335,9 +351,7 @@ def remap_finish_reason(stop_reason: str) -> str:
         "max_tokens": (unchanged)
 
     """
-    if stop_reason == "end_turn":
-        return "stop"
-    elif stop_reason == "stop_sequence":
+    if stop_reason == "end_turn" or stop_reason == "stop_sequence":
         return "stop"
     elif stop_reason == "max_tokens":
         return "length"
@@ -347,7 +361,7 @@ def remap_finish_reason(stop_reason: str) -> str:
         raise ValueError(f"Unexpected stop_reason: {stop_reason}")
 
 
-def strip_xml_tags(string: str, tag: Optional[str]) -> str:
+def strip_xml_tags(string: str, tag: str | None) -> str:
     if tag is None:
         return string
     # Construct the regular expression pattern to find the start and end tags
@@ -356,7 +370,7 @@ def strip_xml_tags(string: str, tag: Optional[str]) -> str:
     return re.sub(tag_pattern, "", string)
 
 
-def strip_xml_tags_streaming(string: str, tag: Optional[str]) -> str:
+def strip_xml_tags_streaming(string: str, tag: str | None) -> str:
     if tag is None:
         return string
 
@@ -380,7 +394,7 @@ def strip_xml_tags_streaming(string: str, tag: Optional[str]) -> str:
 
 def convert_anthropic_response_to_chatcompletion(
     response: anthropic.types.Message,
-    inner_thoughts_xml_tag: Optional[str] = None,
+    inner_thoughts_xml_tag: str | None = None,
 ) -> ChatCompletionResponse:
     """
     Example response from Claude 3:
@@ -478,17 +492,10 @@ def convert_anthropic_response_to_chatcompletion(
 
 
 def convert_anthropic_stream_event_to_chatcompletion(
-    event: Union[
-        BetaRawMessageStartEvent,
-        BetaRawContentBlockStartEvent,
-        BetaRawContentBlockDeltaEvent,
-        BetaRawContentBlockStopEvent,
-        BetaRawMessageDeltaEvent,
-        BetaRawMessageStopEvent,
-    ],
+    event: BetaRawMessageStartEvent | BetaRawContentBlockStartEvent | BetaRawContentBlockDeltaEvent | BetaRawContentBlockStopEvent | BetaRawMessageDeltaEvent | BetaRawMessageStopEvent,
     message_id: str,
     model: str,
-    inner_thoughts_xml_tag: Optional[str] = "thinking",
+    inner_thoughts_xml_tag: str | None = "thinking",
 ) -> ChatCompletionChunkResponse:
     """Convert Anthropic stream events to OpenAI ChatCompletionResponse format.
 
@@ -693,7 +700,7 @@ def convert_anthropic_stream_event_to_chatcompletion(
 
 def _prepare_anthropic_request(
     data: ChatCompletionRequest,
-    inner_thoughts_xml_tag: Optional[str] = "thinking",
+    inner_thoughts_xml_tag: str | None = "thinking",
     # if true, prefix fill the generation with the thinking tag
     prefix_fill: bool = False,
     # if true, put COT inside the tool calls instead of inside the content
@@ -702,7 +709,7 @@ def _prepare_anthropic_request(
     # extended thinking related fields
     # https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking
     extended_thinking: bool = False,
-    max_reasoning_tokens: Optional[int] = None,
+    max_reasoning_tokens: int | None = None,
 ) -> dict:
     """Prepare the request data for Anthropic API format."""
     if extended_thinking:
@@ -740,7 +747,7 @@ def _prepare_anthropic_request(
         data["temperature"] = 1.0
 
     if "functions" in data:
-        raise ValueError(f"'functions' unexpected in Anthropic API payload")
+        raise ValueError("'functions' unexpected in Anthropic API payload")
 
     # Handle tools
     if "tools" in data and data["tools"] is None:
@@ -818,15 +825,15 @@ def _prepare_anthropic_request(
 
 def anthropic_chat_completions_request(
     data: ChatCompletionRequest,
-    inner_thoughts_xml_tag: Optional[str] = "thinking",
+    inner_thoughts_xml_tag: str | None = "thinking",
     put_inner_thoughts_in_kwargs: bool = False,
     extended_thinking: bool = False,
-    max_reasoning_tokens: Optional[int] = None,
-    provider_name: Optional[str] = None,
-    provider_category: Optional[ProviderCategory] = None,
-    betas: List[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
-    user_id: Optional[str] = None,
-    anthropic_client: Optional[Any] = None,
+    max_reasoning_tokens: int | None = None,
+    provider_name: str | None = None,
+    provider_category: ProviderCategory | None = None,
+    betas: list[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
+    user_id: str | None = None,
+    anthropic_client: Any | None = None,
     use_vertex_experiment: bool = False,
 ) -> ChatCompletionResponse:
     """https://docs.anthropic.com/claude/docs/tool-use
@@ -840,13 +847,13 @@ def anthropic_chat_completions_request(
     # ✅ Use provided client or create new one
     if anthropic_client is None:
         if use_vertex_experiment:
-            log_msg = f"[VERTEX_EXPERIMENT] Creating AnthropicVertex client (use_vertex_experiment=True)"
+            log_msg = "[VERTEX_EXPERIMENT] Creating AnthropicVertex client (use_vertex_experiment=True)"
             logger.info(log_msg)
             print(f"DEBUG: {log_msg}")
             from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
 
             anthropic_client = AnthropicVertexClient()._get_client()
-            log_msg = f"[VERTEX_EXPERIMENT] Successfully created AnthropicVertex client"
+            log_msg = "[VERTEX_EXPERIMENT] Successfully created AnthropicVertex client"
             logger.info(log_msg)
             print(f"DEBUG: {log_msg}")
         elif provider_category == ProviderCategory.byok:
@@ -855,7 +862,7 @@ def anthropic_chat_completions_request(
             api_key = ProviderManager().get_override_key(provider_name, actor=actor)
             anthropic_client = anthropic.Anthropic(api_key=api_key)
         elif model_settings.anthropic_api_key:
-            log_msg = f"[ANTHROPIC] Creating standard Anthropic client (use_vertex_experiment=False)"
+            log_msg = "[ANTHROPIC] Creating standard Anthropic client (use_vertex_experiment=False)"
             logger.info(log_msg)
             print(f"DEBUG: {log_msg}")
             anthropic_client = anthropic.Anthropic()
@@ -882,7 +889,7 @@ def anthropic_chat_completions_request(
 
     if is_vertex:
         # Vertex AI doesn't support beta features like prompt caching
-        log_msg = f"[VERTEX_EXPERIMENT] Making request to Vertex AI (no beta features)"
+        log_msg = "[VERTEX_EXPERIMENT] Making request to Vertex AI (no beta features)"
         logger.info(log_msg)
         print(f"DEBUG: {log_msg}")
         response = anthropic_client.messages.create(**data)
@@ -901,7 +908,7 @@ def anthropic_chat_completions_request(
 
 def anthropic_bedrock_chat_completions_request(
     data: ChatCompletionRequest,
-    inner_thoughts_xml_tag: Optional[str] = "thinking",
+    inner_thoughts_xml_tag: str | None = "thinking",
 ) -> ChatCompletionResponse:
     """Make a chat completion request to Anthropic via AWS Bedrock."""
     data = _prepare_anthropic_request(data, inner_thoughts_xml_tag, bedrock=True)
@@ -926,15 +933,15 @@ def anthropic_bedrock_chat_completions_request(
 
 def anthropic_chat_completions_request_stream(
     data: ChatCompletionRequest,
-    inner_thoughts_xml_tag: Optional[str] = "thinking",
+    inner_thoughts_xml_tag: str | None = "thinking",
     put_inner_thoughts_in_kwargs: bool = False,
     extended_thinking: bool = False,
-    max_reasoning_tokens: Optional[int] = None,
-    provider_name: Optional[str] = None,
-    provider_category: Optional[ProviderCategory] = None,
-    betas: List[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
-    user_id: Optional[str] = None,
-    anthropic_client: Optional[Any] = None,
+    max_reasoning_tokens: int | None = None,
+    provider_name: str | None = None,
+    provider_category: ProviderCategory | None = None,
+    betas: list[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
+    user_id: str | None = None,
+    anthropic_client: Any | None = None,
     use_vertex_experiment: bool = False,
 ) -> Generator[ChatCompletionChunkResponse, None, None]:
     """Stream chat completions from Anthropic API.
@@ -955,18 +962,18 @@ def anthropic_chat_completions_request_stream(
     # ✅ Use provided client or create new one
     if anthropic_client is None:
         if use_vertex_experiment:
-            logger.info(f"[VERTEX_EXPERIMENT] [STREAM] Creating AnthropicVertex client (use_vertex_experiment=True)")
+            logger.info("[VERTEX_EXPERIMENT] [STREAM] Creating AnthropicVertex client (use_vertex_experiment=True)")
             from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
 
             anthropic_client = AnthropicVertexClient()._get_client()
-            logger.info(f"[VERTEX_EXPERIMENT] [STREAM] Successfully created AnthropicVertex client")
+            logger.info("[VERTEX_EXPERIMENT] [STREAM] Successfully created AnthropicVertex client")
         elif provider_category == ProviderCategory.byok:
             logger.info(f"[ANTHROPIC] [STREAM] Creating BYOK Anthropic client (provider_category={provider_category})")
             actor = UserManager().get_user_or_default(user_id=user_id)
             api_key = ProviderManager().get_override_key(provider_name, actor=actor)
             anthropic_client = anthropic.Anthropic(api_key=api_key)
         elif model_settings.anthropic_api_key:
-            logger.info(f"[ANTHROPIC] [STREAM] Creating standard Anthropic client (use_vertex_experiment=False)")
+            logger.info("[ANTHROPIC] [STREAM] Creating standard Anthropic client (use_vertex_experiment=False)")
             anthropic_client = anthropic.Anthropic()
         else:
             raise ValueError("No available Anthropic API key")
@@ -980,7 +987,7 @@ def anthropic_chat_completions_request_stream(
 
     if is_vertex:
         # Vertex AI doesn't support beta features
-        logger.info(f"[VERTEX_EXPERIMENT] [STREAM] Starting stream to Vertex AI (no beta features)")
+        logger.info("[VERTEX_EXPERIMENT] [STREAM] Starting stream to Vertex AI (no beta features)")
         stream_manager = anthropic_client.messages.stream(**data)
     else:
         # Direct Anthropic API supports beta features
@@ -1022,19 +1029,19 @@ def anthropic_chat_completions_request_stream(
 
 def anthropic_chat_completions_process_stream(
     chat_completion_request: ChatCompletionRequest,
-    stream_interface: Optional[Union[AgentChunkStreamingInterface, AgentRefreshStreamingInterface]] = None,
-    inner_thoughts_xml_tag: Optional[str] = "thinking",
+    stream_interface: AgentChunkStreamingInterface | AgentRefreshStreamingInterface | None = None,
+    inner_thoughts_xml_tag: str | None = "thinking",
     put_inner_thoughts_in_kwargs: bool = False,
     extended_thinking: bool = False,
-    max_reasoning_tokens: Optional[int] = None,
-    provider_name: Optional[str] = None,
-    provider_category: Optional[ProviderCategory] = None,
+    max_reasoning_tokens: int | None = None,
+    provider_name: str | None = None,
+    provider_category: ProviderCategory | None = None,
     create_message_id: bool = True,
     create_message_datetime: bool = True,
-    betas: List[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
-    name: Optional[str] = None,
-    user_id: Optional[str] = None,
-    anthropic_client: Optional[Any] = None,
+    betas: list[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
+    name: str | None = None,
+    user_id: str | None = None,
+    anthropic_client: Any | None = None,
     use_vertex_experiment: bool = False,
 ) -> ChatCompletionResponse:
     """Process a streaming completion response from Anthropic, similar to OpenAI's streaming.
@@ -1258,7 +1265,7 @@ def anthropic_chat_completions_process_stream(
                                     accum_message.tool_calls[tool_call_delta.index].function.arguments += tool_call_delta.function.arguments
 
                 if message_delta.function_call is not None:
-                    raise NotImplementedError(f"Old function_call style not support with stream=True")
+                    raise NotImplementedError("Old function_call style not support with stream=True")
 
             # overwrite response fields based on latest chunk
             if not create_message_id:
@@ -1275,7 +1282,7 @@ def anthropic_chat_completions_process_stream(
     except Exception as e:
         if stream_interface:
             stream_interface.stream_end()
-        print(f"Parsing ChatCompletion stream failed with error:\n{str(e)}")
+        print(f"Parsing ChatCompletion stream failed with error:\n{e!s}")
         raise e
     finally:
         if stream_interface:

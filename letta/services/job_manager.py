@@ -1,6 +1,6 @@
 from functools import reduce
 from operator import add
-from typing import List, Literal, Optional, Union
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -35,8 +35,8 @@ class JobManager:
     @enforce_types
     @trace_method
     def create_job(
-        self, pydantic_job: Union[PydanticJob, PydanticRun, PydanticBatchJob], actor: PydanticUser
-    ) -> Union[PydanticJob, PydanticRun, PydanticBatchJob]:
+        self, pydantic_job: PydanticJob | PydanticRun | PydanticBatchJob, actor: PydanticUser
+    ) -> PydanticJob | PydanticRun | PydanticBatchJob:
         """Create a new job based on the JobCreate schema."""
         with db_registry.session() as session:
             # Associate the job with the user
@@ -49,8 +49,8 @@ class JobManager:
     @enforce_types
     @trace_method
     async def create_job_async(
-        self, pydantic_job: Union[PydanticJob, PydanticRun, PydanticBatchJob], actor: PydanticUser
-    ) -> Union[PydanticJob, PydanticRun, PydanticBatchJob]:
+        self, pydantic_job: PydanticJob | PydanticRun | PydanticBatchJob, actor: PydanticUser
+    ) -> PydanticJob | PydanticRun | PydanticBatchJob:
         """Create a new job based on the JobCreate schema."""
         async with db_registry.async_session() as session:
             # Associate the job with the user
@@ -133,13 +133,13 @@ class JobManager:
     def list_jobs(
         self,
         actor: PydanticUser,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        limit: Optional[int] = 50,
-        statuses: Optional[List[JobStatus]] = None,
+        before: str | None = None,
+        after: str | None = None,
+        limit: int | None = 50,
+        statuses: list[JobStatus] | None = None,
         job_type: JobType = JobType.JOB,
         ascending: bool = True,
-    ) -> List[PydanticJob]:
+    ) -> list[PydanticJob]:
         """List all jobs with optional pagination and status filter."""
         with db_registry.session() as session:
             filter_kwargs = {"user_id": actor.id, "job_type": job_type}
@@ -163,14 +163,14 @@ class JobManager:
     async def list_jobs_async(
         self,
         actor: PydanticUser,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        limit: Optional[int] = 50,
-        statuses: Optional[List[JobStatus]] = None,
+        before: str | None = None,
+        after: str | None = None,
+        limit: int | None = 50,
+        statuses: list[JobStatus] | None = None,
         job_type: JobType = JobType.JOB,
         ascending: bool = True,
-        source_id: Optional[str] = None,
-    ) -> List[PydanticJob]:
+        source_id: str | None = None,
+    ) -> list[PydanticJob]:
         """List all jobs with optional pagination and status filter."""
         async with db_registry.async_session() as session:
             filter_kwargs = {"user_id": actor.id, "job_type": job_type}
@@ -216,12 +216,12 @@ class JobManager:
         self,
         job_id: str,
         actor: PydanticUser,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        limit: Optional[int] = 100,
-        role: Optional[MessageRole] = None,
+        before: str | None = None,
+        after: str | None = None,
+        limit: int | None = 100,
+        role: MessageRole | None = None,
         ascending: bool = True,
-    ) -> List[PydanticMessage]:
+    ) -> list[PydanticMessage]:
         """
         Get all messages associated with a job.
 
@@ -267,11 +267,11 @@ class JobManager:
         self,
         job_id: str,
         actor: PydanticUser,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        limit: Optional[int] = 100,
+        before: str | None = None,
+        after: str | None = None,
+        limit: int | None = 100,
         ascending: bool = True,
-    ) -> List[PydanticStep]:
+    ) -> list[PydanticStep]:
         """
         Get all steps associated with a job.
 
@@ -375,7 +375,7 @@ class JobManager:
         self,
         job_id: str,
         usage: LettaUsageStatistics,
-        step_id: Optional[str] = None,
+        step_id: str | None = None,
         actor: PydanticUser = None,
     ) -> None:
         """
@@ -416,12 +416,12 @@ class JobManager:
         self,
         run_id: str,
         actor: PydanticUser,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        limit: Optional[int] = 100,
-        role: Optional[MessageRole] = None,
+        before: str | None = None,
+        after: str | None = None,
+        limit: int | None = 100,
+        role: MessageRole | None = None,
         ascending: bool = True,
-    ) -> List[LettaMessage]:
+    ) -> list[LettaMessage]:
         """
         Get messages associated with a job using cursor-based pagination.
         This is a wrapper around get_job_messages that provides cursor-based pagination.
@@ -468,12 +468,12 @@ class JobManager:
         self,
         run_id: str,
         actor: PydanticUser,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        limit: Optional[int] = 100,
-        role: Optional[MessageRole] = None,
+        before: str | None = None,
+        after: str | None = None,
+        limit: int | None = 100,
+        role: MessageRole | None = None,
         ascending: bool = True,
-    ) -> List[LettaMessage]:
+    ) -> list[LettaMessage]:
         """
         Get steps associated with a job using cursor-based pagination.
         This is a wrapper around get_job_messages that provides cursor-based pagination.
@@ -519,7 +519,7 @@ class JobManager:
         session: Session,
         job_id: str,
         actor: PydanticUser,
-        access: List[Literal["read", "write", "delete"]] = ["read"],
+        access: list[Literal["read", "write", "delete"]] = ["read"],
     ) -> JobModel:
         """
         Verify that a job exists and the user has the required access.
@@ -547,7 +547,7 @@ class JobManager:
         session: Session,
         job_id: str,
         actor: PydanticUser,
-        access: List[Literal["read", "write", "delete"]] = ["read"],
+        access: list[Literal["read", "write", "delete"]] = ["read"],
     ) -> JobModel:
         """
         Verify that a job exists and the user has the required access.

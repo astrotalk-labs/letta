@@ -4,7 +4,6 @@ Provides ``get_experiments_service()`` to obtain the global singleton,
 and ``init_growthbook()`` / ``shutdown_growthbook()`` for app lifecycle hooks.
 """
 
-from typing import Optional
 
 from letta.growthbook.experiments_service import ExperimentsService
 from letta.growthbook.feature_evaluator import FeatureEvaluator
@@ -15,12 +14,12 @@ from letta.settings import settings
 logger = get_logger(__name__)
 
 # Module-level singletons
-_gb_features_service: Optional[GBFeaturesService] = None
-_feature_evaluator: Optional[FeatureEvaluator] = None
-_experiments_service: Optional[ExperimentsService] = None
+_gb_features_service: GBFeaturesService | None = None
+_feature_evaluator: FeatureEvaluator | None = None
+_experiments_service: ExperimentsService | None = None
 
 
-def init_growthbook() -> Optional[ExperimentsService]:
+def init_growthbook() -> ExperimentsService | None:
     """Initialize the GrowthBook stack from application settings.
 
     Reads ``LETTA_GROWTHBOOK_CLIENT_KEY``, ``LETTA_GROWTHBOOK_API_HOST``,
@@ -72,7 +71,7 @@ def shutdown_growthbook():
     _experiments_service = None
 
 
-def get_experiments_service() -> Optional[ExperimentsService]:
+def get_experiments_service() -> ExperimentsService | None:
     """Return the global :class:`ExperimentsService` singleton.
 
     Returns ``None`` if GrowthBook was not initialized (not configured).
@@ -82,6 +81,6 @@ def get_experiments_service() -> Optional[ExperimentsService]:
     return _experiments_service
 
 
-def get_feature_evaluator() -> Optional[FeatureEvaluator]:
+def get_feature_evaluator() -> FeatureEvaluator | None:
     """Return the global :class:`FeatureEvaluator` singleton."""
     return _feature_evaluator

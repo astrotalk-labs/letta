@@ -1,6 +1,5 @@
 import json
 import uuid
-from typing import List, Optional, Union
 
 import requests
 
@@ -9,11 +8,16 @@ from letta.helpers.json_helpers import json_dumps
 from letta.local_llm.utils import count_tokens
 from letta.schemas.message import Message
 from letta.schemas.openai.chat_completion_request import ChatCompletionRequest, Tool
-from letta.schemas.openai.chat_completion_response import ChatCompletionResponse, Choice, FunctionCall
+from letta.schemas.openai.chat_completion_response import (
+    ChatCompletionResponse,
+    Choice,
+    FunctionCall,
+    ToolCall,
+    UsageStatistics,
+)
 from letta.schemas.openai.chat_completion_response import (
     Message as ChoiceMessage,  # NOTE: avoid conflict with our own Letta Message datatype
 )
-from letta.schemas.openai.chat_completion_response import ToolCall, UsageStatistics
 from letta.utils import get_tool_call_id, smart_urljoin
 
 BASE_URL = "https://api.cohere.ai/v1"
@@ -24,7 +28,7 @@ COHERE_VALID_MODEL_LIST = [
 ]
 
 
-def cohere_get_model_details(url: str, api_key: Union[str, None], model: str) -> int:
+def cohere_get_model_details(url: str, api_key: str | None, model: str) -> int:
     """https://docs.cohere.com/reference/get-model"""
     from letta.utils import printd
 
@@ -56,12 +60,12 @@ def cohere_get_model_details(url: str, api_key: Union[str, None], model: str) ->
         raise e
 
 
-def cohere_get_model_context_window(url: str, api_key: Union[str, None], model: str) -> int:
+def cohere_get_model_context_window(url: str, api_key: str | None, model: str) -> int:
     model_details = cohere_get_model_details(url=url, api_key=api_key, model=model)
     return model_details["context_length"]
 
 
-def cohere_get_model_list(url: str, api_key: Union[str, None]) -> dict:
+def cohere_get_model_list(url: str, api_key: str | None) -> dict:
     """https://docs.cohere.com/reference/list-models"""
     from letta.utils import printd
 
@@ -113,7 +117,7 @@ def remap_finish_reason(finish_reason: str) -> str:
 def convert_cohere_response_to_chatcompletion(
     response_json: dict,  # REST response from API
     model: str,  # Required since not returned
-    inner_thoughts_in_kwargs: Optional[bool] = True,
+    inner_thoughts_in_kwargs: bool | None = True,
 ) -> ChatCompletionResponse:
     """
     Example response from command-r-plus:
@@ -217,7 +221,7 @@ def convert_cohere_response_to_chatcompletion(
     )
 
 
-def convert_tools_to_cohere_format(tools: List[Tool], inner_thoughts_in_kwargs: Optional[bool] = True) -> List[dict]:
+def convert_tools_to_cohere_format(tools: list[Tool], inner_thoughts_in_kwargs: bool | None = True) -> list[dict]:
     """See: https://docs.cohere.com/reference/chat
 
     OpenAI style:
@@ -274,7 +278,10 @@ def convert_tools_to_cohere_format(tools: List[Tool], inner_thoughts_in_kwargs: 
     if inner_thoughts_in_kwargs:
         # NOTE: since Cohere doesn't allow "text" in the response when a tool call happens, if we want
         # a simultaneous CoT + tool call we need to put it inside a kwarg
-        from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION
+        from letta.local_llm.constants import (
+            INNER_THOUGHTS_KWARG,
+            INNER_THOUGHTS_KWARG_DESCRIPTION,
+        )
 
         for cohere_tool in tools_dict_list:
             cohere_tool["parameter_definitions"][INNER_THOUGHTS_KWARG] = {
@@ -307,7 +314,7 @@ def cohere_chat_completions_request(
     data = chat_completion_request.model_dump(exclude_none=True)
 
     if "functions" in data:
-        raise ValueError(f"'functions' unexpected in Anthropic API payload")
+        raise ValueError("'functions' unexpected in Anthropic API payload")
 
     # If tools == None, strip from the payload
     if "tools" in data and data["tools"] is None:

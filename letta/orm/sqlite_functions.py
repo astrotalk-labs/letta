@@ -1,6 +1,5 @@
 import base64
 import sqlite3
-from typing import Optional, Union
 
 import numpy as np
 from sqlalchemy import event
@@ -67,8 +66,8 @@ def verify_embedding_dimension(embedding: np.ndarray, expected_dim: int = MAX_EM
 
 
 def validate_and_transform_embedding(
-    embedding: Union[bytes, sqlite3.Binary, list, np.ndarray], expected_dim: int = MAX_EMBEDDING_DIM, dtype: np.dtype = np.float32
-) -> Optional[np.ndarray]:
+    embedding: bytes | sqlite3.Binary | list | np.ndarray, expected_dim: int = MAX_EMBEDDING_DIM, dtype: np.dtype = np.float32
+) -> np.ndarray | None:
     """
     Validates and transforms embeddings to ensure correct dimensionality.
 

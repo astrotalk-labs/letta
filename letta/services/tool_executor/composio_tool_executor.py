@@ -1,7 +1,10 @@
-from typing import Any, Dict, Optional
+from typing import Any
 
 from letta.constants import COMPOSIO_ENTITY_ENV_VAR_KEY
-from letta.functions.composio_helpers import execute_composio_action_async, generate_composio_action_from_func_name
+from letta.functions.composio_helpers import (
+    execute_composio_action_async,
+    generate_composio_action_from_func_name,
+)
 from letta.helpers.composio_helpers import get_composio_api_key_async
 from letta.otel.tracing import trace_method
 from letta.schemas.agent import AgentState
@@ -22,9 +25,9 @@ class ExternalComposioToolExecutor(ToolExecutor):
         function_args: dict,
         tool: Tool,
         actor: User,
-        agent_state: Optional[AgentState] = None,
-        sandbox_config: Optional[SandboxConfig] = None,
-        sandbox_env_vars: Optional[Dict[str, Any]] = None,
+        agent_state: AgentState | None = None,
+        sandbox_config: SandboxConfig | None = None,
+        sandbox_env_vars: dict[str, Any] | None = None,
     ) -> ToolExecutionResult:
         if agent_state is None:
             return ToolExecutionResult(
@@ -49,7 +52,7 @@ class ExternalComposioToolExecutor(ToolExecutor):
             func_return=function_response,
         )
 
-    def _get_entity_id(self, agent_state: AgentState) -> Optional[str]:
+    def _get_entity_id(self, agent_state: AgentState) -> str | None:
         """Extract the entity ID from environment variables."""
         for env_var in agent_state.tool_exec_environment_variables:
             if env_var.key == COMPOSIO_ENTITY_ENV_VAR_KEY:

@@ -1,6 +1,9 @@
-from typing import NamedTuple, Optional
+from typing import NamedTuple
 
-from anthropic.types.beta.messages import BetaMessageBatch, BetaMessageBatchIndividualResponse
+from anthropic.types.beta.messages import (
+    BetaMessageBatch,
+    BetaMessageBatchIndividualResponse,
+)
 
 from letta.schemas.enums import AgentStepStatus, JobStatus
 
@@ -8,14 +11,14 @@ from letta.schemas.enums import AgentStepStatus, JobStatus
 class BatchPollingResult(NamedTuple):
     llm_batch_id: str
     request_status: JobStatus
-    batch_response: Optional[BetaMessageBatch]
+    batch_response: BetaMessageBatch | None
 
 
 class ItemUpdateInfo(NamedTuple):
     llm_batch_id: str
     agent_id: str
     request_status: JobStatus
-    batch_request_result: Optional[BetaMessageBatchIndividualResponse]
+    batch_request_result: BetaMessageBatchIndividualResponse | None
 
 
 class StepStatusUpdateInfo(NamedTuple):

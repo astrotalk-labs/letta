@@ -150,8 +150,7 @@ class OptimisticJSONParser(JSONParser):
             input_str = input_str[1:].strip()
             if not input_str or input_str[0] in ",}":
                 obj[key] = None
-                if input_str.startswith(","):
-                    input_str = input_str[1:]
+                input_str = input_str.removeprefix(",")
                 break
 
             value, input_str = self._parse_any(input_str, decode_error)

@@ -1,4 +1,3 @@
-from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import ForeignKey, String
@@ -45,7 +44,7 @@ class FileMixin(Base):
 
     __abstract__ = True
 
-    file_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("files.id", ondelete="CASCADE"))
+    file_id: Mapped[str | None] = mapped_column(String, ForeignKey("files.id", ondelete="CASCADE"))
 
 
 class SourceMixin(Base):

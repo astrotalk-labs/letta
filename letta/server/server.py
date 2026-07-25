@@ -4,9 +4,10 @@ import os
 import traceback
 import warnings
 from abc import abstractmethod
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import httpx
 from anthropic import AsyncAnthropic
@@ -15,23 +16,29 @@ from composio.client.collections import ActionModel, AppModel
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
-import letta.constants as constants
 import letta.server.utils as server_utils
-import letta.system as system
+from letta import constants, system
 from letta.agent import Agent, save_agent
 from letta.agents.letta_agent import LettaAgent
 from letta.config import LettaConfig
 from letta.constants import LETTA_TOOL_EXECUTION_DIR
 from letta.data_sources.connectors import DataConnector, load_data
 from letta.errors import HandleNotFoundError
-from letta.functions.mcp_client.types import MCPServerType, MCPTool, SSEServerConfig, StdioServerConfig
+from letta.functions.mcp_client.types import (
+    MCPServerType,
+    MCPTool,
+    SSEServerConfig,
+    StdioServerConfig,
+)
 from letta.groups.helpers import load_multi_agent
 from letta.helpers.datetime_helpers import get_utc_time
 from letta.helpers.json_helpers import json_dumps, json_loads
 
 # TODO use custom interface
-from letta.interface import AgentInterface  # abstract
-from letta.interface import CLIInterface  # for printing to terminal
+from letta.interface import (
+    AgentInterface,  # abstract
+    CLIInterface,  # for printing to terminal
+)
 from letta.log import get_logger
 from letta.orm.errors import NoResultFound
 from letta.otel.tracing import log_event, trace_method
@@ -41,11 +48,26 @@ from letta.schemas.block import Block, BlockUpdate, CreateBlock
 from letta.schemas.embedding_config import EmbeddingConfig
 
 # openai schemas
-from letta.schemas.enums import JobStatus, MessageStreamStatus, ProviderCategory, ProviderType
+from letta.schemas.enums import (
+    JobStatus,
+    MessageStreamStatus,
+    ProviderCategory,
+    ProviderType,
+)
 from letta.schemas.environment_variables import SandboxEnvironmentVariableCreate
-from letta.schemas.group import GroupCreate, ManagerType, SleeptimeManager, VoiceSleeptimeManager
+from letta.schemas.group import (
+    GroupCreate,
+    ManagerType,
+    SleeptimeManager,
+    VoiceSleeptimeManager,
+)
 from letta.schemas.job import Job, JobUpdate
-from letta.schemas.letta_message import LegacyLettaMessage, LettaMessage, MessageType, ToolReturnMessage
+from letta.schemas.letta_message import (
+    LegacyLettaMessage,
+    LettaMessage,
+    MessageType,
+    ToolReturnMessage,
+)
 from letta.schemas.letta_message_content import TextContent
 from letta.schemas.letta_response import LettaResponse
 from letta.schemas.letta_stop_reason import LettaStopReason, StopReasonType
@@ -71,12 +93,18 @@ from letta.schemas.providers import (
     VLLMCompletionsProvider,
     XAIProvider,
 )
-from letta.schemas.sandbox_config import LocalSandboxConfig, SandboxConfigCreate, SandboxType
+from letta.schemas.sandbox_config import (
+    LocalSandboxConfig,
+    SandboxConfigCreate,
+    SandboxType,
+)
 from letta.schemas.source import Source
 from letta.schemas.tool import Tool
 from letta.schemas.usage import LettaUsageStatistics
 from letta.schemas.user import User
-from letta.server.rest_api.chat_completions_interface import ChatCompletionsStreamingInterface
+from letta.server.rest_api.chat_completions_interface import (
+    ChatCompletionsStreamingInterface,
+)
 from letta.server.rest_api.interface import StreamingServerInterface
 from letta.server.rest_api.utils import sse_async_generator
 from letta.services.agent_manager import AgentManager
@@ -110,7 +138,7 @@ config = LettaConfig.load()
 logger = get_logger(__name__)
 
 
-class Server(object):
+class Server:
     """Abstract server class that supports multi-agent multi-user"""
 
     @abstractmethod
@@ -139,7 +167,7 @@ class Server(object):
         request: CreateAgent,
         actor: User,
         # interface
-        interface: Union[AgentInterface, None] = None,
+        interface: AgentInterface | None = None,
     ) -> AgentState:
         """Create a new agent using a config"""
         raise NotImplementedError
@@ -155,12 +183,12 @@ class Server(object):
         raise NotImplementedError
 
     @abstractmethod
-    def send_messages(self, user_id: str, agent_id: str, input_messages: List[MessageCreate]) -> None:
+    def send_messages(self, user_id: str, agent_id: str, input_messages: list[MessageCreate]) -> None:
         """Send a list of messages to the agent"""
         raise NotImplementedError
 
     @abstractmethod
-    def run_command(self, user_id: str, agent_id: str, command: str) -> Union[str, None]:
+    def run_command(self, user_id: str, agent_id: str, command: str) -> str | None:
         """Run a command on the agent, e.g. /memory
 
         May return a string with a message generated by the command
@@ -174,7 +202,7 @@ class SyncServer(Server):
     def __init__(
         self,
         chaining: bool = True,
-        max_chaining_steps: Optional[int] = 100,
+        max_chaining_steps: int | None = 100,
         default_interface_factory: Callable[[], AgentInterface] = lambda: CLIInterface(),
         init_with_default_org_and_user: bool = True,
         # default_interface: AgentInterface = CLIInterface(),
@@ -282,7 +310,7 @@ class SyncServer(Server):
                     )
 
         # collect providers (always has Letta as a default)
-        self._enabled_providers: List[Provider] = [LettaProvider(name="letta")]
+        self._enabled_providers: list[Provider] = [LettaProvider(name="letta")]
         if model_settings.openai_api_key:
             self._enabled_providers.append(
                 OpenAIProvider(
@@ -389,7 +417,7 @@ class SyncServer(Server):
         # For MCP
         # TODO: remove this
         """Initialize the MCP clients (there may be multiple)"""
-        self.mcp_clients: Dict[str, AsyncBaseMCPClient] = {}
+        self.mcp_clients: dict[str, AsyncBaseMCPClient] = {}
 
         # TODO: Remove these in memory caches
         self._llm_config_cache = {}
@@ -423,7 +451,7 @@ class SyncServer(Server):
             logger.info(f"MCP tools connected: {', '.join([t.name for t in mcp_tools])}")
             logger.debug(f"MCP tools: {', '.join([str(t) for t in mcp_tools])}")
 
-    def load_agent(self, agent_id: str, actor: User, interface: Union[AgentInterface, None] = None) -> Agent:
+    def load_agent(self, agent_id: str, actor: User, interface: AgentInterface | None = None) -> Agent:
         """Updated method to load agents from persisted storage"""
         agent_state = self.agent_manager.get_agent_by_id(agent_id=agent_id, actor=actor)
         # TODO: Think about how to integrate voice sleeptime into sleeptime
@@ -440,8 +468,8 @@ class SyncServer(Server):
         self,
         actor: User,
         agent_id: str,
-        input_messages: List[MessageCreate],
-        interface: Union[AgentInterface, None] = None,  # needed to getting responses
+        input_messages: list[MessageCreate],
+        interface: AgentInterface | None = None,  # needed to getting responses
         put_inner_thoughts_first: bool = True,
         # timestamp: Optional[datetime],
     ) -> LettaUsageStatistics:
@@ -457,7 +485,7 @@ class SyncServer(Server):
             # Determine whether or not to token stream based on the capability of the interface
             token_streaming = letta_agent.interface.streaming_mode if hasattr(letta_agent.interface, "streaming_mode") else False
 
-            logger.debug(f"Starting agent step")
+            logger.debug("Starting agent step")
             if interface:
                 metadata = interface.metadata if hasattr(interface, "metadata") else None
             else:
@@ -531,7 +559,7 @@ class SyncServer(Server):
             letta_agent.interface.print_messages_raw(letta_agent.messages)
 
         elif command.lower() == "memory":
-            ret_str = f"\nDumping memory contents:\n" + f"\n{str(letta_agent.agent_state.memory)}" + f"\n{str(letta_agent.passage_manager)}"
+            ret_str = "\nDumping memory contents:\n" + f"\n{letta_agent.agent_state.memory!s}" + f"\n{letta_agent.passage_manager!s}"
             return ret_str
 
         elif command.lower() == "pop" or command.lower().startswith("pop "):
@@ -551,7 +579,7 @@ class SyncServer(Server):
 
         elif command.lower() == "retry":
             # TODO this needs to also modify the persistence manager
-            logger.debug(f"Retrying for another answer")
+            logger.debug("Retrying for another answer")
             while len(letta_agent.messages) > 0:
                 if letta_agent.messages[-1].get("role") == "user":
                     # we want to pop up to the last user message and send it again
@@ -606,8 +634,8 @@ class SyncServer(Server):
         self,
         user_id: str,
         agent_id: str,
-        message: Union[str, Message],
-        timestamp: Optional[datetime] = None,
+        message: str | Message,
+        timestamp: datetime | None = None,
     ) -> LettaUsageStatistics:
         """Process an incoming user message and feed it through the Letta agent"""
         try:
@@ -622,11 +650,7 @@ class SyncServer(Server):
 
         # Basic input sanitization
         if isinstance(message, str):
-            if len(message) == 0:
-                raise ValueError(f"Invalid input: '{message}'")
-
-            # If the input begins with a command prefix, reject
-            elif message.startswith("/"):
+            if len(message) == 0 or message.startswith("/"):
                 raise ValueError(f"Invalid input: '{message}'")
 
             packaged_user_message = system.package_user_message(
@@ -649,8 +673,8 @@ class SyncServer(Server):
         self,
         user_id: str,
         agent_id: str,
-        message: Union[str, Message],
-        timestamp: Optional[datetime] = None,
+        message: str | Message,
+        timestamp: datetime | None = None,
     ) -> LettaUsageStatistics:
         """Process an incoming system message and feed it through the Letta agent"""
         try:
@@ -665,11 +689,7 @@ class SyncServer(Server):
 
         # Basic input sanitization
         if isinstance(message, str):
-            if len(message) == 0:
-                raise ValueError(f"Invalid input: '{message}'")
-
-            # If the input begins with a command prefix, reject
-            elif message.startswith("/"):
+            if len(message) == 0 or message.startswith("/"):
                 raise ValueError(f"Invalid input: '{message}'")
 
             packaged_system_message = system.package_system_message(system_message=message)
@@ -694,10 +714,7 @@ class SyncServer(Server):
         if isinstance(message, Message):
             # Can't have a null text field
             message_text = message.content[0].text
-            if message_text is None or len(message_text) == 0:
-                raise ValueError(f"Invalid input: '{message_text}'")
-            # If the input begins with a command prefix, reject
-            elif message_text.startswith("/"):
+            if message_text is None or len(message_text) == 0 or message_text.startswith("/"):
                 raise ValueError(f"Invalid input: '{message_text}'")
 
         else:
@@ -714,11 +731,11 @@ class SyncServer(Server):
         self,
         actor: User,
         agent_id: str,
-        input_messages: List[MessageCreate],
+        input_messages: list[MessageCreate],
         wrap_user_message: bool = True,
         wrap_system_message: bool = True,
-        interface: Union[AgentInterface, ChatCompletionsStreamingInterface, None] = None,  # needed for responses
-        metadata: Optional[dict] = None,  # Pass through metadata to interface
+        interface: AgentInterface | ChatCompletionsStreamingInterface | None = None,  # needed for responses
+        metadata: dict | None = None,  # Pass through metadata to interface
         put_inner_thoughts_first: bool = True,
     ) -> LettaUsageStatistics:
         """Send a list of messages to the agent."""
@@ -779,7 +796,7 @@ class SyncServer(Server):
         request: CreateAgent,
         actor: User,
         # interface
-        interface: Union[AgentInterface, None] = None,
+        interface: AgentInterface | None = None,
     ) -> AgentState:
         if request.llm_config is None:
             if request.model is None:
@@ -827,7 +844,7 @@ class SyncServer(Server):
         request: CreateAgent,
         actor: User,
         # interface
-        interface: Union[AgentInterface, None] = None,
+        interface: AgentInterface | None = None,
     ) -> AgentState:
         if request.llm_config is None:
             if request.model is None:
@@ -1081,14 +1098,14 @@ class SyncServer(Server):
         self,
         user_id: str,
         agent_id: str,
-        after: Optional[str] = None,
-        before: Optional[str] = None,
-        limit: Optional[int] = 100,
-        order_by: Optional[str] = "created_at",
-        reverse: Optional[bool] = False,
-        query_text: Optional[str] = None,
-        ascending: Optional[bool] = True,
-    ) -> List[Passage]:
+        after: str | None = None,
+        before: str | None = None,
+        limit: int | None = 100,
+        order_by: str | None = "created_at",
+        reverse: bool | None = False,
+        query_text: str | None = None,
+        ascending: bool | None = True,
+    ) -> list[Passage]:
         # TODO: Thread actor directly through this function, since the top level caller most likely already retrieved the user
         actor = self.user_manager.get_user_or_default(user_id=user_id)
 
@@ -1108,12 +1125,12 @@ class SyncServer(Server):
         self,
         agent_id: str,
         actor: User,
-        after: Optional[str] = None,
-        before: Optional[str] = None,
-        limit: Optional[int] = 100,
-        query_text: Optional[str] = None,
-        ascending: Optional[bool] = True,
-    ) -> List[Passage]:
+        after: str | None = None,
+        before: str | None = None,
+        limit: int | None = 100,
+        query_text: str | None = None,
+        ascending: bool | None = True,
+    ) -> list[Passage]:
         # iterate over records
         records = await self.agent_manager.list_agent_passages_async(
             actor=actor,
@@ -1126,7 +1143,7 @@ class SyncServer(Server):
         )
         return records
 
-    def insert_archival_memory(self, agent_id: str, memory_contents: str, actor: User, gb_user_id: Optional[str] = None) -> List[Passage]:
+    def insert_archival_memory(self, agent_id: str, memory_contents: str, actor: User, gb_user_id: str | None = None) -> list[Passage]:
         # Get the agent object (loaded in memory)
         agent_state = self.agent_manager.get_agent_by_id(agent_id=agent_id, actor=actor)
         # Insert into archival memory
@@ -1138,8 +1155,8 @@ class SyncServer(Server):
         return passages
 
     async def insert_archival_memory_async(
-        self, agent_id: str, memory_contents: str, actor: User, gb_user_id: Optional[str] = None
-    ) -> List[Passage]:
+        self, agent_id: str, memory_contents: str, actor: User, gb_user_id: str | None = None
+    ) -> list[Passage]:
         import time
 
         t0 = time.time()
@@ -1156,7 +1173,7 @@ class SyncServer(Server):
 
         return passages
 
-    def modify_archival_memory(self, agent_id: str, memory_id: str, passage: PassageUpdate, actor: User) -> List[Passage]:
+    def modify_archival_memory(self, agent_id: str, memory_id: str, passage: PassageUpdate, actor: User) -> list[Passage]:
         passage = Passage(**passage.model_dump(exclude_unset=True, exclude_none=True))
         passages = self.passage_manager.update_passage_by_id(passage_id=memory_id, passage=passage, actor=actor)
         return passages
@@ -1187,16 +1204,16 @@ class SyncServer(Server):
         self,
         user_id: str,
         agent_id: str,
-        after: Optional[str] = None,
-        before: Optional[str] = None,
-        limit: Optional[int] = 100,
-        group_id: Optional[str] = None,
-        reverse: Optional[bool] = False,
+        after: str | None = None,
+        before: str | None = None,
+        limit: int | None = 100,
+        group_id: str | None = None,
+        reverse: bool | None = False,
         return_message_object: bool = True,
         use_assistant_message: bool = True,
         assistant_message_tool_name: str = constants.DEFAULT_MESSAGE_TOOL,
         assistant_message_tool_kwarg: str = constants.DEFAULT_MESSAGE_TOOL_KWARG,
-    ) -> Union[List[Message], List[LettaMessage]]:
+    ) -> list[Message] | list[LettaMessage]:
         # TODO: Thread actor directly through this function, since the top level caller most likely already retrieved the user
 
         actor = self.user_manager.get_user_or_default(user_id=user_id)
@@ -1229,16 +1246,16 @@ class SyncServer(Server):
         self,
         agent_id: str,
         actor: User,
-        after: Optional[str] = None,
-        before: Optional[str] = None,
-        limit: Optional[int] = 100,
-        group_id: Optional[str] = None,
-        reverse: Optional[bool] = False,
+        after: str | None = None,
+        before: str | None = None,
+        limit: int | None = 100,
+        group_id: str | None = None,
+        reverse: bool | None = False,
         return_message_object: bool = True,
         use_assistant_message: bool = True,
         assistant_message_tool_name: str = constants.DEFAULT_MESSAGE_TOOL,
         assistant_message_tool_kwarg: str = constants.DEFAULT_MESSAGE_TOOL_KWARG,
-    ) -> Union[List[Message], List[LettaMessage]]:
+    ) -> list[Message] | list[LettaMessage]:
         records = await self.message_manager.list_messages_for_agent_async(
             agent_id=agent_id,
             actor=actor,
@@ -1389,8 +1406,8 @@ class SyncServer(Server):
             logger.info(f"File {file_id} already removed from agent {agent_id}, skipping...")
 
     async def insert_file_into_context_windows(
-        self, source_id: str, text: str, file_id: str, file_name: str, actor: User, agent_states: Optional[List[AgentState]] = None
-    ) -> List[AgentState]:
+        self, source_id: str, text: str, file_id: str, file_name: str, actor: User, agent_states: list[AgentState] | None = None
+    ) -> list[AgentState]:
         """
         Insert the uploaded document into the context window of all agents
         attached to the given source.
@@ -1409,7 +1426,7 @@ class SyncServer(Server):
         return agent_states
 
     async def insert_files_into_context_window(
-        self, agent_state: AgentState, texts: List[str], file_ids: List[str], file_names: List[str], actor: User
+        self, agent_state: AgentState, texts: list[str], file_ids: list[str], file_names: list[str], actor: User
     ) -> None:
         """
         Insert the uploaded documents into the context window of an agent
@@ -1444,7 +1461,7 @@ class SyncServer(Server):
 
         await asyncio.gather(*(self._remove_file_from_agent(agent_state.id, file_id, actor) for agent_state in agent_states))
 
-    async def remove_files_from_context_window(self, agent_state: AgentState, file_ids: List[str], actor: User) -> None:
+    async def remove_files_from_context_window(self, agent_state: AgentState, file_ids: list[str], actor: User) -> None:
         """
         Remove multiple documents from the context window of an agent
         attached to the given source.
@@ -1497,7 +1514,7 @@ class SyncServer(Server):
         user_id: str,
         connector: DataConnector,
         source_name: str,
-    ) -> Tuple[int, int]:
+    ) -> tuple[int, int]:
         """Load data from a DataConnector into a source for a specified user_id"""
         # TODO: this should be implemented as a batch job or at least async, since it may take a long time
 
@@ -1511,7 +1528,7 @@ class SyncServer(Server):
         passage_count, document_count = await load_data(connector, source, self.passage_manager, self.file_manager, actor=actor)
         return passage_count, document_count
 
-    def list_all_sources(self, actor: User) -> List[Source]:
+    def list_all_sources(self, actor: User) -> list[Source]:
         # TODO: legacy: remove
         """List all sources (w/ extra metadata) belonging to a user"""
 
@@ -1554,10 +1571,10 @@ class SyncServer(Server):
     def list_llm_models(
         self,
         actor: User,
-        provider_category: Optional[List[ProviderCategory]] = None,
-        provider_name: Optional[str] = None,
-        provider_type: Optional[ProviderType] = None,
-    ) -> List[LLMConfig]:
+        provider_category: list[ProviderCategory] | None = None,
+        provider_name: str | None = None,
+        provider_type: ProviderType | None = None,
+    ) -> list[LLMConfig]:
         """List available models"""
         llm_models = []
         for provider in self.get_enabled_providers(
@@ -1582,10 +1599,10 @@ class SyncServer(Server):
     async def list_llm_models_async(
         self,
         actor: User,
-        provider_category: Optional[List[ProviderCategory]] = None,
-        provider_name: Optional[str] = None,
-        provider_type: Optional[ProviderType] = None,
-    ) -> List[LLMConfig]:
+        provider_category: list[ProviderCategory] | None = None,
+        provider_name: str | None = None,
+        provider_type: ProviderType | None = None,
+    ) -> list[LLMConfig]:
         """Asynchronously list available models with maximum concurrency"""
         import asyncio
 
@@ -1620,7 +1637,7 @@ class SyncServer(Server):
 
         return llm_models
 
-    def list_embedding_models(self, actor: User) -> List[EmbeddingConfig]:
+    def list_embedding_models(self, actor: User) -> list[EmbeddingConfig]:
         """List available embedding models"""
         embedding_models = []
         for provider in self.get_enabled_providers(actor):
@@ -1630,7 +1647,7 @@ class SyncServer(Server):
                 warnings.warn(f"An error occurred while listing embedding models for provider {provider}: {e}")
         return embedding_models
 
-    async def list_embedding_models_async(self, actor: User) -> List[EmbeddingConfig]:
+    async def list_embedding_models_async(self, actor: User) -> list[EmbeddingConfig]:
         """Asynchronously list available embedding models with maximum concurrency"""
         import asyncio
 
@@ -1662,10 +1679,10 @@ class SyncServer(Server):
     def get_enabled_providers(
         self,
         actor: User,
-        provider_category: Optional[List[ProviderCategory]] = None,
-        provider_name: Optional[str] = None,
-        provider_type: Optional[ProviderType] = None,
-    ) -> List[Provider]:
+        provider_category: list[ProviderCategory] | None = None,
+        provider_name: str | None = None,
+        provider_type: ProviderType | None = None,
+    ) -> list[Provider]:
         providers = []
         if not provider_category or ProviderCategory.base in provider_category:
             providers_from_env = [p for p in self._enabled_providers]
@@ -1691,10 +1708,10 @@ class SyncServer(Server):
     async def get_enabled_providers_async(
         self,
         actor: User,
-        provider_category: Optional[List[ProviderCategory]] = None,
-        provider_name: Optional[str] = None,
-        provider_type: Optional[ProviderType] = None,
-    ) -> List[Provider]:
+        provider_category: list[ProviderCategory] | None = None,
+        provider_name: str | None = None,
+        provider_type: ProviderType | None = None,
+    ) -> list[Provider]:
         providers = []
         if not provider_category or ProviderCategory.base in provider_category:
             providers_from_env = [p for p in self._enabled_providers]
@@ -1722,10 +1739,10 @@ class SyncServer(Server):
         self,
         actor: User,
         handle: str,
-        context_window_limit: Optional[int] = None,
-        max_tokens: Optional[int] = None,
-        max_reasoning_tokens: Optional[int] = None,
-        enable_reasoner: Optional[bool] = None,
+        context_window_limit: int | None = None,
+        max_tokens: int | None = None,
+        max_reasoning_tokens: int | None = None,
+        enable_reasoner: bool | None = None,
     ) -> LLMConfig:
         try:
             provider_name, model_name = handle.split("/", 1)
@@ -1776,10 +1793,10 @@ class SyncServer(Server):
         self,
         actor: User,
         handle: str,
-        context_window_limit: Optional[int] = None,
-        max_tokens: Optional[int] = None,
-        max_reasoning_tokens: Optional[int] = None,
-        enable_reasoner: Optional[bool] = None,
+        context_window_limit: int | None = None,
+        max_tokens: int | None = None,
+        max_reasoning_tokens: int | None = None,
+        enable_reasoner: bool | None = None,
     ) -> LLMConfig:
         try:
             provider_name, model_name = handle.split("/", 1)
@@ -1955,13 +1972,13 @@ class SyncServer(Server):
     async def run_tool_from_source(
         self,
         actor: User,
-        tool_args: Dict[str, str],
+        tool_args: dict[str, str],
         tool_source: str,
-        tool_env_vars: Optional[Dict[str, str]] = None,
-        tool_source_type: Optional[str] = None,
-        tool_name: Optional[str] = None,
-        tool_args_json_schema: Optional[Dict[str, Any]] = None,
-        tool_json_schema: Optional[Dict[str, Any]] = None,
+        tool_env_vars: dict[str, str] | None = None,
+        tool_source_type: str | None = None,
+        tool_name: str | None = None,
+        tool_args_json_schema: dict[str, Any] | None = None,
+        tool_json_schema: dict[str, Any] | None = None,
     ) -> ToolReturnMessage:
         """Run a tool from source code"""
         if tool_source_type is not None and tool_source_type != "python":
@@ -2024,7 +2041,7 @@ class SyncServer(Server):
 
     # Composio wrappers
     @staticmethod
-    def get_composio_client(api_key: Optional[str] = None):
+    def get_composio_client(api_key: str | None = None):
         if api_key:
             return Composio(api_key=api_key)
         elif tool_settings.composio_api_key:
@@ -2033,7 +2050,7 @@ class SyncServer(Server):
             return Composio()
 
     @staticmethod
-    def get_composio_apps(api_key: Optional[str] = None) -> List["AppModel"]:
+    def get_composio_apps(api_key: str | None = None) -> list["AppModel"]:
         """Get a list of all Composio apps with actions"""
         apps = SyncServer.get_composio_client(api_key=api_key).apps.get()
         apps_with_actions = []
@@ -2044,14 +2061,14 @@ class SyncServer(Server):
 
         return apps_with_actions
 
-    def get_composio_actions_from_app_name(self, composio_app_name: str, api_key: Optional[str] = None) -> List["ActionModel"]:
+    def get_composio_actions_from_app_name(self, composio_app_name: str, api_key: str | None = None) -> list["ActionModel"]:
         actions = self.get_composio_client(api_key=api_key).actions.get(apps=[composio_app_name])
         # Filter out deprecated composio actions
         return [action for action in actions if "deprecated" not in action.description.lower()]
 
     # MCP wrappers
     # TODO support both command + SSE servers (via config)
-    def get_mcp_servers(self) -> dict[str, Union[SSEServerConfig, StdioServerConfig]]:
+    def get_mcp_servers(self) -> dict[str, SSEServerConfig | StdioServerConfig]:
         """List the MCP servers in the config (doesn't test that they are actually working)"""
 
         # TODO implement non-flatfile mechanism
@@ -2111,7 +2128,7 @@ class SyncServer(Server):
         # If the file doesn't exist, return empty dictionary
         return mcp_server_list
 
-    async def get_tools_from_mcp_server(self, mcp_server_name: str) -> List[MCPTool]:
+    async def get_tools_from_mcp_server(self, mcp_server_name: str) -> list[MCPTool]:
         """List the tools in an MCP server. Requires a client to be created."""
         if mcp_server_name not in self.mcp_clients:
             raise ValueError(f"No client was created for MCP server: {mcp_server_name}")
@@ -2119,8 +2136,8 @@ class SyncServer(Server):
         return await self.mcp_clients[mcp_server_name].list_tools()
 
     async def add_mcp_server_to_config(
-        self, server_config: Union[SSEServerConfig, StdioServerConfig], allow_upsert: bool = True
-    ) -> List[Union[SSEServerConfig, StdioServerConfig]]:
+        self, server_config: SSEServerConfig | StdioServerConfig, allow_upsert: bool = True
+    ) -> list[SSEServerConfig | StdioServerConfig]:
         """Add a new server config to the MCP config file"""
 
         # TODO implement non-flatfile mechanism
@@ -2180,7 +2197,7 @@ class SyncServer(Server):
 
         return list(current_mcp_servers.values())
 
-    def delete_mcp_server_from_config(self, server_name: str) -> dict[str, Union[SSEServerConfig, StdioServerConfig]]:
+    def delete_mcp_server_from_config(self, server_name: str) -> dict[str, SSEServerConfig | StdioServerConfig]:
         """Delete a server config from the MCP config file"""
 
         # TODO implement non-flatfile mechanism
@@ -2226,7 +2243,7 @@ class SyncServer(Server):
         agent_id: str,
         actor: User,
         # role: MessageRole,
-        input_messages: List[MessageCreate],
+        input_messages: list[MessageCreate],
         stream_steps: bool,
         stream_tokens: bool,
         # related to whether or not we return `LettaMessage`s or `Message`s
@@ -2235,14 +2252,14 @@ class SyncServer(Server):
         use_assistant_message: bool = True,
         assistant_message_tool_name: str = constants.DEFAULT_MESSAGE_TOOL,
         assistant_message_tool_kwarg: str = constants.DEFAULT_MESSAGE_TOOL_KWARG,
-        metadata: Optional[dict] = None,
-        request_start_timestamp_ns: Optional[int] = None,
-        include_return_message_types: Optional[List[MessageType]] = None,
+        metadata: dict | None = None,
+        request_start_timestamp_ns: int | None = None,
+        include_return_message_types: list[MessageType] | None = None,
         use_vertex_experiment: bool = False,
         use_bedrock_experiment: bool = False,
-        model_override: Optional[str] = None,
-        user_cohort: Optional[str] = None,
-    ) -> Union[StreamingResponse, LettaResponse]:
+        model_override: str | None = None,
+        user_cohort: str | None = None,
+    ) -> StreamingResponse | LettaResponse:
         """Split off into a separate function so that it can be imported in the /chat/completion proxy."""
         # TODO: @charles is this the correct way to handle?
         include_final_message = True
@@ -2378,7 +2395,7 @@ class SyncServer(Server):
         self,
         group_id: str,
         actor: User,
-        input_messages: Union[List[Message], List[MessageCreate]],
+        input_messages: list[Message] | list[MessageCreate],
         stream_steps: bool,
         stream_tokens: bool,
         chat_completion_mode: bool = False,
@@ -2386,8 +2403,8 @@ class SyncServer(Server):
         use_assistant_message: bool = True,
         assistant_message_tool_name: str = constants.DEFAULT_MESSAGE_TOOL,
         assistant_message_tool_kwarg: str = constants.DEFAULT_MESSAGE_TOOL_KWARG,
-        metadata: Optional[dict] = None,
-    ) -> Union[StreamingResponse, LettaResponse]:
+        metadata: dict | None = None,
+    ) -> StreamingResponse | LettaResponse:
         include_final_message = True
         if not stream_steps and stream_tokens:
             raise ValueError("stream_steps must be 'true' if stream_tokens is 'true'")

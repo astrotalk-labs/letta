@@ -1,5 +1,4 @@
 from enum import Enum
-from typing import List, Optional
 
 from mcp import Tool
 from pydantic import BaseModel, Field
@@ -38,11 +37,11 @@ class SSEServerConfig(BaseServerConfig):
 
     type: MCPServerType = MCPServerType.SSE
     server_url: str = Field(..., description="The URL of the server (MCP SSE client will connect to this URL)")
-    auth_header: Optional[str] = Field(None, description="The name of the authentication header (e.g., 'Authorization')")
-    auth_token: Optional[str] = Field(None, description="The authentication token or API key value")
-    custom_headers: Optional[dict[str, str]] = Field(None, description="Custom HTTP headers to include with SSE requests")
+    auth_header: str | None = Field(None, description="The name of the authentication header (e.g., 'Authorization')")
+    auth_token: str | None = Field(None, description="The authentication token or API key value")
+    custom_headers: dict[str, str] | None = Field(None, description="Custom HTTP headers to include with SSE requests")
 
-    def resolve_token(self) -> Optional[str]:
+    def resolve_token(self) -> str | None:
         if self.auth_token and self.auth_token.startswith(f"{MCP_AUTH_TOKEN_BEARER_PREFIX} "):
             return self.auth_token[len(f"{MCP_AUTH_TOKEN_BEARER_PREFIX} ") :]
         return self.auth_token
@@ -69,8 +68,8 @@ class SSEServerConfig(BaseServerConfig):
 class StdioServerConfig(BaseServerConfig):
     type: MCPServerType = MCPServerType.STDIO
     command: str = Field(..., description="The command to run (MCP 'local' client will run this command)")
-    args: List[str] = Field(..., description="The arguments to pass to the command")
-    env: Optional[dict[str, str]] = Field(None, description="Environment variables to set")
+    args: list[str] = Field(..., description="The arguments to pass to the command")
+    env: dict[str, str] | None = Field(None, description="Environment variables to set")
 
     def to_dict(self) -> dict:
         values = {
@@ -97,11 +96,11 @@ class StreamableHTTPServerConfig(BaseServerConfig):
 
     type: MCPServerType = MCPServerType.STREAMABLE_HTTP
     server_url: str = Field(..., description="The URL path for the streamable HTTP server (e.g., 'example/mcp')")
-    auth_header: Optional[str] = Field(None, description="The name of the authentication header (e.g., 'Authorization')")
-    auth_token: Optional[str] = Field(None, description="The authentication token or API key value")
-    custom_headers: Optional[dict[str, str]] = Field(None, description="Custom HTTP headers to include with streamable HTTP requests")
+    auth_header: str | None = Field(None, description="The name of the authentication header (e.g., 'Authorization')")
+    auth_token: str | None = Field(None, description="The authentication token or API key value")
+    custom_headers: dict[str, str] | None = Field(None, description="Custom HTTP headers to include with streamable HTTP requests")
 
-    def resolve_token(self) -> Optional[str]:
+    def resolve_token(self) -> str | None:
         if self.auth_token and self.auth_token.startswith(f"{MCP_AUTH_TOKEN_BEARER_PREFIX} "):
             return self.auth_token[len(f"{MCP_AUTH_TOKEN_BEARER_PREFIX} ") :]
         return self.auth_token

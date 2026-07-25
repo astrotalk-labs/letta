@@ -1,12 +1,12 @@
 from contextvars import ContextVar
-from typing import Any, Dict
+from typing import Any
 
 # Create context var at module level (outside middleware)
-request_attributes: ContextVar[Dict[str, Any]] = ContextVar("request_attributes", default={})
+request_attributes: ContextVar[dict[str, Any]] = ContextVar("request_attributes", default={})
 
 
 # Helper functions
-def set_ctx_attributes(attrs: Dict[str, Any]):
+def set_ctx_attributes(attrs: dict[str, Any]):
     """Set attributes in current context"""
     current = request_attributes.get()
     new_attrs = {**current, **attrs}
@@ -20,6 +20,6 @@ def add_ctx_attribute(key: str, value: Any):
     request_attributes.set(new_attrs)
 
 
-def get_ctx_attributes() -> Dict[str, Any]:
+def get_ctx_attributes() -> dict[str, Any]:
     """Get all attributes from current context"""
     return request_attributes.get()

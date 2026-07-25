@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Union
+from typing import Any, Union
 
 from pydantic import Field
 
@@ -23,22 +23,22 @@ class MCPServer(BaseMCPServer):
     server_name: str = Field(..., description="The name of the server")
 
     # sse config
-    server_url: Optional[str] = Field(None, description="The URL of the server (MCP SSE client will connect to this URL)")
-    token: Optional[str] = Field(None, description="The access token or API key for the MCP server (used for SSE authentication)")
+    server_url: str | None = Field(None, description="The URL of the server (MCP SSE client will connect to this URL)")
+    token: str | None = Field(None, description="The access token or API key for the MCP server (used for SSE authentication)")
 
     # stdio config
-    stdio_config: Optional[StdioServerConfig] = Field(
+    stdio_config: StdioServerConfig | None = Field(
         None, description="The configuration for the server (MCP 'local' client will run this command)"
     )
 
-    organization_id: Optional[str] = Field(None, description="The unique identifier of the organization associated with the tool.")
+    organization_id: str | None = Field(None, description="The unique identifier of the organization associated with the tool.")
 
     # metadata fields
-    created_by_id: Optional[str] = Field(None, description="The id of the user that made this Tool.")
-    last_updated_by_id: Optional[str] = Field(None, description="The id of the user that made this Tool.")
-    metadata_: Optional[Dict[str, Any]] = Field(default_factory=dict, description="A dictionary of additional metadata for the tool.")
+    created_by_id: str | None = Field(None, description="The id of the user that made this Tool.")
+    last_updated_by_id: str | None = Field(None, description="The id of the user that made this Tool.")
+    metadata_: dict[str, Any] | None = Field(default_factory=dict, description="A dictionary of additional metadata for the tool.")
 
-    def to_config(self) -> Union[SSEServerConfig, StdioServerConfig, StreamableHTTPServerConfig]:
+    def to_config(self) -> SSEServerConfig | StdioServerConfig | StreamableHTTPServerConfig:
         if self.server_type == MCPServerType.SSE:
             return SSEServerConfig(
                 server_name=self.server_name,
@@ -69,7 +69,7 @@ class RegisterSSEMCPServer(LettaBase):
     server_name: str = Field(..., description="The name of the server")
     server_type: MCPServerType = MCPServerType.SSE
     server_url: str = Field(..., description="The URL of the server (MCP SSE client will connect to this URL)")
-    token: Optional[str] = Field(None, description="The access token or API key for the MCP server used for authentication")
+    token: str | None = Field(None, description="The access token or API key for the MCP server used for authentication")
 
 
 class RegisterStdioMCPServer(LettaBase):
@@ -82,23 +82,23 @@ class RegisterStreamableHTTPMCPServer(LettaBase):
     server_name: str = Field(..., description="The name of the server")
     server_type: MCPServerType = MCPServerType.STREAMABLE_HTTP
     server_url: str = Field(..., description="The URL path for the streamable HTTP server (e.g., 'example/mcp')")
-    auth_header: Optional[str] = Field(None, description="The name of the authentication header (e.g., 'Authorization')")
-    auth_token: Optional[str] = Field(None, description="The authentication token or API key value")
+    auth_header: str | None = Field(None, description="The name of the authentication header (e.g., 'Authorization')")
+    auth_token: str | None = Field(None, description="The authentication token or API key value")
 
 
 class UpdateSSEMCPServer(LettaBase):
     """Update an SSE MCP server"""
 
-    server_name: Optional[str] = Field(None, description="The name of the server")
-    server_url: Optional[str] = Field(None, description="The URL of the server (MCP SSE client will connect to this URL)")
-    token: Optional[str] = Field(None, description="The access token or API key for the MCP server (used for SSE authentication)")
+    server_name: str | None = Field(None, description="The name of the server")
+    server_url: str | None = Field(None, description="The URL of the server (MCP SSE client will connect to this URL)")
+    token: str | None = Field(None, description="The access token or API key for the MCP server (used for SSE authentication)")
 
 
 class UpdateStdioMCPServer(LettaBase):
     """Update a Stdio MCP server"""
 
-    server_name: Optional[str] = Field(None, description="The name of the server")
-    stdio_config: Optional[StdioServerConfig] = Field(
+    server_name: str | None = Field(None, description="The name of the server")
+    stdio_config: StdioServerConfig | None = Field(
         None, description="The configuration for the server (MCP 'local' client will run this command)"
     )
 
@@ -106,10 +106,10 @@ class UpdateStdioMCPServer(LettaBase):
 class UpdateStreamableHTTPMCPServer(LettaBase):
     """Update a Streamable HTTP MCP server"""
 
-    server_name: Optional[str] = Field(None, description="The name of the server")
-    server_url: Optional[str] = Field(None, description="The URL path for the streamable HTTP server (e.g., 'example/mcp')")
-    auth_header: Optional[str] = Field(None, description="The name of the authentication header (e.g., 'Authorization')")
-    auth_token: Optional[str] = Field(None, description="The authentication token or API key value")
+    server_name: str | None = Field(None, description="The name of the server")
+    server_url: str | None = Field(None, description="The URL path for the streamable HTTP server (e.g., 'example/mcp')")
+    auth_header: str | None = Field(None, description="The name of the authentication header (e.g., 'Authorization')")
+    auth_token: str | None = Field(None, description="The authentication token or API key value")
 
 
 UpdateMCPServer = Union[UpdateSSEMCPServer, UpdateStdioMCPServer, UpdateStreamableHTTPMCPServer]

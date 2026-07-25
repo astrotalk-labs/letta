@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,16 +25,16 @@ class StepManager:
     async def list_steps_async(
         self,
         actor: PydanticUser,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        limit: Optional[int] = 50,
-        order: Optional[str] = None,
-        model: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        trace_ids: Optional[list[str]] = None,
-    ) -> List[PydanticStep]:
+        before: str | None = None,
+        after: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        limit: int | None = 50,
+        order: str | None = None,
+        model: str | None = None,
+        agent_id: str | None = None,
+        trace_ids: list[str] | None = None,
+    ) -> list[PydanticStep]:
         """List all jobs with optional pagination and status filter."""
         async with db_registry.async_session() as session:
             filter_kwargs = {"organization_id": actor.organization_id}
@@ -66,12 +66,12 @@ class StepManager:
         provider_name: str,
         provider_category: str,
         model: str,
-        model_endpoint: Optional[str],
+        model_endpoint: str | None,
         context_window_limit: int,
         usage: UsageStatistics,
-        provider_id: Optional[str] = None,
-        job_id: Optional[str] = None,
-        step_id: Optional[str] = None,
+        provider_id: str | None = None,
+        job_id: str | None = None,
+        step_id: str | None = None,
     ) -> PydanticStep:
         step_data = {
             "origin": None,
@@ -109,12 +109,12 @@ class StepManager:
         provider_name: str,
         provider_category: str,
         model: str,
-        model_endpoint: Optional[str],
+        model_endpoint: str | None,
         context_window_limit: int,
         usage: UsageStatistics,
-        provider_id: Optional[str] = None,
-        job_id: Optional[str] = None,
-        step_id: Optional[str] = None,
+        provider_id: str | None = None,
+        job_id: str | None = None,
+        step_id: str | None = None,
     ) -> PydanticStep:
         step_data = {
             "origin": None,
@@ -182,7 +182,7 @@ class StepManager:
         session: Session,
         job_id: str,
         actor: PydanticUser,
-        access: List[Literal["read", "write", "delete"]] = ["read"],
+        access: list[Literal["read", "write", "delete"]] = ["read"],
     ) -> JobModel:
         """
         Verify that a job exists and the user has the required access.
@@ -210,7 +210,7 @@ class StepManager:
         session: AsyncSession,
         job_id: str,
         actor: PydanticUser,
-        access: List[Literal["read", "write", "delete"]] = ["read"],
+        access: list[Literal["read", "write", "delete"]] = ["read"],
     ) -> JobModel:
         """
         Verify that a job exists and the user has the required access asynchronously.
@@ -252,12 +252,12 @@ class NoopStepManager(StepManager):
         provider_name: str,
         provider_category: str,
         model: str,
-        model_endpoint: Optional[str],
+        model_endpoint: str | None,
         context_window_limit: int,
         usage: UsageStatistics,
-        provider_id: Optional[str] = None,
-        job_id: Optional[str] = None,
-        step_id: Optional[str] = None,
+        provider_id: str | None = None,
+        job_id: str | None = None,
+        step_id: str | None = None,
     ) -> PydanticStep:
         return
 
@@ -270,12 +270,12 @@ class NoopStepManager(StepManager):
         provider_name: str,
         provider_category: str,
         model: str,
-        model_endpoint: Optional[str],
+        model_endpoint: str | None,
         context_window_limit: int,
         usage: UsageStatistics,
-        provider_id: Optional[str] = None,
-        job_id: Optional[str] = None,
-        step_id: Optional[str] = None,
+        provider_id: str | None = None,
+        job_id: str | None = None,
+        step_id: str | None = None,
     ) -> PydanticStep:
         step_data = {
             "origin": None,

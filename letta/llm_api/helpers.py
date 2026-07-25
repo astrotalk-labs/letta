@@ -2,7 +2,7 @@ import copy
 import json
 import warnings
 from collections import OrderedDict
-from typing import Any, List, Union
+from typing import Any
 
 import requests
 
@@ -201,12 +201,12 @@ def make_post_request(url: str, headers: dict[str, str], data: dict[str, Any]) -
 
 # TODO update to use better types
 def add_inner_thoughts_to_functions(
-    functions: List[dict],
+    functions: list[dict],
     inner_thoughts_key: str,
     inner_thoughts_description: str,
     inner_thoughts_required: bool = True,
     put_inner_thoughts_first: bool = True,
-) -> List[dict]:
+) -> list[dict]:
     """Add an inner_thoughts kwarg to every function in the provided list, ensuring it's the first parameter"""
     new_functions = []
     for function_object in functions:
@@ -252,7 +252,7 @@ def unpack_all_inner_thoughts_from_kwargs(
 ) -> ChatCompletionResponse:
     """Strip the inner thoughts out of the tool call and put it in the message content"""
     if len(response.choices) == 0:
-        raise ValueError(f"Unpacking inner thoughts from empty response not supported")
+        raise ValueError("Unpacking inner thoughts from empty response not supported")
 
     new_choices = []
     for choice in response.choices:
@@ -292,7 +292,7 @@ def unpack_inner_thoughts_from_kwargs(choice: Choice, inner_thoughts_key: str) -
                 # update the choice object
                 rewritten_choice = new_choice
             else:
-                warnings.warn(f"Did not find inner thoughts in tool call: {str(tool_call)}")
+                warnings.warn(f"Did not find inner thoughts in tool call: {tool_call!s}")
 
         except json.JSONDecodeError as e:
             warnings.warn(f"Failed to strip inner thoughts from kwargs: {e}")
@@ -300,12 +300,12 @@ def unpack_inner_thoughts_from_kwargs(choice: Choice, inner_thoughts_key: str) -
             print(f"\nTool call arguments: {tool_call.function.arguments}")
             raise e
     else:
-        warnings.warn(f"Did not find tool call in message: {str(message)}")
+        warnings.warn(f"Did not find tool call in message: {message!s}")
 
     return rewritten_choice
 
 
-def calculate_summarizer_cutoff(in_context_messages: List[Message], token_counts: List[int], logger: "logging.Logger") -> int:
+def calculate_summarizer_cutoff(in_context_messages: list[Message], token_counts: list[int], logger: "logging.Logger") -> int:
     if len(in_context_messages) != len(token_counts):
         raise ValueError(
             f"Given in_context_messages has different length from given token_counts: {len(in_context_messages)} != {len(token_counts)}"
@@ -351,13 +351,13 @@ def calculate_summarizer_cutoff(in_context_messages: List[Message], token_counts
         return cutoff + 1
 
 
-def get_token_counts_for_messages(in_context_messages: List[Message]) -> List[int]:
+def get_token_counts_for_messages(in_context_messages: list[Message]) -> list[int]:
     in_context_messages_openai = [m.to_openai_dict() for m in in_context_messages]
     token_counts = [count_tokens(str(msg)) for msg in in_context_messages_openai]
     return token_counts
 
 
-def is_context_overflow_error(exception: Union[requests.exceptions.RequestException, Exception]) -> bool:
+def is_context_overflow_error(exception: requests.exceptions.RequestException | Exception) -> bool:
     """Checks if an exception is due to context overflow (based on common OpenAI response messages)"""
     from letta.utils import printd
 
@@ -365,7 +365,7 @@ def is_context_overflow_error(exception: Union[requests.exceptions.RequestExcept
 
     # Backwards compatibility with openai python package/client v0.28 (pre-v1 client migration)
     if match_string in str(exception):
-        printd(f"Found '{match_string}' in str(exception)={(str(exception))}")
+        printd(f"Found '{match_string}' in str(exception)={exception!s}")
         return True
 
     # Based on python requests + OpenAI REST API (/v1)

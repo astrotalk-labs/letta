@@ -1,7 +1,9 @@
 from datetime import datetime
-from typing import Optional, Union
 
-from anthropic.types.beta.messages import BetaMessageBatch, BetaMessageBatchIndividualResponse
+from anthropic.types.beta.messages import (
+    BetaMessageBatch,
+    BetaMessageBatchIndividualResponse,
+)
 from pydantic import Field
 
 from letta.schemas.agent import AgentStepState
@@ -30,7 +32,7 @@ class LLMBatchItem(LLMBatchItemBase, validate_assignment=True):
     step_status: AgentStepStatus = Field(..., description="The current execution status of the agent step.")
     step_state: AgentStepState = Field(..., description="The serialized state for resuming execution at a later point.")
 
-    batch_request_result: Optional[Union[BetaMessageBatchIndividualResponse]] = Field(
+    batch_request_result: BetaMessageBatchIndividualResponse | None = Field(
         None, description="The raw response received from the LLM provider for this item."
     )
 
@@ -44,13 +46,13 @@ class LLMBatchJob(OrmMetadataBase, validate_assignment=True):
 
     __id_prefix__ = "batch_req"
 
-    id: Optional[str] = Field(None, description="The id of the batch job. Assigned by the database.")
+    id: str | None = Field(None, description="The id of the batch job. Assigned by the database.")
     status: JobStatus = Field(..., description="The current status of the batch (e.g., created, in_progress, done).")
     llm_provider: ProviderType = Field(..., description="The LLM provider used for the batch (e.g., anthropic, openai).")
     letta_batch_job_id: str = Field(..., description="ID of the Letta batch job")
 
-    create_batch_response: Union[BetaMessageBatch] = Field(..., description="The full JSON response from the initial batch creation.")
-    latest_polling_response: Optional[Union[BetaMessageBatch]] = Field(
+    create_batch_response: BetaMessageBatch = Field(..., description="The full JSON response from the initial batch creation.")
+    latest_polling_response: BetaMessageBatch | None = Field(
         None, description="The most recent polling response received from the LLM provider."
     )
-    last_polled_at: Optional[datetime] = Field(None, description="The timestamp of the last polling check for the batch status.")
+    last_polled_at: datetime | None = Field(None, description="The timestamp of the last polling check for the batch status.")

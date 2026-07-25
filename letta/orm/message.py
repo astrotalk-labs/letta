@@ -1,10 +1,16 @@
-from typing import List, Optional
+from typing import Optional
 
-from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall as OpenAIToolCall
+from openai.types.chat.chat_completion_message_tool_call import (
+    ChatCompletionMessageToolCall as OpenAIToolCall,
+)
 from sqlalchemy import BigInteger, FetchedValue, ForeignKey, Index, event, text
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
-from letta.orm.custom_columns import MessageContentColumn, ToolCallColumn, ToolReturnColumn
+from letta.orm.custom_columns import (
+    MessageContentColumn,
+    ToolCallColumn,
+    ToolReturnColumn,
+)
 from letta.orm.mixins import AgentMixin, OrganizationMixin
 from letta.orm.sqlalchemy_base import SqlalchemyBase
 from letta.schemas.letta_message_content import MessageContent
@@ -28,24 +34,24 @@ class Message(SqlalchemyBase, OrganizationMixin, AgentMixin):
 
     id: Mapped[str] = mapped_column(primary_key=True, doc="Unique message identifier")
     role: Mapped[str] = mapped_column(doc="Message role (user/assistant/system/tool)")
-    text: Mapped[Optional[str]] = mapped_column(nullable=True, doc="Message content")
-    content: Mapped[List[MessageContent]] = mapped_column(MessageContentColumn, nullable=True, doc="Message content parts")
-    model: Mapped[Optional[str]] = mapped_column(nullable=True, doc="LLM model used")
-    name: Mapped[Optional[str]] = mapped_column(nullable=True, doc="Name for multi-agent scenarios")
-    tool_calls: Mapped[List[OpenAIToolCall]] = mapped_column(ToolCallColumn, doc="Tool call information")
-    tool_call_id: Mapped[Optional[str]] = mapped_column(nullable=True, doc="ID of the tool call")
-    step_id: Mapped[Optional[str]] = mapped_column(
+    text: Mapped[str | None] = mapped_column(nullable=True, doc="Message content")
+    content: Mapped[list[MessageContent]] = mapped_column(MessageContentColumn, nullable=True, doc="Message content parts")
+    model: Mapped[str | None] = mapped_column(nullable=True, doc="LLM model used")
+    name: Mapped[str | None] = mapped_column(nullable=True, doc="Name for multi-agent scenarios")
+    tool_calls: Mapped[list[OpenAIToolCall]] = mapped_column(ToolCallColumn, doc="Tool call information")
+    tool_call_id: Mapped[str | None] = mapped_column(nullable=True, doc="ID of the tool call")
+    step_id: Mapped[str | None] = mapped_column(
         ForeignKey("steps.id", ondelete="SET NULL"), nullable=True, doc="ID of the step that this message belongs to"
     )
-    otid: Mapped[Optional[str]] = mapped_column(nullable=True, doc="The offline threading ID associated with this message")
-    tool_returns: Mapped[List[ToolReturn]] = mapped_column(
+    otid: Mapped[str | None] = mapped_column(nullable=True, doc="The offline threading ID associated with this message")
+    tool_returns: Mapped[list[ToolReturn]] = mapped_column(
         ToolReturnColumn, nullable=True, doc="Tool execution return information for prior tool calls"
     )
-    group_id: Mapped[Optional[str]] = mapped_column(nullable=True, doc="The multi-agent group that the message was sent in")
-    sender_id: Mapped[Optional[str]] = mapped_column(
+    group_id: Mapped[str | None] = mapped_column(nullable=True, doc="The multi-agent group that the message was sent in")
+    sender_id: Mapped[str | None] = mapped_column(
         nullable=True, doc="The id of the sender of the message, can be an identity id or agent id"
     )
-    batch_item_id: Mapped[Optional[str]] = mapped_column(
+    batch_item_id: Mapped[str | None] = mapped_column(
         nullable=True,
         doc="The id of the LLMBatchItem that this message is associated with",
     )

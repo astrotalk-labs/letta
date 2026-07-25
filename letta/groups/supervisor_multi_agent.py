@@ -1,8 +1,9 @@
-from typing import List, Optional
 
 from letta.agent import Agent, AgentState
 from letta.constants import DEFAULT_MESSAGE_TOOL
-from letta.functions.function_sets.multi_agent import send_message_to_all_agents_in_group
+from letta.functions.function_sets.multi_agent import (
+    send_message_to_all_agents_in_group,
+)
 from letta.functions.functions import parse_source_code
 from letta.functions.schema_generator import generate_schema
 from letta.interface import AgentInterface
@@ -25,7 +26,7 @@ class SupervisorMultiAgent(Agent):
         user: User,
         # custom
         group_id: str = "",
-        agent_ids: List[str] = [],
+        agent_ids: list[str] = [],
         description: str = "",
     ):
         super().__init__(interface, agent_state, user)
@@ -37,9 +38,9 @@ class SupervisorMultiAgent(Agent):
 
     def step(
         self,
-        input_messages: List[MessageCreate],
+        input_messages: list[MessageCreate],
         chaining: bool = True,
-        max_chaining_steps: Optional[int] = None,
+        max_chaining_steps: int | None = None,
         put_inner_thoughts_first: bool = True,
         assistant_message_tool_name: str = DEFAULT_MESSAGE_TOOL,
         **kwargs,

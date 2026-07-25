@@ -1,7 +1,6 @@
 import json
 import random
 import time
-from typing import List, Optional, Union
 
 import anthropic
 import requests
@@ -15,8 +14,14 @@ from letta.llm_api.anthropic import (
 )
 from letta.llm_api.aws_bedrock import has_valid_aws_credentials
 from letta.llm_api.azure_openai import azure_openai_chat_completions_request
-from letta.llm_api.deepseek import build_deepseek_chat_completions_request, convert_deepseek_response_to_chatcompletion
-from letta.llm_api.helpers import add_inner_thoughts_to_functions, unpack_all_inner_thoughts_from_kwargs
+from letta.llm_api.deepseek import (
+    build_deepseek_chat_completions_request,
+    convert_deepseek_response_to_chatcompletion,
+)
+from letta.llm_api.helpers import (
+    add_inner_thoughts_to_functions,
+    unpack_all_inner_thoughts_from_kwargs,
+)
 from letta.llm_api.openai import (
     build_openai_chat_completions_request,
     openai_chat_completions_process_stream,
@@ -24,20 +29,28 @@ from letta.llm_api.openai import (
     prepare_openai_payload,
 )
 from letta.local_llm.chat_completion_proxy import get_chat_completion
-from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION
+from letta.local_llm.constants import (
+    INNER_THOUGHTS_KWARG,
+    INNER_THOUGHTS_KWARG_DESCRIPTION,
+)
 from letta.local_llm.utils import num_tokens_from_functions, num_tokens_from_messages
 from letta.orm.user import User
 from letta.otel.tracing import log_event, trace_method
 from letta.schemas.enums import ProviderCategory
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.message import Message
-from letta.schemas.openai.chat_completion_request import ChatCompletionRequest, cast_message_to_subtype
+from letta.schemas.openai.chat_completion_request import (
+    ChatCompletionRequest,
+    cast_message_to_subtype,
+)
 from letta.schemas.openai.chat_completion_response import ChatCompletionResponse
 from letta.schemas.provider_trace import ProviderTraceCreate
 from letta.services.telemetry_manager import TelemetryManager
 from letta.settings import ModelSettings
-from letta.streaming_interface import AgentChunkStreamingInterface, AgentRefreshStreamingInterface
-from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
+from letta.streaming_interface import (
+    AgentChunkStreamingInterface,
+    AgentRefreshStreamingInterface,
+)
 
 LLM_API_PROVIDER_OPTIONS = ["openai", "azure", "anthropic", "google_ai", "cohere", "local", "groq", "deepseek"]
 
@@ -55,7 +68,6 @@ def retry_with_exponential_backoff(
     """Retry a function with exponential backoff."""
 
     def wrapper(*args, **kwargs):
-        pass
 
         # Initialize variables
         num_retries = 0
@@ -131,32 +143,32 @@ def retry_with_exponential_backoff(
 def create(
     # agent_state: AgentState,
     llm_config: LLMConfig,
-    messages: List[Message],
-    user_id: Optional[str] = None,  # option UUID to associate request with
-    functions: Optional[list] = None,
-    functions_python: Optional[dict] = None,
-    function_call: Optional[str] = None,  # see: https://platform.openai.com/docs/api-reference/chat/create#chat-create-tool_choice
+    messages: list[Message],
+    user_id: str | None = None,  # option UUID to associate request with
+    functions: list | None = None,
+    functions_python: dict | None = None,
+    function_call: str | None = None,  # see: https://platform.openai.com/docs/api-reference/chat/create#chat-create-tool_choice
     # hint
     first_message: bool = False,
-    force_tool_call: Optional[str] = None,  # Force a specific tool to be called
+    force_tool_call: str | None = None,  # Force a specific tool to be called
     # use tool naming?
     # if false, will use deprecated 'functions' style
     use_tool_naming: bool = True,
     # streaming?
     stream: bool = False,
-    stream_interface: Optional[Union[AgentRefreshStreamingInterface, AgentChunkStreamingInterface]] = None,
-    model_settings: Optional[dict] = None,  # TODO: eventually pass from server
+    stream_interface: AgentRefreshStreamingInterface | AgentChunkStreamingInterface | None = None,
+    model_settings: dict | None = None,  # TODO: eventually pass from server
     put_inner_thoughts_first: bool = True,
-    name: Optional[str] = None,
-    telemetry_manager: Optional[TelemetryManager] = None,
-    step_id: Optional[str] = None,
-    actor: Optional[User] = None,
+    name: str | None = None,
+    telemetry_manager: TelemetryManager | None = None,
+    step_id: str | None = None,
+    actor: User | None = None,
     use_vertex_experiment: bool = False,  # Dynamic provider switching for Anthropic
     use_bedrock_experiment: bool = False,  # Dynamic provider switching for AWS Bedrock
 ) -> ChatCompletionResponse:
     """Return response to chat completion with backoff"""
-    from letta.utils import printd
     from letta.log import get_logger
+    from letta.utils import printd
 
     logger = get_logger(__name__)
     log_msg = f"[CREATE] Starting LLM request: model_endpoint_type={llm_config.model_endpoint_type}, use_vertex_experiment={use_vertex_experiment}, stream={stream}"
@@ -383,7 +395,7 @@ def create(
 
         if use_vertex_experiment:
             # Switch TO Vertex AI
-            log_msg = f"[ANTHROPIC] Creating Vertex AI client due to use_vertex_experiment=True"
+            log_msg = "[ANTHROPIC] Creating Vertex AI client due to use_vertex_experiment=True"
             logger.info(log_msg)
             print(f"DEBUG: {log_msg}")
             from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
@@ -405,7 +417,7 @@ def create(
                     print(f"DEBUG: {log_msg}")
         else:
             # Use direct Anthropic API (original behavior)
-            log_msg = f"[ANTHROPIC] Using direct Anthropic API (use_vertex_experiment=False)"
+            log_msg = "[ANTHROPIC] Using direct Anthropic API (use_vertex_experiment=False)"
             logger.info(log_msg)
             print(f"DEBUG: {log_msg}")
             anthropic_client = None  # Will be created by anthropic functions with default logic
@@ -515,7 +527,7 @@ def create(
 
         if not use_vertex_experiment:
             # Switch TO direct Anthropic API
-            log_msg = f"[ANTHROPIC_VERTEX] Switching to direct Anthropic API due to use_vertex_experiment=False"
+            log_msg = "[ANTHROPIC_VERTEX] Switching to direct Anthropic API due to use_vertex_experiment=False"
             logger.info(log_msg)
             print(f"DEBUG: {log_msg}")
 
@@ -545,7 +557,7 @@ def create(
             print(f"DEBUG: {log_msg}")
         else:
             # Use Vertex AI (keep original behavior)
-            log_msg = f"[ANTHROPIC_VERTEX] Using explicit Vertex AI client"
+            log_msg = "[ANTHROPIC_VERTEX] Using explicit Vertex AI client"
             logger.info(log_msg)
             print(f"DEBUG: {log_msg}")
             from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
@@ -657,7 +669,7 @@ def create(
     #     )
     elif llm_config.model_endpoint_type == "groq":
         if stream:
-            raise NotImplementedError(f"Streaming not yet implemented for Groq.")
+            raise NotImplementedError("Streaming not yet implemented for Groq.")
 
         if model_settings.groq_api_key is None and llm_config.model_endpoint == "https://api.groq.com/openai/v1/chat/completions":
             raise LettaConfigurationError(message="Groq key is missing from letta config file", missing_fields=["groq_api_key"])
@@ -710,7 +722,7 @@ def create(
         """TogetherAI endpoint that goes via /completions instead of /chat/completions"""
 
         if stream:
-            raise NotImplementedError(f"Streaming not yet implemented for TogetherAI (via the /completions endpoint).")
+            raise NotImplementedError("Streaming not yet implemented for TogetherAI (via the /completions endpoint).")
 
         if model_settings.together_api_key is None and (
             llm_config.model_endpoint == "https://api.together.ai/v1/completions"
@@ -740,7 +752,7 @@ def create(
         """Anthropic endpoint that goes via /embeddings instead of /chat/completions"""
 
         if stream:
-            raise NotImplementedError(f"Streaming not yet implemented for Anthropic (via the /embeddings endpoint).")
+            raise NotImplementedError("Streaming not yet implemented for Anthropic (via the /embeddings endpoint).")
         if not use_tool_naming:
             raise NotImplementedError("Only tool calling supported on Anthropic API requests")
 
@@ -821,7 +833,7 @@ def create(
             messages[0].content[0].text += f"<available functions> {''.join(json.dumps(f) for f in functions)} </available functions>"
             messages[0].content[
                 0
-            ].text += f'Select best function to call simply by responding with a single json block with the keys "function" and "params". Use double quotes around the arguments.'
+            ].text += 'Select best function to call simply by responding with a single json block with the keys "function" and "params". Use double quotes around the arguments.'
         return get_chat_completion(
             model=llm_config.model,
             messages=messages,

@@ -1,4 +1,3 @@
-from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,8 +11,6 @@ from letta.server.utils import check_all_ai_services, check_database_health
 logger = get_logger(__name__)
 
 
-if TYPE_CHECKING:
-    pass
 
 router = APIRouter(prefix="/health", tags=["health"])
 

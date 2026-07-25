@@ -1,4 +1,3 @@
-from typing import List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -24,11 +23,11 @@ class GroupManager:
     def list_groups(
         self,
         actor: PydanticUser,
-        project_id: Optional[str] = None,
-        manager_type: Optional[ManagerType] = None,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        limit: Optional[int] = 50,
+        project_id: str | None = None,
+        manager_type: ManagerType | None = None,
+        before: str | None = None,
+        after: str | None = None,
+        limit: int | None = 50,
     ) -> list[PydanticGroup]:
         with db_registry.session() as session:
             filters = {"organization_id": actor.organization_id}
@@ -164,7 +163,7 @@ class GroupManager:
             manager_agent_id = None
             if group_update.manager_config:
                 if group_update.manager_config.manager_type != group.manager_type:
-                    raise ValueError(f"Cannot change group pattern after creation")
+                    raise ValueError("Cannot change group pattern after creation")
                 match group_update.manager_config.manager_type:
                     case ManagerType.round_robin:
                         max_turns = group_update.manager_config.max_turns
@@ -226,10 +225,10 @@ class GroupManager:
     def list_group_messages(
         self,
         actor: PydanticUser,
-        group_id: Optional[str] = None,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        limit: Optional[int] = 50,
+        group_id: str | None = None,
+        before: str | None = None,
+        after: str | None = None,
+        limit: int | None = 50,
         use_assistant_message: bool = True,
         assistant_message_tool_name: str = "send_message",
         assistant_message_tool_kwarg: str = "message",
@@ -336,11 +335,11 @@ class GroupManager:
         with db_registry.session() as session:
             return GroupModel.size(db_session=session, actor=actor)
 
-    def _process_agent_relationship(self, session: Session, group: GroupModel, agent_ids: List[str], allow_partial=False, replace=True):
+    def _process_agent_relationship(self, session: Session, group: GroupModel, agent_ids: list[str], allow_partial=False, replace=True):
         if not agent_ids:
             if replace:
-                setattr(group, "agents", [])
-                setattr(group, "agent_ids", [])
+                group.agents = []
+                group.agent_ids = []
             return
 
         if group.manager_type == ManagerType.dynamic and len(agent_ids) != len(set(agent_ids)):
@@ -361,16 +360,16 @@ class GroupManager:
 
         if replace:
             # Replace the relationship
-            setattr(group, "agents", found_items)
-            setattr(group, "agent_ids", agent_ids)
+            group.agents = found_items
+            group.agent_ids = agent_ids
         else:
             raise ValueError("Extend relationship is not supported for groups.")
 
-    async def _process_agent_relationship_async(self, session, group: GroupModel, agent_ids: List[str], allow_partial=False, replace=True):
+    async def _process_agent_relationship_async(self, session, group: GroupModel, agent_ids: list[str], allow_partial=False, replace=True):
         if not agent_ids:
             if replace:
-                setattr(group, "agents", [])
-                setattr(group, "agent_ids", [])
+                group.agents = []
+                group.agent_ids = []
             return
 
         if group.manager_type == ManagerType.dynamic and len(agent_ids) != len(set(agent_ids)):
@@ -393,8 +392,8 @@ class GroupManager:
 
         if replace:
             # Replace the relationship
-            setattr(group, "agents", found_items)
-            setattr(group, "agent_ids", agent_ids)
+            group.agents = found_items
+            group.agent_ids = agent_ids
         else:
             raise ValueError("Extend relationship is not supported for groups.")
 
@@ -402,7 +401,7 @@ class GroupManager:
         self,
         session: Session,
         group: GroupModel,
-        block_ids: List[str],
+        block_ids: list[str],
     ):
         """Process shared block relationships for a group and its agents."""
         from letta.orm import Agent, Block, BlocksAgents
@@ -429,7 +428,7 @@ class GroupManager:
         self,
         session,
         group: GroupModel,
-        block_ids: List[str],
+        block_ids: list[str],
     ):
         """Process shared block relationships for a group and its agents."""
         from letta.orm import Agent, Block, BlocksAgents
@@ -460,8 +459,8 @@ class GroupManager:
 
     @staticmethod
     def ensure_buffer_length_range_valid(
-        max_value: Optional[int],
-        min_value: Optional[int],
+        max_value: int | None,
+        min_value: int | None,
         max_name: str = "max_message_buffer_length",
         min_name: str = "min_message_buffer_length",
     ) -> None:

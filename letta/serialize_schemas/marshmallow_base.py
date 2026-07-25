@@ -1,4 +1,3 @@
-from typing import Dict, Optional
 
 from marshmallow import post_dump, pre_load
 from marshmallow_sqlalchemy import SQLAlchemyAutoSchema
@@ -14,19 +13,19 @@ class BaseSchema(SQLAlchemyAutoSchema):
 
     __pydantic_model__ = None
 
-    def __init__(self, *args, actor: Optional[User] = None, **kwargs):
+    def __init__(self, *args, actor: User | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.actor = actor
 
     @classmethod
-    def generate_id(cls) -> Optional[str]:
+    def generate_id(cls) -> str | None:
         if cls.__pydantic_model__:
             return cls.__pydantic_model__.generate_id()
 
         return None
 
     @post_dump
-    def sanitize_ids(self, data: Dict, **kwargs) -> Dict:
+    def sanitize_ids(self, data: dict, **kwargs) -> dict:
         # delete id
         del data["id"]
         del data["_created_by_id"]
@@ -36,7 +35,7 @@ class BaseSchema(SQLAlchemyAutoSchema):
         return data
 
     @pre_load
-    def regenerate_ids(self, data: Dict, **kwargs) -> Dict:
+    def regenerate_ids(self, data: dict, **kwargs) -> dict:
         if self.Meta.model:
             data["id"] = self.generate_id()
             data["_created_by_id"] = self.actor.id

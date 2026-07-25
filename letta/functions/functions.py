@@ -3,13 +3,13 @@ import inspect
 from collections.abc import Callable
 from textwrap import dedent  # remove indentation
 from types import ModuleType
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal, Optional
 
 from letta.errors import LettaToolCreateError
 from letta.functions.schema_generator import generate_schema
 
 
-def derive_openai_json_schema(source_code: str, name: Optional[str] = None) -> dict:
+def derive_openai_json_schema(source_code: str, name: str | None = None) -> dict:
     """Derives the OpenAI JSON schema for a given function source code.
 
     # TODO (cliandy): I don't think we need to or should execute here
@@ -21,8 +21,8 @@ def derive_openai_json_schema(source_code: str, name: Optional[str] = None) -> d
         # Define a custom environment with necessary imports
         env = {
             "Optional": Optional,
-            "List": List,
-            "Dict": Dict,
+            "List": list,
+            "Dict": dict,
             "Literal": Literal,
             # To support Pydantic models
             # "BaseModel": BaseModel,
@@ -50,17 +50,17 @@ def derive_openai_json_schema(source_code: str, name: Optional[str] = None) -> d
             # print("Schema generated successfully")
             return schema
         except TypeError as e:
-            raise LettaToolCreateError(f"Type error in schema generation: {str(e)}")
+            raise LettaToolCreateError(f"Type error in schema generation: {e!s}")
         except ValueError as e:
-            raise LettaToolCreateError(f"Value error in schema generation: {str(e)}")
+            raise LettaToolCreateError(f"Value error in schema generation: {e!s}")
         except Exception as e:
-            raise LettaToolCreateError(f"Unexpected error in schema generation: {str(e)}")
+            raise LettaToolCreateError(f"Unexpected error in schema generation: {e!s}")
 
     except Exception as e:
         import traceback
 
         traceback.print_exc()
-        raise LettaToolCreateError(f"Schema generation failed: {str(e)}") from e
+        raise LettaToolCreateError(f"Schema generation failed: {e!s}") from e
 
 
 def parse_source_code(func) -> str:

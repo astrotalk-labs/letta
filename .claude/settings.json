@@ -1,0 +1,22 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ruff check . --fix --exit-zero; exit 0",
+            "timeout": 30,
+            "statusMessage": "Running ruff --fix..."
+          },
+          {
+            "type": "command",
+            "command": "files=$(git diff --name-only HEAD | grep '\\.py$'); [ -z \"$files\" ] && exit 0; out=$(echo \"$files\" | xargs npx basedpyright 2>&1); [ -n \"$out\" ] && printf '%s' \"$out\" | jq -Rs '{\"systemMessage\": .}'; exit 0",
+            "timeout": 60,
+            "statusMessage": "Running basedpyright on changed files..."
+          }
+        ]
+      }
+    ]
+  }
+}

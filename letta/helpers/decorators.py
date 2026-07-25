@@ -1,8 +1,8 @@
 import inspect
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import wraps
-from typing import Callable
 
 from pydantic import BaseModel
 

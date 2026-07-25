@@ -1,6 +1,7 @@
 import asyncio
+import builtins
 from functools import wraps
-from typing import Any, Optional, Set, Union
+from typing import Any
 
 from letta.constants import REDIS_EXCLUDE, REDIS_INCLUDE, REDIS_SET_DEFAULT_VAL
 from letta.log import get_logger
@@ -26,8 +27,8 @@ class AsyncRedisClient:
         host: str = "localhost",
         port: int = 6379,
         db: int = 0,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
+        username: str | None = None,
+        password: str | None = None,
         max_connections: int = 50,
         decode_responses: bool = True,
         socket_timeout: int = 5,
@@ -147,9 +148,9 @@ class AsyncRedisClient:
     async def set(
         self,
         key: str,
-        value: Union[str, int, float],
-        ex: Optional[int] = None,
-        px: Optional[int] = None,
+        value: str | float,
+        ex: int | None = None,
+        px: int | None = None,
         nx: bool = False,
         xx: bool = False,
     ) -> bool:
@@ -180,12 +181,12 @@ class AsyncRedisClient:
         return await client.exists(*keys)
 
     # Set operations
-    async def sadd(self, key: str, *members: Union[str, int, float]) -> int:
+    async def sadd(self, key: str, *members: str | float) -> int:
         """Add members to set."""
         client = await self.get_client()
         return await client.sadd(key, *members)
 
-    async def smembers(self, key: str) -> Set[str]:
+    async def smembers(self, key: str) -> builtins.set[str]:
         """Get all set members."""
         client = await self.get_client()
         return await client.smembers(key)
@@ -200,7 +201,7 @@ class AsyncRedisClient:
         except:
             return [0] * len(values) if isinstance(values, list) else 0
 
-    async def srem(self, key: str, *members: Union[str, int, float]) -> int:
+    async def srem(self, key: str, *members: str | float) -> int:
         """Remove members from set."""
         client = await self.get_client()
         return await client.srem(key, *members)
@@ -254,9 +255,9 @@ class NoopAsyncRedisClient(AsyncRedisClient):
     async def set(
         self,
         key: str,
-        value: Union[str, int, float],
-        ex: Optional[int] = None,
-        px: Optional[int] = None,
+        value: str | float,
+        ex: int | None = None,
+        px: int | None = None,
         nx: bool = False,
         xx: bool = False,
     ) -> bool:
@@ -268,7 +269,7 @@ class NoopAsyncRedisClient(AsyncRedisClient):
     async def exists(self, *keys: str) -> int:
         return 0
 
-    async def sadd(self, key: str, *members: Union[str, int, float]) -> int:
+    async def sadd(self, key: str, *members: str | float) -> int:
         return 0
 
     async def smismember(self, key: str, values: list[Any] | Any) -> list[int] | int:

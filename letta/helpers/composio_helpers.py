@@ -1,16 +1,15 @@
 from logging import Logger
-from typing import Optional
 
 from letta.schemas.user import User
 from letta.services.sandbox_config_manager import SandboxConfigManager
 from letta.settings import tool_settings
 
 
-def get_composio_api_key(actor: User, logger: Optional[Logger] = None) -> Optional[str]:
+def get_composio_api_key(actor: User, logger: Logger | None = None) -> str | None:
     api_keys = SandboxConfigManager().list_sandbox_env_vars_by_key(key="COMPOSIO_API_KEY", actor=actor)
     if not api_keys:
         if logger:
-            logger.debug(f"No API keys found for Composio. Defaulting to the environment variable...")
+            logger.debug("No API keys found for Composio. Defaulting to the environment variable...")
         if tool_settings.composio_api_key:
             return tool_settings.composio_api_key
         else:
@@ -22,11 +21,11 @@ def get_composio_api_key(actor: User, logger: Optional[Logger] = None) -> Option
         return api_keys[0].value
 
 
-async def get_composio_api_key_async(actor: User, logger: Optional[Logger] = None) -> Optional[str]:
+async def get_composio_api_key_async(actor: User, logger: Logger | None = None) -> str | None:
     api_keys = await SandboxConfigManager().list_sandbox_env_vars_by_key_async(key="COMPOSIO_API_KEY", actor=actor)
     if not api_keys:
         if logger:
-            logger.debug(f"No API keys found for Composio. Defaulting to the environment variable...")
+            logger.debug("No API keys found for Composio. Defaulting to the environment variable...")
         if tool_settings.composio_api_key:
             return tool_settings.composio_api_key
         else:

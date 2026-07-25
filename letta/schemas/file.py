@@ -1,6 +1,5 @@
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
 from pydantic import Field
 
@@ -27,27 +26,27 @@ class FileMetadata(FileMetadataBase):
     """Representation of a single FileMetadata"""
 
     id: str = FileMetadataBase.generate_id_field()
-    organization_id: Optional[str] = Field(None, description="The unique identifier of the organization associated with the document.")
+    organization_id: str | None = Field(None, description="The unique identifier of the organization associated with the document.")
     source_id: str = Field(..., description="The unique identifier of the source associated with the document.")
-    file_name: Optional[str] = Field(None, description="The name of the file.")
-    file_path: Optional[str] = Field(None, description="The path to the file.")
-    file_type: Optional[str] = Field(None, description="The type of the file (MIME type).")
-    file_size: Optional[int] = Field(None, description="The size of the file in bytes.")
-    file_creation_date: Optional[str] = Field(None, description="The creation date of the file.")
-    file_last_modified_date: Optional[str] = Field(None, description="The last modified date of the file.")
+    file_name: str | None = Field(None, description="The name of the file.")
+    file_path: str | None = Field(None, description="The path to the file.")
+    file_type: str | None = Field(None, description="The type of the file (MIME type).")
+    file_size: int | None = Field(None, description="The size of the file in bytes.")
+    file_creation_date: str | None = Field(None, description="The creation date of the file.")
+    file_last_modified_date: str | None = Field(None, description="The last modified date of the file.")
     processing_status: FileProcessingStatus = Field(
         default=FileProcessingStatus.PENDING,
         description="The current processing status of the file (e.g. pending, parsing, embedding, completed, error).",
     )
-    error_message: Optional[str] = Field(default=None, description="Optional error message if the file failed processing.")
+    error_message: str | None = Field(default=None, description="Optional error message if the file failed processing.")
 
     # orm metadata, optional fields
-    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow, description="The creation date of the file.")
-    updated_at: Optional[datetime] = Field(default_factory=datetime.utcnow, description="The update date of the file.")
+    created_at: datetime | None = Field(default_factory=datetime.utcnow, description="The creation date of the file.")
+    updated_at: datetime | None = Field(default_factory=datetime.utcnow, description="The update date of the file.")
     is_deleted: bool = Field(False, description="Whether this file is deleted or not.")
 
     # This is optional, and only occasionally pulled in since it can be very large
-    content: Optional[str] = Field(
+    content: str | None = Field(
         default=None, description="Optional full-text content of the file; only populated on demand due to its size."
     )
 
@@ -72,7 +71,7 @@ class FileAgent(FileAgentBase):
         ...,
         description="The internal ID",
     )
-    organization_id: Optional[str] = Field(
+    organization_id: str | None = Field(
         None,
         description="Org ID this association belongs to (inherited from both agent and file).",
     )
@@ -80,20 +79,20 @@ class FileAgent(FileAgentBase):
     file_id: str = Field(..., description="Unique identifier of the file.")
     file_name: str = Field(..., description="Name of the file.")
     is_open: bool = Field(True, description="True if the agent currently has the file open.")
-    visible_content: Optional[str] = Field(
+    visible_content: str | None = Field(
         None,
         description="Portion of the file the agent is focused on (may be large).",
     )
-    last_accessed_at: Optional[datetime] = Field(
+    last_accessed_at: datetime | None = Field(
         default_factory=datetime.utcnow,
         description="UTC timestamp of the agent’s most recent access to this file.",
     )
 
-    created_at: Optional[datetime] = Field(
+    created_at: datetime | None = Field(
         default_factory=datetime.utcnow,
         description="Row creation timestamp (UTC).",
     )
-    updated_at: Optional[datetime] = Field(
+    updated_at: datetime | None = Field(
         default_factory=datetime.utcnow,
         description="Row last-update timestamp (UTC).",
     )

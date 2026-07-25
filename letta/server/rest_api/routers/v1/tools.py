@@ -1,4 +1,3 @@
-from typing import List, Optional, Union
 
 from composio.client import ComposioClientError, HTTPError, NoItemsFound
 from composio.client.collections import ActionModel, AppModel
@@ -32,7 +31,7 @@ logger = get_logger(__name__)
 async def delete_tool(
     tool_id: str,
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     Delete a tool by name
@@ -44,8 +43,8 @@ async def delete_tool(
 @router.get("/count", response_model=int, operation_id="count_tools")
 async def count_tools(
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
-    include_base_tools: Optional[bool] = Query(False, description="Include built-in Letta tools in the count"),
+    actor_id: str | None = Header(None, alias="user_id"),
+    include_base_tools: bool | None = Query(False, description="Include built-in Letta tools in the count"),
 ):
     """
     Get a count of all tools available to agents belonging to the org of the user.
@@ -62,7 +61,7 @@ async def count_tools(
 async def retrieve_tool(
     tool_id: str,
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     Get a tool by ID
@@ -75,13 +74,13 @@ async def retrieve_tool(
     return tool
 
 
-@router.get("/", response_model=List[Tool], operation_id="list_tools")
+@router.get("/", response_model=list[Tool], operation_id="list_tools")
 async def list_tools(
-    after: Optional[str] = None,
-    limit: Optional[int] = 50,
-    name: Optional[str] = None,
+    after: str | None = None,
+    limit: int | None = 50,
+    name: str | None = None,
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     Get a list of all tools available to agents belonging to the org of the user
@@ -101,7 +100,7 @@ async def list_tools(
 @router.get("/count", response_model=int, operation_id="count_tools")
 def count_tools(
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Get a count of all tools available to agents belonging to the org of the user
@@ -117,7 +116,7 @@ def count_tools(
 async def create_tool(
     request: ToolCreate = Body(...),
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     Create a new tool
@@ -129,7 +128,7 @@ async def create_tool(
     except UniqueConstraintViolationError as e:
         # Log or print the full exception here for debugging
         print(f"Error occurred: {e}")
-        clean_error_message = f"Tool with this name already exists."
+        clean_error_message = "Tool with this name already exists."
         raise HTTPException(status_code=409, detail=clean_error_message)
     except LettaToolCreateError as e:
         # HTTP 400 == Bad Request
@@ -142,14 +141,14 @@ async def create_tool(
     except Exception as e:
         # Catch other unexpected errors and raise an internal server error
         print(f"Unexpected error occurred: {e}")
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e!s}")
 
 
 @router.put("/", response_model=Tool, operation_id="upsert_tool")
 async def upsert_tool(
     request: ToolCreate = Body(...),
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Create or update a tool
@@ -169,7 +168,7 @@ async def upsert_tool(
     except Exception as e:
         # Catch other unexpected errors and raise an internal server error
         print(f"Unexpected error occurred: {e}")
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e!s}")
 
 
 @router.patch("/{tool_id}", response_model=Tool, operation_id="modify_tool")
@@ -177,7 +176,7 @@ async def modify_tool(
     tool_id: str,
     request: ToolUpdate = Body(...),
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     Update an existing tool
@@ -192,13 +191,13 @@ async def modify_tool(
     except Exception as e:
         # Catch other unexpected errors and raise an internal server error
         print(f"Unexpected error occurred: {e}")
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e!s}")
 
 
-@router.post("/add-base-tools", response_model=List[Tool], operation_id="add_base_tools")
+@router.post("/add-base-tools", response_model=list[Tool], operation_id="add_base_tools")
 async def upsert_base_tools(
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     Upsert base tools
@@ -211,7 +210,7 @@ async def upsert_base_tools(
 async def run_tool_from_source(
     server: SyncServer = Depends(get_letta_server),
     request: ToolRunFromSource = Body(...),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     Attempt to build a tool from source, then run it on the provided arguments
@@ -241,12 +240,12 @@ async def run_tool_from_source(
     except Exception as e:
         # Catch other unexpected errors and raise an internal server error
         print(f"Unexpected error occurred: {e}")
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e!s}")
 
 
 # Specific routes for Composio
-@router.get("/composio/apps", response_model=List[AppModel], operation_id="list_composio_apps")
-def list_composio_apps(server: SyncServer = Depends(get_letta_server), user_id: Optional[str] = Header(None, alias="user_id")):
+@router.get("/composio/apps", response_model=list[AppModel], operation_id="list_composio_apps")
+def list_composio_apps(server: SyncServer = Depends(get_letta_server), user_id: str | None = Header(None, alias="user_id")):
     """
     Get a list of all Composio apps
     """
@@ -255,16 +254,16 @@ def list_composio_apps(server: SyncServer = Depends(get_letta_server), user_id: 
     if not composio_api_key:
         raise HTTPException(
             status_code=400,  # Bad Request
-            detail=f"No API keys found for Composio. Please add your Composio API Key as an environment variable for your sandbox configuration, or set it as environment variable COMPOSIO_API_KEY.",
+            detail="No API keys found for Composio. Please add your Composio API Key as an environment variable for your sandbox configuration, or set it as environment variable COMPOSIO_API_KEY.",
         )
     return server.get_composio_apps(api_key=composio_api_key)
 
 
-@router.get("/composio/apps/{composio_app_name}/actions", response_model=List[ActionModel], operation_id="list_composio_actions_by_app")
+@router.get("/composio/apps/{composio_app_name}/actions", response_model=list[ActionModel], operation_id="list_composio_actions_by_app")
 def list_composio_actions_by_app(
     composio_app_name: str,
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Get a list of all Composio actions for a specific app
@@ -274,7 +273,7 @@ def list_composio_actions_by_app(
     if not composio_api_key:
         raise HTTPException(
             status_code=400,  # Bad Request
-            detail=f"No API keys found for Composio. Please add your Composio API Key as an environment variable for your sandbox configuration, or set it as environment variable COMPOSIO_API_KEY.",
+            detail="No API keys found for Composio. Please add your Composio API Key as an environment variable for your sandbox configuration, or set it as environment variable COMPOSIO_API_KEY.",
         )
     return server.get_composio_actions_from_app_name(composio_app_name=composio_app_name, api_key=composio_api_key)
 
@@ -283,7 +282,7 @@ def list_composio_actions_by_app(
 async def add_composio_tool(
     composio_action_name: str,
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Add a new Composio tool by action name (Composio refers to each tool as an `Action`)
@@ -368,8 +367,8 @@ async def add_composio_tool(
 
 
 # Specific routes for MCP
-@router.get("/mcp/servers", response_model=dict[str, Union[SSEServerConfig, StdioServerConfig]], operation_id="list_mcp_servers")
-async def list_mcp_servers(server: SyncServer = Depends(get_letta_server), user_id: Optional[str] = Header(None, alias="user_id")):
+@router.get("/mcp/servers", response_model=dict[str, SSEServerConfig | StdioServerConfig], operation_id="list_mcp_servers")
+async def list_mcp_servers(server: SyncServer = Depends(get_letta_server), user_id: str | None = Header(None, alias="user_id")):
     """
     Get a list of all configured MCP servers
     """
@@ -383,11 +382,11 @@ async def list_mcp_servers(server: SyncServer = Depends(get_letta_server), user_
 
 # NOTE: async because the MCP client/session calls are async
 # TODO: should we make the return type MCPTool, not Tool (since we don't have ID)?
-@router.get("/mcp/servers/{mcp_server_name}/tools", response_model=List[MCPTool], operation_id="list_mcp_tools_by_server")
+@router.get("/mcp/servers/{mcp_server_name}/tools", response_model=list[MCPTool], operation_id="list_mcp_tools_by_server")
 async def list_mcp_tools_by_server(
     mcp_server_name: str,
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Get a list of all tools for a specific MCP server
@@ -425,7 +424,7 @@ async def add_mcp_tool(
     mcp_server_name: str,
     mcp_tool_name: str,
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Register a new MCP tool as a Letta server by MCP server + tool name
@@ -479,11 +478,11 @@ async def add_mcp_tool(
         return await server.mcp_manager.add_tool_from_mcp_server(mcp_server_name=mcp_server_name, mcp_tool_name=mcp_tool_name, actor=actor)
 
 
-@router.put("/mcp/servers", response_model=List[Union[StdioServerConfig, SSEServerConfig]], operation_id="add_mcp_server")
+@router.put("/mcp/servers", response_model=list[StdioServerConfig | SSEServerConfig], operation_id="add_mcp_server")
 async def add_mcp_server_to_config(
-    request: Union[StdioServerConfig, SSEServerConfig] = Body(...),
+    request: StdioServerConfig | SSEServerConfig = Body(...),
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Add a new MCP server to the Letta MCP server config
@@ -516,12 +515,12 @@ async def add_mcp_server_to_config(
 
 
 @router.delete(
-    "/mcp/servers/{mcp_server_name}", response_model=List[Union[StdioServerConfig, SSEServerConfig]], operation_id="delete_mcp_server"
+    "/mcp/servers/{mcp_server_name}", response_model=list[StdioServerConfig | SSEServerConfig], operation_id="delete_mcp_server"
 )
 async def delete_mcp_server_from_config(
     mcp_server_name: str,
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Add a new MCP server to the Letta MCP server config

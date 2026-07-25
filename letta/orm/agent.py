@@ -1,13 +1,18 @@
 import asyncio
 import uuid
-from typing import TYPE_CHECKING, List, Optional, Set
+from typing import TYPE_CHECKING
 
 from sqlalchemy import JSON, Boolean, Index, String
 from sqlalchemy.ext.asyncio import AsyncAttrs
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from letta.orm.block import Block
-from letta.orm.custom_columns import EmbeddingConfigColumn, LLMConfigColumn, ResponseFormatColumn, ToolRulesColumn
+from letta.orm.custom_columns import (
+    EmbeddingConfigColumn,
+    LLMConfigColumn,
+    ResponseFormatColumn,
+    ToolRulesColumn,
+)
 from letta.orm.identity import Identity
 from letta.orm.mixins import OrganizationMixin
 from letta.orm.organization import Organization
@@ -40,58 +45,58 @@ class Agent(SqlalchemyBase, OrganizationMixin, AsyncAttrs):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: f"agent-{uuid.uuid4()}")
 
     # Descriptor fields
-    agent_type: Mapped[Optional[AgentType]] = mapped_column(String, nullable=True, doc="The type of Agent")
-    name: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="a human-readable identifier for an agent, non-unique.")
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="The description of the agent.")
+    agent_type: Mapped[AgentType | None] = mapped_column(String, nullable=True, doc="The type of Agent")
+    name: Mapped[str | None] = mapped_column(String, nullable=True, doc="a human-readable identifier for an agent, non-unique.")
+    description: Mapped[str | None] = mapped_column(String, nullable=True, doc="The description of the agent.")
 
     # System prompt
-    system: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="The system prompt used by the agent.")
+    system: Mapped[str | None] = mapped_column(String, nullable=True, doc="The system prompt used by the agent.")
 
     # In context memory
     # TODO: This should be a separate mapping table
     # This is dangerously flexible with the JSON type
-    message_ids: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, doc="List of message IDs in in-context memory.")
+    message_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True, doc="List of message IDs in in-context memory.")
 
     # Response Format
-    response_format: Mapped[Optional[ResponseFormatUnion]] = mapped_column(
+    response_format: Mapped[ResponseFormatUnion | None] = mapped_column(
         ResponseFormatColumn, nullable=True, doc="The response format for the agent."
     )
 
     # Metadata and configs
-    metadata_: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, doc="metadata for the agent.")
-    llm_config: Mapped[Optional[LLMConfig]] = mapped_column(
+    metadata_: Mapped[dict | None] = mapped_column(JSON, nullable=True, doc="metadata for the agent.")
+    llm_config: Mapped[LLMConfig | None] = mapped_column(
         LLMConfigColumn, nullable=True, doc="the LLM backend configuration object for this agent."
     )
-    embedding_config: Mapped[Optional[EmbeddingConfig]] = mapped_column(
+    embedding_config: Mapped[EmbeddingConfig | None] = mapped_column(
         EmbeddingConfigColumn, doc="the embedding configuration object for this agent."
     )
-    project_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="The id of the project the agent belongs to.")
-    template_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="The id of the template the agent belongs to.")
-    base_template_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="The base template id of the agent.")
+    project_id: Mapped[str | None] = mapped_column(String, nullable=True, doc="The id of the project the agent belongs to.")
+    template_id: Mapped[str | None] = mapped_column(String, nullable=True, doc="The id of the template the agent belongs to.")
+    base_template_id: Mapped[str | None] = mapped_column(String, nullable=True, doc="The base template id of the agent.")
 
     # Tool rules
-    tool_rules: Mapped[Optional[List[ToolRule]]] = mapped_column(ToolRulesColumn, doc="the tool rules for this agent.")
+    tool_rules: Mapped[list[ToolRule] | None] = mapped_column(ToolRulesColumn, doc="the tool rules for this agent.")
 
     # Stateless
     message_buffer_autoclear: Mapped[bool] = mapped_column(
         Boolean, doc="If set to True, the agent will not remember previous messages. Not recommended unless you have an advanced use case."
     )
-    enable_sleeptime: Mapped[Optional[bool]] = mapped_column(
+    enable_sleeptime: Mapped[bool | None] = mapped_column(
         Boolean, doc="If set to True, memory management will move to a background agent thread."
     )
 
     # relationships
     organization: Mapped["Organization"] = relationship("Organization", back_populates="agents")
-    tool_exec_environment_variables: Mapped[List["AgentEnvironmentVariable"]] = relationship(
+    tool_exec_environment_variables: Mapped[list["AgentEnvironmentVariable"]] = relationship(
         "AgentEnvironmentVariable",
         back_populates="agent",
         cascade="all, delete-orphan",
         lazy="selectin",
         doc="Environment variables associated with this agent.",
     )
-    tools: Mapped[List["Tool"]] = relationship("Tool", secondary="tools_agents", lazy="selectin", passive_deletes=True)
-    sources: Mapped[List["Source"]] = relationship("Source", secondary="sources_agents", lazy="selectin")
-    core_memory: Mapped[List["Block"]] = relationship(
+    tools: Mapped[list["Tool"]] = relationship("Tool", secondary="tools_agents", lazy="selectin", passive_deletes=True)
+    sources: Mapped[list["Source"]] = relationship("Source", secondary="sources_agents", lazy="selectin")
+    core_memory: Mapped[list["Block"]] = relationship(
         "Block",
         secondary="blocks_agents",
         lazy="selectin",
@@ -99,21 +104,21 @@ class Agent(SqlalchemyBase, OrganizationMixin, AsyncAttrs):
         back_populates="agents",
         doc="Blocks forming the core memory of the agent.",
     )
-    tags: Mapped[List["AgentsTags"]] = relationship(
+    tags: Mapped[list["AgentsTags"]] = relationship(
         "AgentsTags",
         back_populates="agent",
         cascade="all, delete-orphan",
         lazy="selectin",
         doc="Tags associated with the agent.",
     )
-    identities: Mapped[List["Identity"]] = relationship(
+    identities: Mapped[list["Identity"]] = relationship(
         "Identity",
         secondary="identities_agents",
         lazy="selectin",
         back_populates="agents",
         passive_deletes=True,
     )
-    groups: Mapped[List["Group"]] = relationship(
+    groups: Mapped[list["Group"]] = relationship(
         "Group",
         secondary="groups_agents",
         lazy="selectin",
@@ -126,15 +131,15 @@ class Agent(SqlalchemyBase, OrganizationMixin, AsyncAttrs):
         viewonly=True,
         back_populates="manager_agent",
     )
-    batch_items: Mapped[List["LLMBatchItem"]] = relationship("LLMBatchItem", back_populates="agent", lazy="selectin")
-    file_agents: Mapped[List["FileAgent"]] = relationship(
+    batch_items: Mapped[list["LLMBatchItem"]] = relationship("LLMBatchItem", back_populates="agent", lazy="selectin")
+    file_agents: Mapped[list["FileAgent"]] = relationship(
         "FileAgent",
         back_populates="agent",
         cascade="all, delete-orphan",
         lazy="selectin",
     )
 
-    def to_pydantic(self, include_relationships: Optional[Set[str]] = None) -> PydanticAgentState:
+    def to_pydantic(self, include_relationships: set[str] | None = None) -> PydanticAgentState:
         """
         Converts the SQLAlchemy Agent model into its Pydantic counterpart.
 
@@ -210,7 +215,7 @@ class Agent(SqlalchemyBase, OrganizationMixin, AsyncAttrs):
 
         return self.__pydantic_model__(**state)
 
-    async def to_pydantic_async(self, include_relationships: Optional[Set[str]] = None) -> PydanticAgentState:
+    async def to_pydantic_async(self, include_relationships: set[str] | None = None) -> PydanticAgentState:
         """
         Converts the SQLAlchemy Agent model into its Pydantic counterpart.
 

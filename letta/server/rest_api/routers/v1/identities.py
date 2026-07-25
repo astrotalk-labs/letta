@@ -1,9 +1,16 @@
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
 
 from letta.orm.errors import NoResultFound, UniqueConstraintViolationError
-from letta.schemas.identity import Identity, IdentityCreate, IdentityProperty, IdentityType, IdentityUpdate, IdentityUpsert
+from letta.schemas.identity import (
+    Identity,
+    IdentityCreate,
+    IdentityProperty,
+    IdentityType,
+    IdentityUpdate,
+    IdentityUpsert,
+)
 from letta.server.rest_api.utils import get_letta_server
 
 if TYPE_CHECKING:
@@ -12,17 +19,17 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/identities", tags=["identities"])
 
 
-@router.get("/", tags=["identities"], response_model=List[Identity], operation_id="list_identities")
+@router.get("/", tags=["identities"], response_model=list[Identity], operation_id="list_identities")
 async def list_identities(
-    name: Optional[str] = Query(None),
-    project_id: Optional[str] = Query(None),
-    identifier_key: Optional[str] = Query(None),
-    identity_type: Optional[IdentityType] = Query(None),
-    before: Optional[str] = Query(None),
-    after: Optional[str] = Query(None),
-    limit: Optional[int] = Query(50),
+    name: str | None = Query(None),
+    project_id: str | None = Query(None),
+    identifier_key: str | None = Query(None),
+    identity_type: IdentityType | None = Query(None),
+    before: str | None = Query(None),
+    after: str | None = Query(None),
+    limit: int | None = Query(50),
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     Get a list of all identities in the database
@@ -52,7 +59,7 @@ async def list_identities(
 @router.get("/count", tags=["identities"], response_model=int, operation_id="count_identities")
 async def count_identities(
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Get count of all identities for a user
@@ -72,7 +79,7 @@ async def count_identities(
 async def retrieve_identity(
     identity_id: str,
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     try:
         actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
@@ -85,8 +92,8 @@ async def retrieve_identity(
 async def create_identity(
     identity: IdentityCreate = Body(...),
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
-    x_project: Optional[str] = Header(None, alias="X-Project"),  # Only handled by next js middleware
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    x_project: str | None = Header(None, alias="X-Project"),  # Only handled by next js middleware
 ):
     try:
         actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
@@ -109,8 +116,8 @@ async def create_identity(
 async def upsert_identity(
     identity: IdentityUpsert = Body(...),
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
-    x_project: Optional[str] = Header(None, alias="X-Project"),  # Only handled by next js middleware
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    x_project: str | None = Header(None, alias="X-Project"),  # Only handled by next js middleware
 ):
     try:
         actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
@@ -128,7 +135,7 @@ async def modify_identity(
     identity_id: str,
     identity: IdentityUpdate = Body(...),
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     try:
         actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
@@ -144,9 +151,9 @@ async def modify_identity(
 @router.put("/{identity_id}/properties", tags=["identities"], operation_id="upsert_identity_properties")
 async def upsert_identity_properties(
     identity_id: str,
-    properties: List[IdentityProperty] = Body(...),
+    properties: list[IdentityProperty] = Body(...),
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     try:
         actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
@@ -163,7 +170,7 @@ async def upsert_identity_properties(
 async def delete_identity(
     identity_id: str,
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     Delete an identity by its identifier key

@@ -1,8 +1,12 @@
 import json
 from textwrap import shorten
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Literal
 
-from letta.constants import WEB_SEARCH_CLIP_CONTENT, WEB_SEARCH_INCLUDE_SCORE, WEB_SEARCH_SEPARATOR
+from letta.constants import (
+    WEB_SEARCH_CLIP_CONTENT,
+    WEB_SEARCH_INCLUDE_SCORE,
+    WEB_SEARCH_SEPARATOR,
+)
 from letta.otel.tracing import trace_method
 from letta.schemas.agent import AgentState
 from letta.schemas.sandbox_config import SandboxConfig
@@ -23,9 +27,9 @@ class LettaBuiltinToolExecutor(ToolExecutor):
         function_args: dict,
         tool: Tool,
         actor: User,
-        agent_state: Optional[AgentState] = None,
-        sandbox_config: Optional[SandboxConfig] = None,
-        sandbox_env_vars: Optional[Dict[str, Any]] = None,
+        agent_state: AgentState | None = None,
+        sandbox_config: SandboxConfig | None = None,
+        sandbox_env_vars: dict[str, Any] | None = None,
     ) -> ToolExecutionResult:
         function_map = {"run_code": self.run_code, "web_search": self.web_search}
 

@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import List, Optional
 
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -28,7 +27,7 @@ class FileManager:
         file_metadata: PydanticFileMetadata,
         actor: PydanticUser,
         *,
-        text: Optional[str] = None,
+        text: str | None = None,
     ) -> PydanticFileMetadata:
 
         # short-circuit if it already exists
@@ -60,10 +59,10 @@ class FileManager:
     async def get_file_by_id(
         self,
         file_id: str,
-        actor: Optional[PydanticUser] = None,
+        actor: PydanticUser | None = None,
         *,
         include_content: bool = False,
-    ) -> Optional[PydanticFileMetadata]:
+    ) -> PydanticFileMetadata | None:
         """Retrieve a file by its ID.
 
         If `include_content=True`, the FileContent relationship is eagerly
@@ -108,8 +107,8 @@ class FileManager:
         *,
         file_id: str,
         actor: PydanticUser,
-        processing_status: Optional[FileProcessingStatus] = None,
-        error_message: Optional[str] = None,
+        processing_status: FileProcessingStatus | None = None,
+        error_message: str | None = None,
     ) -> PydanticFileMetadata:
         """
         Update processing_status and/or error_message on a FileMetadata row.
@@ -193,8 +192,8 @@ class FileManager:
     @enforce_types
     @trace_method
     async def list_files(
-        self, source_id: str, actor: PydanticUser, after: Optional[str] = None, limit: Optional[int] = 50, include_content: bool = False
-    ) -> List[PydanticFileMetadata]:
+        self, source_id: str, actor: PydanticUser, after: str | None = None, limit: int | None = 50, include_content: bool = False
+    ) -> list[PydanticFileMetadata]:
         """List all files with optional pagination."""
         async with db_registry.async_session() as session:
             options = [selectinload(FileMetadataModel.content)] if include_content else None

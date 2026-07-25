@@ -1,4 +1,3 @@
-from typing import List, Optional
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -9,7 +8,13 @@ from letta.orm.block import Block as BlockModel
 from letta.orm.identity import Identity as IdentityModel
 from letta.otel.tracing import trace_method
 from letta.schemas.identity import Identity as PydanticIdentity
-from letta.schemas.identity import IdentityCreate, IdentityProperty, IdentityType, IdentityUpdate, IdentityUpsert
+from letta.schemas.identity import (
+    IdentityCreate,
+    IdentityProperty,
+    IdentityType,
+    IdentityUpdate,
+    IdentityUpsert,
+)
 from letta.schemas.user import User as PydanticUser
 from letta.server.db import db_registry
 from letta.utils import enforce_types
@@ -21,13 +26,13 @@ class IdentityManager:
     @trace_method
     async def list_identities_async(
         self,
-        name: Optional[str] = None,
-        project_id: Optional[str] = None,
-        identifier_key: Optional[str] = None,
-        identity_type: Optional[IdentityType] = None,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        limit: Optional[int] = 50,
+        name: str | None = None,
+        project_id: str | None = None,
+        identifier_key: str | None = None,
+        identity_type: IdentityType | None = None,
+        before: str | None = None,
+        after: str | None = None,
+        limit: int | None = 50,
         actor: PydanticUser = None,
     ) -> list[PydanticIdentity]:
         async with db_registry.async_session() as session:
@@ -175,7 +180,7 @@ class IdentityManager:
     @enforce_types
     @trace_method
     async def upsert_identity_properties_async(
-        self, identity_id: str, properties: List[IdentityProperty], actor: PydanticUser
+        self, identity_id: str, properties: list[IdentityProperty], actor: PydanticUser
     ) -> PydanticIdentity:
         async with db_registry.async_session() as session:
             existing_identity = await IdentityModel.read_async(db_session=session, identifier=identity_id, actor=actor)
@@ -219,7 +224,7 @@ class IdentityManager:
         identity: PydanticIdentity,
         relationship_name: str,
         model_class,
-        item_ids: List[str],
+        item_ids: list[str],
         allow_partial=False,
         replace=True,
     ):

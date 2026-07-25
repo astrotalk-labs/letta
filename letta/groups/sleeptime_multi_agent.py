@@ -1,7 +1,6 @@
 import asyncio
 import threading
 from datetime import datetime, timezone
-from typing import List, Optional
 
 from letta.agent import Agent, AgentState
 from letta.groups.helpers import stringify_message
@@ -29,9 +28,9 @@ class SleeptimeMultiAgent(Agent):
         # mcp_clients: Optional[Dict[str, BaseMCPClient]] = None,
         # custom
         group_id: str = "",
-        agent_ids: List[str] = [],
+        agent_ids: list[str] = [],
         description: str = "",
-        sleeptime_agent_frequency: Optional[int] = None,
+        sleeptime_agent_frequency: int | None = None,
     ):
         super().__init__(interface, agent_state, user)
         self.group_id = group_id
@@ -63,11 +62,11 @@ class SleeptimeMultiAgent(Agent):
     def _issue_background_task(
         self,
         participant_agent_id: str,
-        messages: List[Message],
+        messages: list[Message],
         chaining: bool,
-        max_chaining_steps: Optional[int],
+        max_chaining_steps: int | None,
         token_streaming: bool,
-        metadata: Optional[dict],
+        metadata: dict | None,
         put_inner_thoughts_first: bool,
         last_processed_message_id: str,
     ) -> str:
@@ -100,11 +99,11 @@ class SleeptimeMultiAgent(Agent):
     async def _perform_background_agent_step(
         self,
         participant_agent_id: str,
-        messages: List[Message],
+        messages: list[Message],
         chaining: bool,
-        max_chaining_steps: Optional[int],
+        max_chaining_steps: int | None,
         token_streaming: bool,
-        metadata: Optional[dict],
+        metadata: dict | None,
         put_inner_thoughts_first: bool,
         last_processed_message_id: str,
         run_id: str,
@@ -131,7 +130,7 @@ class SleeptimeMultiAgent(Agent):
                         before=messages[0].id,
                     )
                 except Exception as e:
-                    print(f"Error fetching prior messages: {str(e)}")
+                    print(f"Error fetching prior messages: {e!s}")
                     # continue with just latest messages
 
             transcript_summary = [stringify_message(message) for message in prior_messages + messages]
@@ -190,9 +189,9 @@ class SleeptimeMultiAgent(Agent):
 
     def step(
         self,
-        input_messages: List[MessageCreate],
+        input_messages: list[MessageCreate],
         chaining: bool = True,
-        max_chaining_steps: Optional[int] = None,
+        max_chaining_steps: int | None = None,
         put_inner_thoughts_first: bool = True,
         **kwargs,
     ) -> LettaUsageStatistics:
@@ -258,7 +257,7 @@ class SleeptimeMultiAgent(Agent):
 
                     except Exception as e:
                         # Handle individual task failures
-                        print(f"Agent processing failed: {str(e)}")
+                        print(f"Agent processing failed: {e!s}")
                         raise e
 
         except Exception as e:

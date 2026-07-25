@@ -1,6 +1,6 @@
 import json
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Optional
 
 from anthropic.types.beta.messages import BetaMessageBatch
 from openai import AsyncStream, Stream
@@ -27,11 +27,11 @@ class LLMClientBase:
 
     def __init__(
         self,
-        put_inner_thoughts_first: Optional[bool] = True,
+        put_inner_thoughts_first: bool | None = True,
         use_tool_naming: bool = True,
         actor: Optional["User"] = None,
-        at_user_id: Optional[str] = None,
-        user_cohort: Optional[str] = None,
+        at_user_id: str | None = None,
+        user_cohort: str | None = None,
     ):
         self.actor = actor
         self.at_user_id = at_user_id
@@ -42,13 +42,13 @@ class LLMClientBase:
     @trace_method
     def send_llm_request(
         self,
-        messages: List[Message],
+        messages: list[Message],
         llm_config: LLMConfig,
-        tools: Optional[List[dict]] = None,  # TODO: change to Tool object
-        force_tool_call: Optional[str] = None,
+        tools: list[dict] | None = None,  # TODO: change to Tool object
+        force_tool_call: str | None = None,
         telemetry_manager: Optional["TelemetryManager"] = None,
-        step_id: Optional[str] = None,
-    ) -> Union[ChatCompletionResponse, Stream[ChatCompletionChunk]]:
+        step_id: str | None = None,
+    ) -> ChatCompletionResponse | Stream[ChatCompletionChunk]:
         """
         Issues a request to the downstream model endpoint and parses response.
         If stream=True, returns a Stream[ChatCompletionChunk] that can be iterated over.
@@ -79,11 +79,11 @@ class LLMClientBase:
     async def send_llm_request_async(
         self,
         request_data: dict,
-        messages: List[Message],
+        messages: list[Message],
         llm_config: LLMConfig,
         telemetry_manager: "TelemetryManager | None" = None,
         step_id: str | None = None,
-    ) -> Union[ChatCompletionResponse, AsyncStream[ChatCompletionChunk]]:
+    ) -> ChatCompletionResponse | AsyncStream[ChatCompletionChunk]:
         """
         Issues a request to the downstream model endpoint.
         If stream=True, returns an AsyncStream[ChatCompletionChunk] that can be async iterated over.
@@ -111,19 +111,19 @@ class LLMClientBase:
 
     async def send_llm_batch_request_async(
         self,
-        agent_messages_mapping: Dict[str, List[Message]],
-        agent_tools_mapping: Dict[str, List[dict]],
-        agent_llm_config_mapping: Dict[str, LLMConfig],
-    ) -> Union[BetaMessageBatch]:
+        agent_messages_mapping: dict[str, list[Message]],
+        agent_tools_mapping: dict[str, list[dict]],
+        agent_llm_config_mapping: dict[str, LLMConfig],
+    ) -> BetaMessageBatch:
         raise NotImplementedError
 
     @abstractmethod
     def build_request_data(
         self,
-        messages: List[Message],
+        messages: list[Message],
         llm_config: LLMConfig,
-        tools: List[dict],
-        force_tool_call: Optional[str] = None,
+        tools: list[dict],
+        force_tool_call: str | None = None,
     ) -> dict:
         """
         Constructs a request object in the expected data format for this client.
@@ -154,7 +154,7 @@ class LLMClientBase:
         raise NotImplementedError
 
     @abstractmethod
-    async def request_embeddings(self, texts: List[str], embedding_config: EmbeddingConfig) -> List[List[float]]:
+    async def request_embeddings(self, texts: list[str], embedding_config: EmbeddingConfig) -> list[list[float]]:
         """
         Generate embeddings for a batch of texts.
 
@@ -171,7 +171,7 @@ class LLMClientBase:
     def convert_response_to_chat_completion(
         self,
         response_data: dict,
-        input_messages: List[Message],
+        input_messages: list[Message],
         llm_config: LLMConfig,
     ) -> ChatCompletionResponse:
         """
@@ -199,7 +199,7 @@ class LLMClientBase:
         Returns:
             An LLMError subclass that represents the error in a provider-agnostic way
         """
-        return LLMError(f"Unhandled LLM error: {str(e)}")
+        return LLMError(f"Unhandled LLM error: {e!s}")
 
     def _fix_truncated_json_response(self, response: ChatCompletionResponse) -> ChatCompletionResponse:
         """

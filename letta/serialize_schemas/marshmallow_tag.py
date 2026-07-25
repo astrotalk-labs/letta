@@ -1,4 +1,3 @@
-from typing import Dict
 
 from marshmallow import fields, post_dump, pre_load
 
@@ -16,11 +15,11 @@ class SerializedAgentTagSchema(BaseSchema):
     tag = fields.String(required=True)
 
     @post_dump
-    def sanitize_ids(self, data: Dict, **kwargs):
+    def sanitize_ids(self, data: dict, **kwargs):
         return data
 
     @pre_load
-    def regenerate_ids(self, data: Dict, **kwargs) -> Dict:
+    def regenerate_ids(self, data: dict, **kwargs) -> dict:
         return data
 
     class Meta(BaseSchema.Meta):

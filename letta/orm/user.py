@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -20,7 +20,7 @@ class User(SqlalchemyBase, OrganizationMixin):
 
     # relationships
     organization: Mapped["Organization"] = relationship("Organization", back_populates="users")
-    jobs: Mapped[List["Job"]] = relationship(
+    jobs: Mapped[list["Job"]] = relationship(
         "Job", back_populates="user", doc="the jobs associated with this user.", cascade="all, delete-orphan"
     )
 

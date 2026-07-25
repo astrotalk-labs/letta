@@ -1,7 +1,7 @@
 import asyncio
 import json
 import traceback
-from typing import List, Optional, Tuple, Union
+from typing import Union
 
 from letta.agents.ephemeral_summary_agent import EphemeralSummaryAgent
 from letta.constants import DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG
@@ -25,7 +25,7 @@ class Summarizer:
     def __init__(
         self,
         mode: SummarizationMode,
-        summarizer_agent: Optional[Union[EphemeralSummaryAgent, "VoiceSleeptimeAgent"]] = None,
+        summarizer_agent: Union[EphemeralSummaryAgent, "VoiceSleeptimeAgent"] | None = None,
         message_buffer_limit: int = 10,
         message_buffer_min: int = 3,
     ):
@@ -39,8 +39,8 @@ class Summarizer:
 
     @trace_method
     def summarize(
-        self, in_context_messages: List[Message], new_letta_messages: List[Message], force: bool = False, clear: bool = False
-    ) -> Tuple[List[Message], bool]:
+        self, in_context_messages: list[Message], new_letta_messages: list[Message], force: bool = False, clear: bool = False
+    ) -> tuple[list[Message], bool]:
         """
         Summarizes or trims in_context_messages according to the chosen mode,
         and returns the updated messages plus any optional "summary message".
@@ -75,8 +75,8 @@ class Summarizer:
         return task
 
     def _static_buffer_summarization(
-        self, in_context_messages: List[Message], new_letta_messages: List[Message], force: bool = False, clear: bool = False
-    ) -> Tuple[List[Message], bool]:
+        self, in_context_messages: list[Message], new_letta_messages: list[Message], force: bool = False, clear: bool = False
+    ) -> tuple[list[Message], bool]:
         all_in_context_messages = in_context_messages + new_letta_messages
 
         if len(all_in_context_messages) <= self.message_buffer_limit and not force:
@@ -155,7 +155,7 @@ class Summarizer:
         return [all_in_context_messages[0]] + updated_in_context_messages, True
 
 
-def format_transcript(messages: List[Message], include_system: bool = False) -> List[str]:
+def format_transcript(messages: list[Message], include_system: bool = False) -> list[str]:
     """
     Turn a list of Message objects into a human-readable transcript.
 

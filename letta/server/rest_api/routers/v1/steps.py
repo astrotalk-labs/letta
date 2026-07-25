@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
@@ -11,19 +10,19 @@ from letta.server.server import SyncServer
 router = APIRouter(prefix="/steps", tags=["steps"])
 
 
-@router.get("/", response_model=List[Step], operation_id="list_steps")
+@router.get("/", response_model=list[Step], operation_id="list_steps")
 async def list_steps(
-    before: Optional[str] = Query(None, description="Return steps before this step ID"),
-    after: Optional[str] = Query(None, description="Return steps after this step ID"),
-    limit: Optional[int] = Query(50, description="Maximum number of steps to return"),
-    order: Optional[str] = Query("desc", description="Sort order (asc or desc)"),
-    start_date: Optional[str] = Query(None, description='Return steps after this ISO datetime (e.g. "2025-01-29T15:01:19-08:00")'),
-    end_date: Optional[str] = Query(None, description='Return steps before this ISO datetime (e.g. "2025-01-29T15:01:19-08:00")'),
-    model: Optional[str] = Query(None, description="Filter by the name of the model used for the step"),
-    agent_id: Optional[str] = Query(None, description="Filter by the ID of the agent that performed the step"),
-    trace_ids: Optional[list[str]] = Query(None, description="Filter by trace ids returned by the server"),
+    before: str | None = Query(None, description="Return steps before this step ID"),
+    after: str | None = Query(None, description="Return steps after this step ID"),
+    limit: int | None = Query(50, description="Maximum number of steps to return"),
+    order: str | None = Query("desc", description="Sort order (asc or desc)"),
+    start_date: str | None = Query(None, description='Return steps after this ISO datetime (e.g. "2025-01-29T15:01:19-08:00")'),
+    end_date: str | None = Query(None, description='Return steps before this ISO datetime (e.g. "2025-01-29T15:01:19-08:00")'),
+    model: str | None = Query(None, description="Filter by the name of the model used for the step"),
+    agent_id: str | None = Query(None, description="Filter by the ID of the agent that performed the step"),
+    trace_ids: list[str] | None = Query(None, description="Filter by trace ids returned by the server"),
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     List steps with optional pagination and date filters.
@@ -52,7 +51,7 @@ async def list_steps(
 @router.get("/{step_id}", response_model=Step, operation_id="retrieve_step")
 async def retrieve_step(
     step_id: str,
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
     server: SyncServer = Depends(get_letta_server),
 ):
     """
@@ -69,7 +68,7 @@ async def retrieve_step(
 def update_step_transaction_id(
     step_id: str,
     transaction_id: str,
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
     server: SyncServer = Depends(get_letta_server),
 ):
     """

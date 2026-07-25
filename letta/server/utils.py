@@ -50,9 +50,7 @@ def shorten_key_middle(key_string, chars_each_side=3):
 # Health Check Utilities
 # ============================================================================
 
-import asyncio
 import os
-from typing import Dict, Optional
 
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -69,7 +67,7 @@ class ServiceHealth(BaseModel):
 
     service: str
     healthy: bool
-    error: Optional[str] = None
+    error: str | None = None
 
 
 async def check_database_health(db: AsyncSession) -> ServiceHealth:
@@ -94,7 +92,7 @@ async def check_database_health(db: AsyncSession) -> ServiceHealth:
         return ServiceHealth(service="postgres", healthy=False, error="Database connection failed")
 
 
-async def check_anthropic_health() -> Optional[ServiceHealth]:
+async def check_anthropic_health() -> ServiceHealth | None:
     """
     Check Anthropic direct API connectivity if API key is configured.
 
@@ -128,7 +126,7 @@ async def check_anthropic_health() -> Optional[ServiceHealth]:
         return ServiceHealth(service="anthropic_direct", healthy=False, error="Anthropic API check failed")
 
 
-async def check_all_ai_services() -> Dict[str, ServiceHealth]:
+async def check_all_ai_services() -> dict[str, ServiceHealth]:
     """
     Check connectivity to configured AI services (Anthropic direct API only).
 

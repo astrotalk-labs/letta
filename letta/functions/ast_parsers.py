@@ -2,7 +2,6 @@ import ast
 import builtins
 import json
 import typing
-from typing import Dict, Optional, Tuple
 
 from letta.errors import LettaToolCreateError
 from letta.types import JsonDict
@@ -35,7 +34,7 @@ def resolve_type(annotation: str):
 
 
 # TODO :: THIS MUST BE EDITED TO HANDLE THINGS
-def get_function_annotations_from_source(source_code: str, function_name: str) -> Dict[str, str]:
+def get_function_annotations_from_source(source_code: str, function_name: str) -> dict[str, str]:
     """
     Parse the source code to extract annotations for a given function name.
 
@@ -62,7 +61,7 @@ def get_function_annotations_from_source(source_code: str, function_name: str) -
 
 
 # NOW json_loads -> ast.literal_eval -> typing.get_origin
-def coerce_dict_args_by_annotations(function_args: JsonDict, annotations: Dict[str, str]) -> dict:
+def coerce_dict_args_by_annotations(function_args: JsonDict, annotations: dict[str, str]) -> dict:
     coerced_args = dict(function_args)  # Shallow copy
 
     for arg_name, value in coerced_args.items():
@@ -96,7 +95,7 @@ def coerce_dict_args_by_annotations(function_args: JsonDict, annotations: Dict[s
     return coerced_args
 
 
-def get_function_name_and_docstring(source_code: str, name: Optional[str] = None) -> Tuple[str, str]:
+def get_function_name_and_docstring(source_code: str, name: str | None = None) -> tuple[str, str]:
     """Gets the name and docstring for a given function source code by parsing the AST.
 
     Args:
@@ -137,4 +136,4 @@ def get_function_name_and_docstring(source_code: str, name: Optional[str] = None
         import traceback
 
         traceback.print_exc()
-        raise LettaToolCreateError(f"Failed to parse function name and docstring: {str(e)}")
+        raise LettaToolCreateError(f"Failed to parse function name and docstring: {e!s}")

@@ -1,7 +1,6 @@
 import asyncio
 import importlib
 import warnings
-from typing import List, Optional, Set, Union
 
 from letta.constants import (
     BASE_FUNCTION_RETURN_CHAR_LIMIT,
@@ -95,8 +94,8 @@ class ToolManager:
 
     @enforce_types
     async def create_mcp_server(
-        self, server_config: Union[StdioServerConfig, SSEServerConfig], actor: PydanticUser
-    ) -> List[Union[StdioServerConfig, SSEServerConfig]]:
+        self, server_config: StdioServerConfig | SSEServerConfig, actor: PydanticUser
+    ) -> list[StdioServerConfig | SSEServerConfig]:
         pass
 
     @enforce_types
@@ -195,7 +194,7 @@ class ToolManager:
 
     @enforce_types
     @trace_method
-    def get_tool_by_name(self, tool_name: str, actor: PydanticUser) -> Optional[PydanticTool]:
+    def get_tool_by_name(self, tool_name: str, actor: PydanticUser) -> PydanticTool | None:
         """Retrieve a tool by its name and a user. We derive the organization from the user, and retrieve that tool."""
         try:
             with db_registry.session() as session:
@@ -206,7 +205,7 @@ class ToolManager:
 
     @enforce_types
     @trace_method
-    async def get_tool_by_name_async(self, tool_name: str, actor: PydanticUser) -> Optional[PydanticTool]:
+    async def get_tool_by_name_async(self, tool_name: str, actor: PydanticUser) -> PydanticTool | None:
         """Retrieve a tool by its name and a user. We derive the organization from the user, and retrieve that tool."""
         try:
             async with db_registry.async_session() as session:
@@ -217,7 +216,7 @@ class ToolManager:
 
     @enforce_types
     @trace_method
-    def get_tool_id_by_name(self, tool_name: str, actor: PydanticUser) -> Optional[str]:
+    def get_tool_id_by_name(self, tool_name: str, actor: PydanticUser) -> str | None:
         """Retrieve a tool by its name and a user. We derive the organization from the user, and retrieve that tool."""
         try:
             with db_registry.session() as session:
@@ -228,7 +227,7 @@ class ToolManager:
 
     @enforce_types
     @trace_method
-    async def get_tool_id_by_name_async(self, tool_name: str, actor: PydanticUser) -> Optional[str]:
+    async def get_tool_id_by_name_async(self, tool_name: str, actor: PydanticUser) -> str | None:
         """Retrieve a tool by its name and a user. We derive the organization from the user, and retrieve that tool."""
         try:
             async with db_registry.async_session() as session:
@@ -239,7 +238,7 @@ class ToolManager:
 
     @enforce_types
     @trace_method
-    async def list_tools_async(self, actor: PydanticUser, after: Optional[str] = None, limit: Optional[int] = 50) -> List[PydanticTool]:
+    async def list_tools_async(self, actor: PydanticUser, after: str | None = None, limit: int | None = 50) -> list[PydanticTool]:
         """List all tools with optional pagination."""
         tools_to_delete = []
         async with db_registry.async_session() as session:
@@ -287,7 +286,7 @@ class ToolManager:
     @enforce_types
     @trace_method
     def update_tool_by_id(
-        self, tool_id: str, tool_update: ToolUpdate, actor: PydanticUser, updated_tool_type: Optional[ToolType] = None
+        self, tool_id: str, tool_update: ToolUpdate, actor: PydanticUser, updated_tool_type: ToolType | None = None
     ) -> PydanticTool:
         """Update a tool by its ID with the given ToolUpdate object."""
         with db_registry.session() as session:
@@ -316,7 +315,7 @@ class ToolManager:
     @enforce_types
     @trace_method
     async def update_tool_by_id_async(
-        self, tool_id: str, tool_update: ToolUpdate, actor: PydanticUser, updated_tool_type: Optional[ToolType] = None
+        self, tool_id: str, tool_update: ToolUpdate, actor: PydanticUser, updated_tool_type: ToolType | None = None
     ) -> PydanticTool:
         """Update a tool by its ID with the given ToolUpdate object."""
         async with db_registry.async_session() as session:
@@ -367,7 +366,7 @@ class ToolManager:
 
     @enforce_types
     @trace_method
-    def upsert_base_tools(self, actor: PydanticUser) -> List[PydanticTool]:
+    def upsert_base_tools(self, actor: PydanticUser) -> list[PydanticTool]:
         """Add default tools in base.py and multi_agent.py"""
         functions_to_schema = {}
 
@@ -437,8 +436,8 @@ class ToolManager:
     async def upsert_base_tools_async(
         self,
         actor: PydanticUser,
-        allowed_types: Optional[Set[ToolType]] = None,
-    ) -> List[PydanticTool]:
+        allowed_types: set[ToolType] | None = None,
+    ) -> list[PydanticTool]:
         """Add default tools defined in the various function_sets modules, optionally filtered by ToolType."""
 
         functions_to_schema = {}

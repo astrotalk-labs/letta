@@ -2,7 +2,7 @@ import os
 import platform
 import subprocess
 import venv
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import TYPE_CHECKING, Optional
 
 from datamodel_code_generator import DataModelType, PythonVersion
 from datamodel_code_generator.model import get_data_model_types
@@ -43,7 +43,7 @@ def find_python_executable(local_configs: LocalSandboxConfig) -> str:
     return python_exec
 
 
-def run_subprocess(command: list, env: Optional[Dict[str, str]] = None, fail_msg: str = "Command failed"):
+def run_subprocess(command: list, env: dict[str, str] | None = None, fail_msg: str = "Command failed"):
     """
     Helper to execute a subprocess with logging and error handling.
 
@@ -68,7 +68,7 @@ def run_subprocess(command: list, env: Optional[Dict[str, str]] = None, fail_msg
         raise RuntimeError(f"{fail_msg}: {e}")
 
 
-def ensure_pip_is_up_to_date(python_exec: str, env: Optional[Dict[str, str]] = None):
+def ensure_pip_is_up_to_date(python_exec: str, env: dict[str, str] | None = None):
     """
     Ensures pip, setuptools, and wheel are up to date before installing any other dependencies.
 
@@ -87,7 +87,7 @@ def install_pip_requirements_for_sandbox(
     local_configs: LocalSandboxConfig,
     upgrade: bool = True,
     user_install_if_no_venv: bool = False,
-    env: Optional[Dict[str, str]] = None,
+    env: dict[str, str] | None = None,
     tool: Optional["Tool"] = None,
 ):
     """
@@ -147,7 +147,7 @@ def install_pip_requirements_for_sandbox(
     run_subprocess(pip_cmd, env=env, fail_msg=fail_msg)
 
 
-def create_venv_for_local_sandbox(sandbox_dir_path: str, venv_path: str, env: Dict[str, str], force_recreate: bool):
+def create_venv_for_local_sandbox(sandbox_dir_path: str, venv_path: str, env: dict[str, str], force_recreate: bool):
     """
     Creates a virtual environment for the sandbox. If force_recreate is True, deletes and recreates the venv.
 
@@ -208,7 +208,7 @@ def add_imports_and_pydantic_schemas_for_args(args_json_schema: dict) -> str:
 
 def prepare_local_sandbox(
     local_cfg: LocalSandboxConfig,
-    env: Dict[str, str],
+    env: dict[str, str],
     force_recreate: bool = False,
 ) -> None:
     """

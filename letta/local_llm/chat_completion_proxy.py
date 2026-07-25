@@ -10,19 +10,33 @@ from letta.helpers.datetime_helpers import get_utc_time_int
 from letta.helpers.json_helpers import json_dumps
 from letta.local_llm.constants import DEFAULT_WRAPPER
 from letta.local_llm.function_parser import patch_function
-from letta.local_llm.grammars.gbnf_grammar_generator import create_dynamic_model_from_function, generate_gbnf_grammar_and_documentation
+from letta.local_llm.grammars.gbnf_grammar_generator import (
+    create_dynamic_model_from_function,
+    generate_gbnf_grammar_and_documentation,
+)
 from letta.local_llm.koboldcpp.api import get_koboldcpp_completion
 from letta.local_llm.llamacpp.api import get_llamacpp_completion
 from letta.local_llm.llm_chat_completion_wrappers import simple_summary_wrapper
-from letta.local_llm.lmstudio.api import get_lmstudio_completion, get_lmstudio_completion_chatcompletions
+from letta.local_llm.lmstudio.api import (
+    get_lmstudio_completion,
+    get_lmstudio_completion_chatcompletions,
+)
 from letta.local_llm.ollama.api import get_ollama_completion
 from letta.local_llm.utils import count_tokens, get_available_wrappers
 from letta.local_llm.vllm.api import get_vllm_completion
 from letta.local_llm.webui.api import get_webui_completion
-from letta.local_llm.webui.legacy_api import get_webui_completion as get_webui_completion_legacy
+from letta.local_llm.webui.legacy_api import (
+    get_webui_completion as get_webui_completion_legacy,
+)
 from letta.otel.tracing import log_event
 from letta.prompts.gpt_summarize import SYSTEM as SUMMARIZE_SYSTEM_MESSAGE
-from letta.schemas.openai.chat_completion_response import ChatCompletionResponse, Choice, Message, ToolCall, UsageStatistics
+from letta.schemas.openai.chat_completion_response import (
+    ChatCompletionResponse,
+    Choice,
+    Message,
+    ToolCall,
+    UsageStatistics,
+)
 from letta.utils import get_tool_call_id
 
 has_shown_warning = False
@@ -94,8 +108,8 @@ def get_chat_completion(
     # TODO move this to a flag
     if wrapper is not None and "grammar" in wrapper:
         # When using grammars, we don't want to do any extras output tricks like appending a response prefix
-        setattr(llm_wrapper, "assistant_prefix_extra_first_message", "")
-        setattr(llm_wrapper, "assistant_prefix_extra", "")
+        llm_wrapper.assistant_prefix_extra_first_message = ""
+        llm_wrapper.assistant_prefix_extra = ""
 
         # TODO find a better way to do this than string matching (eg an attribute)
         if "noforce" in wrapper:
@@ -139,7 +153,7 @@ def get_chat_completion(
     except Exception as e:
         print(e)
         raise LocalLLMError(
-            f"Failed to convert ChatCompletion messages into prompt string with wrapper {str(llm_wrapper)} - error: {str(e)}"
+            f"Failed to convert ChatCompletion messages into prompt string with wrapper {llm_wrapper!s} - error: {e!s}"
         )
 
     # get the schema for the model
@@ -176,7 +190,7 @@ def get_chat_completion(
             raise LocalLLMError(
                 f"Invalid endpoint type {endpoint_type}, please set variable depending on your backend (webui, lmstudio, llamacpp, koboldcpp)"
             )
-    except requests.exceptions.ConnectionError as e:
+    except requests.exceptions.ConnectionError:
         raise LocalLLMConnectionError(f"Unable to connect to endpoint {endpoint}")
 
     attributes = usage if isinstance(usage, dict) else {"usage": usage}
@@ -194,7 +208,7 @@ def get_chat_completion(
             chat_completion_result = llm_wrapper.output_to_chat_completion_response(result)
         printd(json_dumps(chat_completion_result, indent=2))
     except Exception as e:
-        raise LocalLLMError(f"Failed to parse JSON from local LLM response - error: {str(e)}")
+        raise LocalLLMError(f"Failed to parse JSON from local LLM response - error: {e!s}")
 
     # Run through some manual function correction (optional)
     if function_correction:
@@ -205,7 +219,7 @@ def get_chat_completion(
         raise LocalLLMError(f"usage dict in response was missing fields ({usage})")
 
     if usage["prompt_tokens"] is None:
-        printd(f"usage dict was missing prompt_tokens, computing on-the-fly...")
+        printd("usage dict was missing prompt_tokens, computing on-the-fly...")
         usage["prompt_tokens"] = count_tokens(prompt)
 
     # NOTE: we should compute on-the-fly anyways since we might have to correct for errors during JSON parsing
@@ -220,7 +234,7 @@ def get_chat_completion(
 
     # NOTE: this is the token count that matters most
     if usage["total_tokens"] is None:
-        printd(f"usage dict was missing total_tokens, computing on-the-fly...")
+        printd("usage dict was missing total_tokens, computing on-the-fly...")
         usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
 
     # unpack with response.choices[0].message.content

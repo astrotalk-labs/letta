@@ -1,5 +1,5 @@
 import math
-from typing import Any, Dict, Optional
+from typing import Any
 
 from letta.log import get_logger
 
@@ -33,9 +33,9 @@ class LettaCoreToolExecutor(ToolExecutor):
         function_args: dict,
         tool: Tool,
         actor: User,
-        agent_state: Optional[AgentState] = None,
-        sandbox_config: Optional[SandboxConfig] = None,
-        sandbox_env_vars: Optional[Dict[str, Any]] = None,
+        agent_state: AgentState | None = None,
+        sandbox_config: SandboxConfig | None = None,
+        sandbox_env_vars: dict[str, Any] | None = None,
     ) -> ToolExecutionResult:
         # Map function names to method calls
         assert agent_state is not None, "Agent state is required for core tools"
@@ -72,7 +72,7 @@ class LettaCoreToolExecutor(ToolExecutor):
                 stderr=[get_friendly_error_msg(function_name=function_name, exception_name=type(e).__name__, exception_message=str(e))],
             )
 
-    async def send_message(self, agent_state: AgentState, actor: User, message: str) -> Optional[str]:
+    async def send_message(self, agent_state: AgentState, actor: User, message: str) -> str | None:
         """
         Sends a message to the human user.
 
@@ -84,7 +84,7 @@ class LettaCoreToolExecutor(ToolExecutor):
         """
         return "Sent message successfully."
 
-    async def conversation_search(self, agent_state: AgentState, actor: User, query: str, page: Optional[int] = 0) -> Optional[str]:
+    async def conversation_search(self, agent_state: AgentState, actor: User, query: str, page: int | None = 0) -> str | None:
         """
         Search prior conversation history using case-insensitive string matching.
 
@@ -100,7 +100,7 @@ class LettaCoreToolExecutor(ToolExecutor):
         try:
             page = int(page)
         except:
-            raise ValueError(f"'page' argument must be an integer")
+            raise ValueError("'page' argument must be an integer")
 
         count = RETRIEVAL_QUERY_DEFAULT_PAGE_SIZE
         messages = await MessageManager().list_user_messages_for_agent_async(
@@ -114,7 +114,7 @@ class LettaCoreToolExecutor(ToolExecutor):
         num_pages = math.ceil(total / count) - 1  # 0 index
 
         if len(messages) == 0:
-            results_str = f"No results found."
+            results_str = "No results found."
         else:
             results_pref = f"Showing {len(messages)} of {total} results (page {page}/{num_pages}):"
             results_formatted = [message.content[0].text for message in messages]
@@ -123,8 +123,8 @@ class LettaCoreToolExecutor(ToolExecutor):
         return results_str
 
     async def archival_memory_search(
-        self, agent_state: AgentState, actor: User, query: str, page: Optional[int] = 0, start: Optional[int] = 0
-    ) -> Optional[str]:
+        self, agent_state: AgentState, actor: User, query: str, page: int | None = 0, start: int | None = 0
+    ) -> str | None:
         """
         Search archival memory using semantic (embedding-based) search.
 
@@ -141,7 +141,7 @@ class LettaCoreToolExecutor(ToolExecutor):
         try:
             page = int(page)
         except:
-            raise ValueError(f"'page' argument must be an integer")
+            raise ValueError("'page' argument must be an integer")
 
         count = RETRIEVAL_QUERY_DEFAULT_PAGE_SIZE
 
@@ -169,7 +169,7 @@ class LettaCoreToolExecutor(ToolExecutor):
         except Exception as e:
             raise e
 
-    async def archival_memory_insert(self, agent_state: AgentState, actor: User, content: str) -> Optional[str]:
+    async def archival_memory_insert(self, agent_state: AgentState, actor: User, content: str) -> str | None:
         """
         Add to archival memory. Make sure to phrase the memory contents such that it can be easily queried later.
 
@@ -188,7 +188,7 @@ class LettaCoreToolExecutor(ToolExecutor):
         await AgentManager().rebuild_system_prompt_async(agent_id=agent_state.id, actor=actor, force=True)
         return None
 
-    async def core_memory_append(self, agent_state: AgentState, actor: User, label: str, content: str) -> Optional[str]:
+    async def core_memory_append(self, agent_state: AgentState, actor: User, label: str, content: str) -> str | None:
         """
         Append to the contents of core memory.
 
@@ -223,7 +223,7 @@ class LettaCoreToolExecutor(ToolExecutor):
         label: str,
         old_content: str,
         new_content: str,
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         Replace the contents of core memory. To delete memories, use an empty string for new_content.
 
@@ -260,7 +260,7 @@ class LettaCoreToolExecutor(ToolExecutor):
         actor: User,
         label: str,
         old_str: str,
-        new_str: Optional[str] = None,
+        new_str: str | None = None,
     ) -> str:
         """
         The memory_replace command allows you to replace a specific string in a memory
@@ -494,4 +494,4 @@ class LettaCoreToolExecutor(ToolExecutor):
         Returns:
             Optional[str]: None is always returned as this function does not produce a response.
         """
-        return None
+        return

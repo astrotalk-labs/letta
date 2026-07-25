@@ -1,9 +1,9 @@
 import re
 import time
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from datetime import timezone as dt_timezone
 from time import strftime
-from typing import Callable
 
 import pytz
 

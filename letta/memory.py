@@ -1,4 +1,5 @@
-from typing import TYPE_CHECKING, Callable, Dict, List
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from letta.constants import MESSAGE_SUMMARY_REQUEST_ACK
 from letta.llm_api.llm_api_tools import create
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
     from letta.orm import User
 
 
-def get_memory_functions(cls: Memory) -> Dict[str, Callable]:
+def get_memory_functions(cls: Memory) -> dict[str, Callable]:
     """Get memory functions for a memory class"""
     functions = {}
 
@@ -40,7 +41,7 @@ def get_memory_functions(cls: Memory) -> Dict[str, Callable]:
     return functions
 
 
-def _format_summary_history(message_history: List[Message]):
+def _format_summary_history(message_history: list[Message]):
     # TODO use existing prompt formatters for this (eg ChatML)
     def get_message_text(content):
         if content and len(content) == 1 and isinstance(content[0], TextContent):
@@ -53,7 +54,7 @@ def _format_summary_history(message_history: List[Message]):
 @trace_method
 def summarize_messages(
     agent_state: AgentState,
-    message_sequence_to_summarize: List[Message],
+    message_sequence_to_summarize: list[Message],
     actor: "User",
 ):
     """Summarize a message sequence using GPT"""

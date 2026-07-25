@@ -1,19 +1,29 @@
 import asyncio
-from typing import TYPE_CHECKING, List, Optional, Union
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from openai.types.chat.completion_create_params import CompletionCreateParams
 
 from letta.agent import Agent
-from letta.constants import DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG, LETTA_MODEL_ENDPOINT
+from letta.constants import (
+    DEFAULT_MESSAGE_TOOL,
+    DEFAULT_MESSAGE_TOOL_KWARG,
+    LETTA_MODEL_ENDPOINT,
+)
 from letta.log import get_logger
 from letta.schemas.message import Message, MessageCreate
 from letta.schemas.user import User
-from letta.server.rest_api.chat_completions_interface import ChatCompletionsStreamingInterface
+from letta.server.rest_api.chat_completions_interface import (
+    ChatCompletionsStreamingInterface,
+)
 
 # TODO this belongs in a controller!
-from letta.server.rest_api.utils import get_letta_server, get_user_message_from_chat_completions_request, sse_async_generator
+from letta.server.rest_api.utils import (
+    get_letta_server,
+    get_user_message_from_chat_completions_request,
+    sse_async_generator,
+)
 
 if TYPE_CHECKING:
     from letta.server.server import SyncServer
@@ -38,7 +48,7 @@ async def create_chat_completions(
     agent_id: str,
     completion_request: CompletionCreateParams = Body(...),
     server: "SyncServer" = Depends(get_letta_server),
-    user_id: Optional[str] = Header(None, alias="user_id"),
+    user_id: str | None = Header(None, alias="user_id"),
 ):
     # Validate and process fields
     if not completion_request["stream"]:
@@ -71,7 +81,7 @@ async def send_message_to_agent_chat_completions(
     server: "SyncServer",
     letta_agent: Agent,
     actor: User,
-    messages: Union[List[Message], List[MessageCreate]],
+    messages: list[Message] | list[MessageCreate],
     assistant_message_tool_name: str = DEFAULT_MESSAGE_TOOL,
     assistant_message_tool_kwarg: str = DEFAULT_MESSAGE_TOOL_KWARG,
 ) -> StreamingResponse:

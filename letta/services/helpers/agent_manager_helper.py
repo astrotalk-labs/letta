@@ -1,12 +1,16 @@
 import datetime
-from typing import List, Literal, Optional
+from typing import Literal
 
 import numpy as np
-from sqlalchemy import Select, and_, asc, desc, func, literal, or_, select, union_all
+from sqlalchemy import Select, and_, asc, desc, func, or_, select
 from sqlalchemy.sql.expression import exists
 
 from letta import system
-from letta.constants import IN_CONTEXT_MEMORY_KEYWORD, MAX_EMBEDDING_DIM, STRUCTURED_OUTPUT_MODELS
+from letta.constants import (
+    IN_CONTEXT_MEMORY_KEYWORD,
+    MAX_EMBEDDING_DIM,
+    STRUCTURED_OUTPUT_MODELS,
+)
 from letta.embeddings import embedding_model
 from letta.helpers import ToolRulesSolver
 from letta.helpers.datetime_helpers import get_local_time, get_local_time_fast
@@ -27,13 +31,17 @@ from letta.schemas.message import Message, MessageCreate
 from letta.schemas.tool_rule import ToolRule
 from letta.schemas.user import User
 from letta.settings import settings
-from letta.system import get_initial_boot_messages, get_login_event, package_function_response
+from letta.system import (
+    get_initial_boot_messages,
+    get_login_event,
+    package_function_response,
+)
 
 
 # Static methods
 @trace_method
 def _process_relationship(
-    session, agent: AgentModel, relationship_name: str, model_class, item_ids: List[str], allow_partial=False, replace=True
+    session, agent: AgentModel, relationship_name: str, model_class, item_ids: list[str], allow_partial=False, replace=True
 ):
     """
     Generalized function to handle relationships like tools, sources, and blocks using item IDs.
@@ -76,7 +84,7 @@ def _process_relationship(
 
 @trace_method
 async def _process_relationship_async(
-    session, agent: AgentModel, relationship_name: str, model_class, item_ids: List[str], allow_partial=False, replace=True
+    session, agent: AgentModel, relationship_name: str, model_class, item_ids: list[str], allow_partial=False, replace=True
 ):
     """
     Generalized function to handle relationships like tools, sources, and blocks using item IDs.
@@ -118,7 +126,7 @@ async def _process_relationship_async(
         current_relationship.extend(new_items)
 
 
-def _process_tags(agent: AgentModel, tags: List[str], replace=True):
+def _process_tags(agent: AgentModel, tags: list[str], replace=True):
     """
     Handles tags for an agent.
 
@@ -141,7 +149,7 @@ def _process_tags(agent: AgentModel, tags: List[str], replace=True):
         agent.tags.extend([tag for tag in new_tags if tag.tag not in existing_tags])
 
 
-def derive_system_message(agent_type: AgentType, enable_sleeptime: Optional[bool] = None, system: Optional[str] = None):
+def derive_system_message(agent_type: AgentType, enable_sleeptime: bool | None = None, system: str | None = None):
     if system is None:
         # TODO: don't hardcode
 
@@ -224,12 +232,12 @@ def compile_system_message(
     system_prompt: str,
     in_context_memory: Memory,
     in_context_memory_last_edit: datetime.datetime,  # TODO move this inside of BaseMemory?
-    user_defined_variables: Optional[dict] = None,
+    user_defined_variables: dict | None = None,
     append_icm_if_missing: bool = True,
     template_format: Literal["f-string", "mustache", "jinja2"] = "f-string",
     previous_message_count: int = 0,
     archival_memory_size: int = 0,
-    tool_rules_solver: Optional[ToolRulesSolver] = None,
+    tool_rules_solver: ToolRulesSolver | None = None,
 ) -> str:
     """Prepare the final/full system message that will be fed into the LLM API
 
@@ -252,7 +260,7 @@ def compile_system_message(
 
     # Add the protected memory variable
     if IN_CONTEXT_MEMORY_KEYWORD in variables:
-        raise ValueError(f"Found protected variable '{IN_CONTEXT_MEMORY_KEYWORD}' in user-defined vars: {str(user_defined_variables)}")
+        raise ValueError(f"Found protected variable '{IN_CONTEXT_MEMORY_KEYWORD}' in user-defined vars: {user_defined_variables!s}")
     else:
         # TODO should this all put into the memory.__repr__ function?
         memory_metadata_string = compile_memory_metadata_block(
@@ -281,7 +289,7 @@ def compile_system_message(
             else:
                 formatted_prompt = system_prompt.replace(memory_variable_string, full_memory_string)
         except Exception as e:
-            raise ValueError(f"Failed to format system prompt - {str(e)}. System prompt value:\n{system_prompt}")
+            raise ValueError(f"Failed to format system prompt - {e!s}. System prompt value:\n{system_prompt}")
 
     else:
         # TODO support for mustache and jinja2
@@ -292,11 +300,11 @@ def compile_system_message(
 
 def initialize_message_sequence(
     agent_state: AgentState,
-    memory_edit_timestamp: Optional[datetime.datetime] = None,
+    memory_edit_timestamp: datetime.datetime | None = None,
     include_initial_boot_message: bool = True,
     previous_message_count: int = 0,
     archival_memory_size: int = 0,
-) -> List[dict]:
+) -> list[dict]:
     if memory_edit_timestamp is None:
         memory_edit_timestamp = get_local_time()
 
@@ -338,8 +346,8 @@ def initialize_message_sequence(
 
 
 def package_initial_message_sequence(
-    agent_id: str, initial_message_sequence: List[MessageCreate], model: str, actor: User
-) -> List[Message]:
+    agent_id: str, initial_message_sequence: list[MessageCreate], model: str, actor: User
+) -> list[Message]:
     # create the agent object
     init_messages = []
     for message_create in initial_message_sequence:
@@ -377,8 +385,12 @@ def package_initial_message_sequence(
             import json
             import uuid
 
-            from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall as OpenAIToolCall
-            from openai.types.chat.chat_completion_message_tool_call import Function as OpenAIFunction
+            from openai.types.chat.chat_completion_message_tool_call import (
+                ChatCompletionMessageToolCall as OpenAIToolCall,
+            )
+            from openai.types.chat.chat_completion_message_tool_call import (
+                Function as OpenAIFunction,
+            )
 
             from letta.constants import DEFAULT_MESSAGE_TOOL
 
@@ -421,7 +433,7 @@ def package_initial_message_sequence(
     return init_messages
 
 
-def check_supports_structured_output(model: str, tool_rules: List[ToolRule]) -> bool:
+def check_supports_structured_output(model: str, tool_rules: list[ToolRule]) -> bool:
     if model not in STRUCTURED_OUTPUT_MODELS:
         if len(ToolRulesSolver(tool_rules=tool_rules).init_tool_rules) > 1:
             raise ValueError("Multiple initial tools are not supported for non-structured models. Please use only one initial tool rule.")
@@ -449,7 +461,7 @@ def _cursor_filter(created_at_col, id_col, ref_created_at, ref_id, forward: bool
         )
 
 
-def _apply_pagination(query, before: Optional[str], after: Optional[str], session, ascending: bool = True) -> any:
+def _apply_pagination(query, before: str | None, after: str | None, session, ascending: bool = True) -> any:
     if after:
         result = session.execute(select(AgentModel.created_at, AgentModel.id).where(AgentModel.id == after)).first()
         if result:
@@ -468,7 +480,7 @@ def _apply_pagination(query, before: Optional[str], after: Optional[str], sessio
     return query
 
 
-async def _apply_pagination_async(query, before: Optional[str], after: Optional[str], session, ascending: bool = True) -> any:
+async def _apply_pagination_async(query, before: str | None, after: str | None, session, ascending: bool = True) -> any:
     if after:
         result = (await session.execute(select(AgentModel.created_at, AgentModel.id).where(AgentModel.id == after))).first()
         if result:
@@ -487,7 +499,7 @@ async def _apply_pagination_async(query, before: Optional[str], after: Optional[
     return query
 
 
-def _apply_tag_filter(query, tags: Optional[List[str]], match_all_tags: bool):
+def _apply_tag_filter(query, tags: list[str] | None, match_all_tags: bool):
     """
     Apply tag-based filtering to the agent query.
 
@@ -513,7 +525,7 @@ def _apply_tag_filter(query, tags: Optional[List[str]], match_all_tags: bool):
     return query
 
 
-def _apply_identity_filters(query, identity_id: Optional[str], identifier_keys: Optional[List[str]]):
+def _apply_identity_filters(query, identity_id: str | None, identifier_keys: list[str] | None):
     """
     Apply identity-related filters to the agent query.
 
@@ -539,11 +551,11 @@ def _apply_identity_filters(query, identity_id: Optional[str], identifier_keys: 
 
 def _apply_filters(
     query,
-    name: Optional[str],
-    query_text: Optional[str],
-    project_id: Optional[str],
-    template_id: Optional[str],
-    base_template_id: Optional[str],
+    name: str | None,
+    query_text: str | None,
+    project_id: str | None,
+    template_id: str | None,
+    base_template_id: str | None,
 ):
     """
     Apply basic filtering criteria to the agent query.
@@ -582,17 +594,17 @@ def _apply_filters(
 
 def build_source_passage_query(
     actor: User,
-    agent_id: Optional[str] = None,
-    file_id: Optional[str] = None,
-    query_text: Optional[str] = None,
-    start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None,
-    before: Optional[str] = None,
-    after: Optional[str] = None,
-    source_id: Optional[str] = None,
+    agent_id: str | None = None,
+    file_id: str | None = None,
+    query_text: str | None = None,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    before: str | None = None,
+    after: str | None = None,
+    source_id: str | None = None,
     embed_query: bool = False,
     ascending: bool = True,
-    embedding_config: Optional[EmbeddingConfig] = None,
+    embedding_config: EmbeddingConfig | None = None,
 ) -> Select:
     """Build query for source passages with all filters applied."""
 
@@ -681,14 +693,14 @@ def build_source_passage_query(
 def build_agent_passage_query(
     actor: User,
     agent_id: str,  # Required for agent passages
-    query_text: Optional[str] = None,
-    start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None,
-    before: Optional[str] = None,
-    after: Optional[str] = None,
+    query_text: str | None = None,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    before: str | None = None,
+    after: str | None = None,
     embed_query: bool = False,
     ascending: bool = True,
-    embedding_config: Optional[EmbeddingConfig] = None,
+    embedding_config: EmbeddingConfig | None = None,
 ) -> Select:
     """Build query for agent passages with all filters applied."""
 

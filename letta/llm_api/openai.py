@@ -1,5 +1,6 @@
 import warnings
-from typing import Generator, List, Optional, Union
+from collections.abc import Generator
+from typing import Optional
 
 import httpx
 import requests
@@ -8,7 +9,11 @@ from openai import OpenAI
 from letta.constants import LETTA_MODEL_ENDPOINT
 from letta.errors import ErrorCode, LLMAuthenticationError, LLMError
 from letta.helpers.datetime_helpers import timestamp_to_datetime
-from letta.llm_api.helpers import add_inner_thoughts_to_functions, convert_to_structured_output, make_post_request
+from letta.llm_api.helpers import (
+    add_inner_thoughts_to_functions,
+    convert_to_structured_output,
+    make_post_request,
+)
 from letta.llm_api.openai_client import (
     accepts_developer_role,
     requires_auto_tool_choice,
@@ -16,16 +21,27 @@ from letta.llm_api.openai_client import (
     supports_structured_output,
     supports_temperature_param,
 )
-from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION, INNER_THOUGHTS_KWARG_DESCRIPTION_GO_FIRST
+from letta.local_llm.constants import (
+    INNER_THOUGHTS_KWARG,
+    INNER_THOUGHTS_KWARG_DESCRIPTION,
+    INNER_THOUGHTS_KWARG_DESCRIPTION_GO_FIRST,
+)
 from letta.local_llm.utils import num_tokens_from_functions, num_tokens_from_messages
 from letta.log import get_logger
 from letta.otel.tracing import log_event
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.message import Message as _Message
 from letta.schemas.message import MessageRole as _MessageRole
-from letta.schemas.openai.chat_completion_request import ChatCompletionRequest
-from letta.schemas.openai.chat_completion_request import FunctionCall as ToolFunctionChoiceFunctionCall
-from letta.schemas.openai.chat_completion_request import FunctionSchema, Tool, ToolFunctionChoice, cast_message_to_subtype
+from letta.schemas.openai.chat_completion_request import (
+    ChatCompletionRequest,
+    FunctionSchema,
+    Tool,
+    ToolFunctionChoice,
+    cast_message_to_subtype,
+)
+from letta.schemas.openai.chat_completion_request import (
+    FunctionCall as ToolFunctionChoiceFunctionCall,
+)
 from letta.schemas.openai.chat_completion_response import (
     ChatCompletionChunkResponse,
     ChatCompletionResponse,
@@ -36,13 +52,16 @@ from letta.schemas.openai.chat_completion_response import (
     UsageStatistics,
 )
 from letta.schemas.openai.embedding_response import EmbeddingResponse
-from letta.streaming_interface import AgentChunkStreamingInterface, AgentRefreshStreamingInterface
+from letta.streaming_interface import (
+    AgentChunkStreamingInterface,
+    AgentRefreshStreamingInterface,
+)
 from letta.utils import get_tool_call_id, smart_urljoin
 
 logger = get_logger(__name__)
 
 
-def openai_check_valid_api_key(base_url: str, api_key: Union[str, None]) -> None:
+def openai_check_valid_api_key(base_url: str, api_key: str | None) -> None:
     if api_key:
         try:
             # just get model list to check if the api key is valid until we find a cheaper / quicker endpoint
@@ -57,7 +76,7 @@ def openai_check_valid_api_key(base_url: str, api_key: Union[str, None]) -> None
         raise ValueError("No API key provided")
 
 
-def openai_get_model_list(url: str, api_key: Optional[str] = None, fix_url: bool = False, extra_params: Optional[dict] = None) -> dict:
+def openai_get_model_list(url: str, api_key: str | None = None, fix_url: bool = False, extra_params: dict | None = None) -> dict:
     """https://platform.openai.com/docs/api-reference/models/list"""
     from letta.utils import printd
 
@@ -114,9 +133,9 @@ def openai_get_model_list(url: str, api_key: Optional[str] = None, fix_url: bool
 
 async def openai_get_model_list_async(
     url: str,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     fix_url: bool = False,
-    extra_params: Optional[dict] = None,
+    extra_params: dict | None = None,
     client: Optional["httpx.AsyncClient"] = None,
 ) -> dict:
     """https://platform.openai.com/docs/api-reference/models/list"""
@@ -170,10 +189,10 @@ async def openai_get_model_list_async(
 
 def build_openai_chat_completions_request(
     llm_config: LLMConfig,
-    messages: List[_Message],
-    user_id: Optional[str],
-    functions: Optional[list],
-    function_call: Optional[str],
+    messages: list[_Message],
+    user_id: str | None,
+    functions: list | None,
+    function_call: str | None,
     use_tool_naming: bool,
     put_inner_thoughts_first: bool = True,
     use_structured_output: bool = True,
@@ -275,7 +294,7 @@ def openai_chat_completions_process_stream(
     url: str,
     api_key: str,
     chat_completion_request: ChatCompletionRequest,
-    stream_interface: Optional[Union[AgentChunkStreamingInterface, AgentRefreshStreamingInterface]] = None,
+    stream_interface: AgentChunkStreamingInterface | AgentRefreshStreamingInterface | None = None,
     create_message_id: bool = True,
     create_message_datetime: bool = True,
     override_tool_call_id: bool = True,
@@ -284,7 +303,7 @@ def openai_chat_completions_process_stream(
     # however, we don't necessarily want to put these
     # expect_reasoning_content: bool = False,
     expect_reasoning_content: bool = True,
-    name: Optional[str] = None,
+    name: str | None = None,
 ) -> ChatCompletionResponse:
     """Process a streaming completion response, and return a ChatCompletionResponse at the end.
 
@@ -480,7 +499,7 @@ def openai_chat_completions_process_stream(
                                     )
 
                 if message_delta.function_call is not None:
-                    raise NotImplementedError(f"Old function_call style not support with stream=True")
+                    raise NotImplementedError("Old function_call style not support with stream=True")
 
             # overwrite response fields based on latest chunk
             if not create_message_id:
@@ -500,10 +519,10 @@ def openai_chat_completions_process_stream(
         import traceback
 
         traceback.print_exc()
-        logger.error(f"Parsing ChatCompletion stream failed with error:\n{str(e)}")
+        logger.error(f"Parsing ChatCompletion stream failed with error:\n{e!s}")
         raise e
     finally:
-        logger.info(f"Finally ending streaming interface.")
+        logger.info("Finally ending streaming interface.")
         if stream_interface:
             stream_interface.stream_end()
 

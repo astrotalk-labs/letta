@@ -1,16 +1,17 @@
 import os
 import warnings
-from typing import List, Union
 
 import requests
 import tiktoken
 
-import letta.local_llm.llm_chat_completion_wrappers.airoboros as airoboros
-import letta.local_llm.llm_chat_completion_wrappers.chatml as chatml
-import letta.local_llm.llm_chat_completion_wrappers.configurable_wrapper as configurable_wrapper
-import letta.local_llm.llm_chat_completion_wrappers.dolphin as dolphin
-import letta.local_llm.llm_chat_completion_wrappers.llama3 as llama3
-import letta.local_llm.llm_chat_completion_wrappers.zephyr as zephyr
+from letta.local_llm.llm_chat_completion_wrappers import (
+    airoboros,
+    chatml,
+    configurable_wrapper,
+    dolphin,
+    llama3,
+    zephyr,
+)
 from letta.log import get_logger
 from letta.schemas.openai.chat_completion_request import Tool, ToolCall
 
@@ -66,7 +67,7 @@ def count_tokens(s: str, model: str = "gpt-4") -> int:
     return count_tokens(s, model)
 
 
-def num_tokens_from_functions(functions: List[dict], model: str = "gpt-4"):
+def num_tokens_from_functions(functions: list[dict], model: str = "gpt-4"):
     """Return the number of tokens used by a list of functions.
 
     Copied from https://community.openai.com/t/how-to-calculate-the-tokens-when-using-function-call/266573/11
@@ -76,7 +77,7 @@ def num_tokens_from_functions(functions: List[dict], model: str = "gpt-4"):
     except KeyError:
         from letta.utils import printd
 
-        printd(f"Warning: model not found. Using cl100k_base encoding.")
+        printd("Warning: model not found. Using cl100k_base encoding.")
         encoding = tiktoken.get_encoding("cl100k_base")
 
     num_tokens = 0
@@ -139,7 +140,7 @@ def num_tokens_from_functions(functions: List[dict], model: str = "gpt-4"):
     return num_tokens
 
 
-def num_tokens_from_tool_calls(tool_calls: Union[List[dict], List[ToolCall]], model: str = "gpt-4"):
+def num_tokens_from_tool_calls(tool_calls: list[dict] | list[ToolCall], model: str = "gpt-4"):
     """Based on above code (num_tokens_from_functions).
 
     Example to encode:
@@ -187,7 +188,7 @@ def num_tokens_from_tool_calls(tool_calls: Union[List[dict], List[ToolCall]], mo
     return num_tokens
 
 
-def num_tokens_from_messages(messages: List[dict], model: str = "gpt-4") -> int:
+def num_tokens_from_messages(messages: list[dict], model: str = "gpt-4") -> int:
     """Return the number of tokens used by a list of messages.
 
     From: https://github.com/openai/openai-cookbook/blob/main/examples/How_to_count_tokens_with_tiktoken.ipynb

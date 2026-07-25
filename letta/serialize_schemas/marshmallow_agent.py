@@ -1,4 +1,3 @@
-from typing import Dict
 
 from marshmallow import fields, post_dump, pre_load
 from sqlalchemy.orm import sessionmaker
@@ -8,10 +7,16 @@ from letta.orm import Agent
 from letta.orm import Message as MessageModel
 from letta.schemas.agent import AgentState as PydanticAgentState
 from letta.schemas.user import User
-from letta.serialize_schemas.marshmallow_agent_environment_variable import SerializedAgentEnvironmentVariableSchema
+from letta.serialize_schemas.marshmallow_agent_environment_variable import (
+    SerializedAgentEnvironmentVariableSchema,
+)
 from letta.serialize_schemas.marshmallow_base import BaseSchema
 from letta.serialize_schemas.marshmallow_block import SerializedBlockSchema
-from letta.serialize_schemas.marshmallow_custom_fields import EmbeddingConfigField, LLMConfigField, ToolRulesField
+from letta.serialize_schemas.marshmallow_custom_fields import (
+    EmbeddingConfigField,
+    LLMConfigField,
+    ToolRulesField,
+)
 from letta.serialize_schemas.marshmallow_message import SerializedMessageSchema
 from letta.serialize_schemas.marshmallow_tag import SerializedAgentTagSchema
 from letta.serialize_schemas.marshmallow_tool import SerializedToolSchema
@@ -55,7 +60,7 @@ class MarshmallowAgentSchema(BaseSchema):
                 field.schema.actor = actor
 
     @post_dump
-    def attach_messages(self, data: Dict, **kwargs):
+    def attach_messages(self, data: dict, **kwargs):
         """
         After dumping the agent, load all its Message rows and serialize them here.
         """
@@ -79,7 +84,7 @@ class MarshmallowAgentSchema(BaseSchema):
         return data
 
     @post_dump
-    def sanitize_ids(self, data: Dict, **kwargs):
+    def sanitize_ids(self, data: dict, **kwargs):
         """
         - Removes `message_ids`
         - Adds versioning
@@ -108,7 +113,7 @@ class MarshmallowAgentSchema(BaseSchema):
         return data
 
     @post_dump
-    def hide_tool_exec_environment_variables(self, data: Dict, **kwargs):
+    def hide_tool_exec_environment_variables(self, data: dict, **kwargs):
         """Hide the value of tool_exec_environment_variables"""
 
         for env_var in data.get("tool_exec_environment_variables", []):

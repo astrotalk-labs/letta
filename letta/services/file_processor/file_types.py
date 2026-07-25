@@ -8,7 +8,6 @@ mime types, and file processing capabilities across the Letta codebase.
 import mimetypes
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, Set
 
 
 class ChunkingStrategy(str, Enum):
@@ -37,7 +36,7 @@ class FileTypeRegistry:
 
     def __init__(self):
         """Initialize the registry with default supported file types."""
-        self._file_types: Dict[str, FileTypeInfo] = {}
+        self._file_types: dict[str, FileTypeInfo] = {}
         self._register_default_types()
 
     def _register_default_types(self) -> None:
@@ -138,7 +137,7 @@ class FileTypeRegistry:
         mimetypes.add_type("application/x-jsonlines", ".jsonl")
         mimetypes.add_type("text/xml", ".xml")
 
-    def get_allowed_media_types(self) -> Set[str]:
+    def get_allowed_media_types(self) -> set[str]:
         """
         Get set of all allowed MIME types.
 
@@ -158,7 +157,7 @@ class FileTypeRegistry:
 
         return allowed_types
 
-    def get_extension_to_mime_type_map(self) -> Dict[str, str]:
+    def get_extension_to_mime_type_map(self) -> dict[str, str]:
         """
         Get mapping from file extensions to MIME types.
 
@@ -167,7 +166,7 @@ class FileTypeRegistry:
         """
         return {file_type.extension: file_type.mime_type for file_type in self._file_types.values()}
 
-    def get_simple_text_mime_types(self) -> Set[str]:
+    def get_simple_text_mime_types(self) -> set[str]:
         """
         Get set of MIME types that represent simple text files.
 
@@ -201,7 +200,7 @@ class FileTypeRegistry:
         }
         return mime_type in simple_text_aliases
 
-    def get_supported_extensions(self) -> Set[str]:
+    def get_supported_extensions(self) -> set[str]:
         """
         Get set of all supported file extensions.
 
@@ -283,17 +282,17 @@ def register_mime_types() -> None:
     file_type_registry.register_mime_types()
 
 
-def get_allowed_media_types() -> Set[str]:
+def get_allowed_media_types() -> set[str]:
     """Get set of all allowed MIME types for file uploads."""
     return file_type_registry.get_allowed_media_types()
 
 
-def get_extension_to_mime_type_map() -> Dict[str, str]:
+def get_extension_to_mime_type_map() -> dict[str, str]:
     """Get mapping from file extensions to MIME types."""
     return file_type_registry.get_extension_to_mime_type_map()
 
 
-def get_simple_text_mime_types() -> Set[str]:
+def get_simple_text_mime_types() -> set[str]:
     """Get set of MIME types that represent simple text files."""
     return file_type_registry.get_simple_text_mime_types()
 

@@ -1,7 +1,6 @@
 import configparser
 import os
 from dataclasses import dataclass
-from typing import Optional
 
 import letta
 from letta.constants import (
@@ -95,7 +94,7 @@ class LettaConfig:
         pass
 
     @classmethod
-    def load(cls, llm_config: Optional[LLMConfig] = None, embedding_config: Optional[EmbeddingConfig] = None) -> "LettaConfig":
+    def load(cls, llm_config: LLMConfig | None = None, embedding_config: EmbeddingConfig | None = None) -> "LettaConfig":
         # avoid circular import
         from letta.utils import printd
 

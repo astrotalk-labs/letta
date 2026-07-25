@@ -22,7 +22,11 @@ from letta.orm.organization import Organization
 from letta.orm.passage import AgentPassage, BasePassage, SourcePassage
 from letta.orm.provider import Provider
 from letta.orm.provider_trace import ProviderTrace
-from letta.orm.sandbox_config import AgentEnvironmentVariable, SandboxConfig, SandboxEnvironmentVariable
+from letta.orm.sandbox_config import (
+    AgentEnvironmentVariable,
+    SandboxConfig,
+    SandboxEnvironmentVariable,
+)
 from letta.orm.source import Source
 from letta.orm.sources_agents import SourcesAgents
 from letta.orm.step import Step

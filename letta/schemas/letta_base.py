@@ -1,7 +1,6 @@
 import uuid
 from datetime import datetime
 from logging import getLogger
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -30,7 +29,7 @@ class LettaBase(BaseModel):
     #    raise NotImplementedError("All schemas must have an __id_prefix__ attribute!")
 
     @classmethod
-    def generate_id_field(cls, prefix: Optional[str] = None) -> "Field":
+    def generate_id_field(cls, prefix: str | None = None) -> "Field":
         prefix = prefix or cls.__id_prefix__
 
         return Field(
@@ -42,7 +41,7 @@ class LettaBase(BaseModel):
         )
 
     @classmethod
-    def generate_id(cls, prefix: Optional[str] = None) -> str:
+    def generate_id(cls, prefix: str | None = None) -> str:
         prefix = prefix or cls.__id_prefix__
         return f"{prefix}-{uuid.uuid4()}"
 
@@ -97,7 +96,7 @@ class LettaBase(BaseModel):
 
 class OrmMetadataBase(LettaBase):
     # metadata fields
-    created_by_id: Optional[str] = Field(None, description="The id of the user that made this object.")
-    last_updated_by_id: Optional[str] = Field(None, description="The id of the user that made this object.")
-    created_at: Optional[datetime] = Field(None, description="The timestamp when the object was created.")
-    updated_at: Optional[datetime] = Field(None, description="The timestamp when the object was last updated.")
+    created_by_id: str | None = Field(None, description="The id of the user that made this object.")
+    last_updated_by_id: str | None = Field(None, description="The id of the user that made this object.")
+    created_at: datetime | None = Field(None, description="The timestamp when the object was created.")
+    updated_at: datetime | None = Field(None, description="The timestamp when the object was last updated.")

@@ -4,10 +4,13 @@ Provides convenient methods for evaluating GrowthBook feature flags
 with properly built attribute maps.
 """
 
-from typing import Any, Dict, Optional, Type, TypeVar
+from typing import Any, TypeVar
 
 from letta.growthbook.constants import GrowthBookAttributes
-from letta.growthbook.feature_evaluator import FeatureEvaluator, FeatureEvaluatorException
+from letta.growthbook.feature_evaluator import (
+    FeatureEvaluator,
+    FeatureEvaluatorException,
+)
 from letta.log import get_logger
 
 logger = get_logger(__name__)
@@ -32,19 +35,19 @@ class ExperimentsService:
     @staticmethod
     def build_attributes(
         *,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        organization_id: Optional[str] = None,
-        model_endpoint_type: Optional[str] = None,
-        model: Optional[str] = None,
-        extra_attributes: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        organization_id: str | None = None,
+        model_endpoint_type: str | None = None,
+        model: str | None = None,
+        extra_attributes: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Build an attributes dict for GrowthBook context.
 
         Only non-None values are included so GrowthBook targeting conditions
         that check for attribute existence work correctly.
         """
-        attrs: Dict[str, Any] = {}
+        attrs: dict[str, Any] = {}
         if user_id is not None:
             attrs[GrowthBookAttributes.USER_ID] = user_id
         if agent_id is not None:
@@ -66,9 +69,9 @@ class ExperimentsService:
     def evaluate_feature(
         self,
         feature_key: str,
-        attributes: Dict[str, Any],
-        result_type: Type[T] = object,
-    ) -> Optional[T]:
+        attributes: dict[str, Any],
+        result_type: type[T] = object,
+    ) -> T | None:
         """Evaluate a feature flag. Returns ``None`` on failure (fail-open)."""
         try:
             return self._evaluator.get_feature_value(feature_key, attributes, result_type)
@@ -79,6 +82,6 @@ class ExperimentsService:
             logger.error(f"Unexpected error evaluating feature '{feature_key}': {e}")
             return None
 
-    def is_feature_on(self, feature_key: str, attributes: Dict[str, Any]) -> bool:
+    def is_feature_on(self, feature_key: str, attributes: dict[str, Any]) -> bool:
         """Boolean check -- ``True`` if the feature is on, ``False`` otherwise."""
         return self._evaluator.is_feature_on(feature_key, attributes)

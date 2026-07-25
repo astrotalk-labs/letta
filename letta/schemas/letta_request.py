@@ -1,8 +1,19 @@
-from typing import Any, List, Optional
+from typing import Any
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    field_validator,
+)
 
-from letta.constants import DEFAULT_MAX_STEPS, DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG
+from letta.constants import (
+    DEFAULT_MAX_STEPS,
+    DEFAULT_MESSAGE_TOOL,
+    DEFAULT_MESSAGE_TOOL_KWARG,
+)
 from letta.schemas.letta_message import MessageType
 from letta.schemas.message import MessageCreate
 
@@ -12,7 +23,7 @@ class LettaRequest(BaseModel):
     # name for fields that declare a validation_alias (e.g. latencyOptimisationFlow).
     model_config = ConfigDict(populate_by_name=True)
 
-    messages: List[MessageCreate] = Field(..., description="The messages to be sent to the agent.")
+    messages: list[MessageCreate] = Field(..., description="The messages to be sent to the agent.")
     max_steps: int = Field(
         default=DEFAULT_MAX_STEPS,
         description="Maximum number of steps the agent should take to process the request.",
@@ -31,7 +42,7 @@ class LettaRequest(BaseModel):
     )
 
     # filter to only return specific message types
-    include_return_message_types: Optional[List[MessageType]] = Field(
+    include_return_message_types: list[MessageType] | None = Field(
         default=None, description="Only return specified message types in the response. If `None` (default) returns all messages."
     )
 
@@ -45,42 +56,42 @@ class LettaRequest(BaseModel):
         description="Flag to dynamically switch between Anthropic direct API and AWS Bedrock based on experiment configuration.",
     )
 
-    model_override: Optional[str] = Field(
+    model_override: str | None = Field(
         default=None,
         description="Optional model name to use for this request only, overriding the agent's configured llm_config.model. Useful for runtime A/B testing (e.g. shifting an agent from Sonnet 4.5 to Sonnet 4.6 without modifying the stored agent config).",
     )
 
-    user_cohort: Optional[str] = Field(
+    user_cohort: str | None = Field(
         default=None,
         description="User cohort for API key routing. One of: AT_NATIVE, AT_FOREIGN, INDIAN_AT, PANDITJI, LUMUS, UNKNOWN. Populated by the upstream service from Redis USER_STATIC_DATA_{userId}.",
     )
 
-    business_id: Optional[int] = Field(
+    business_id: int | None = Field(
         default=None,
         description="Raw business ID from the order (1=AstroTalk, 10=Panditji, 12=Lumus). 0 when unavailable.",
     )
 
-    llm_provider: Optional[str] = Field(
+    llm_provider: str | None = Field(
         default=None,
         description="Override the LLM provider for this request. Use 'google' to route to Google AI (Gemini) regardless of the agent's configured endpoint.",
     )
 
-    thinking: Optional[dict] = Field(
+    thinking: dict | None = Field(
         default=None,
         description="Extended thinking config forwarded to the Claude API (e.g. {'type': 'adaptive'}). When set, temperature is forced to 1 and max_tokens is raised to at least 8000.",
     )
 
-    thinking_config: Optional[dict] = Field(
+    thinking_config: dict | None = Field(
         default=None,
         description="Thinking config forwarded to Google AI / Gemini (e.g. {'level': 'low'}). Maps level ('low'|'medium'|'high') to a thinking_budget token count.",
     )
 
-    output_config: Optional[dict] = Field(
+    output_config: dict | None = Field(
         default=None,
         description="Output config forwarded to the Claude API (e.g. {'effort': 'high'}).",
     )
 
-    task_id: Optional[str] = Field(
+    task_id: str | None = Field(
         default=None,
         description="Optional task ID for step-wise latency logging. When provided, timing for each phase (context prep, LLM call, tool execution, context rebuild) is emitted as warning logs to help identify bottlenecks.",
     )
@@ -102,7 +113,7 @@ class LettaRequest(BaseModel):
 
     @field_validator("task_id", mode="before")
     @classmethod
-    def coerce_task_id_to_str(cls, v: Any) -> Optional[str]:
+    def coerce_task_id_to_str(cls, v: Any) -> str | None:
         """Accept integers or any scalar as task_id and coerce to string."""
         if v is None:
             return None
@@ -121,8 +132,8 @@ class LettaBatchRequest(LettaRequest):
 
 
 class CreateBatch(BaseModel):
-    requests: List[LettaBatchRequest] = Field(..., description="List of requests to be processed in batch.")
-    callback_url: Optional[HttpUrl] = Field(
+    requests: list[LettaBatchRequest] = Field(..., description="List of requests to be processed in batch.")
+    callback_url: HttpUrl | None = Field(
         None,
         description="Optional URL to call via POST when the batch completes. The callback payload will be a JSON object with the following fields: "
         "{'job_id': string, 'status': string, 'completed_at': string}. "

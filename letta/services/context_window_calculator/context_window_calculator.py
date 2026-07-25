@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, List, Optional, Tuple
+from typing import Any
 
 from openai.types.beta.function_tool import FunctionTool as OpenAITool
 
@@ -17,7 +17,7 @@ class ContextWindowCalculator:
     """Handles context window calculations with different token counting strategies"""
 
     @staticmethod
-    def extract_system_components(system_message: str) -> Tuple[str, str, str]:
+    def extract_system_components(system_message: str) -> tuple[str, str, str]:
         """Extract system prompt, core memory, and external memory summary from system message"""
         base_start = system_message.find("<base_instructions>")
         memory_blocks_start = system_message.find("<memory_blocks>")
@@ -39,7 +39,7 @@ class ContextWindowCalculator:
         return system_prompt, core_memory, external_memory_summary
 
     @staticmethod
-    def extract_summary_memory(messages: List[Any]) -> Tuple[Optional[str], int]:
+    def extract_summary_memory(messages: list[Any]) -> tuple[str | None, int]:
         """Extract summary memory if present and return starting index for real messages"""
         if (
             len(messages) > 1

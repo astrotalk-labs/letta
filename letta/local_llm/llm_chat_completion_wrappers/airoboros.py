@@ -75,7 +75,7 @@ class Airoboros21Wrapper(LLMChatCompletionWrapper):
             func_str = ""
             func_str += f"{schema['name']}:"
             func_str += f"\n  description: {schema['description']}"
-            func_str += f"\n  params:"
+            func_str += "\n  params:"
             for param_k, param_v in schema["parameters"]["properties"].items():
                 # TODO we're ignoring type
                 func_str += f"\n    {param_k}: {param_v['description']}"
@@ -83,8 +83,8 @@ class Airoboros21Wrapper(LLMChatCompletionWrapper):
             return func_str
 
         # prompt += f"\nPlease select the most suitable function and parameters from the list of available functions below, based on the user's input. Provide your response in JSON format."
-        prompt += f"\nPlease select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
-        prompt += f"\nAvailable functions:"
+        prompt += "\nPlease select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
+        prompt += "\nAvailable functions:"
         if function_documentation is not None:
             prompt += f"\n{function_documentation}"
         else:
@@ -135,7 +135,7 @@ class Airoboros21Wrapper(LLMChatCompletionWrapper):
             elif message["role"] == "assistant":
                 prompt += f"\nASSISTANT: {message['content']}"
                 # need to add the function call if there was one
-                if "function_call" in message and message["function_call"]:
+                if message.get("function_call"):
                     prompt += f"\n{create_function_call(message['function_call'])}"
             elif message["role"] in ["function", "tool"]:
                 # TODO find a good way to add this
@@ -150,7 +150,7 @@ class Airoboros21Wrapper(LLMChatCompletionWrapper):
             prompt += "\n### RESPONSE"
 
         if self.include_assistant_prefix:
-            prompt += f"\nASSISTANT:"
+            prompt += "\nASSISTANT:"
             if self.include_opening_brance_in_prefix:
                 prompt += "\n{"
 
@@ -189,12 +189,12 @@ class Airoboros21Wrapper(LLMChatCompletionWrapper):
         try:
             function_json_output = clean_json(raw_llm_output)
         except Exception as e:
-            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{str(e)}")
+            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{e!s}")
         try:
             function_name = function_json_output["function"]
             function_parameters = function_json_output["params"]
         except KeyError as e:
-            raise LLMJSONParsingError(f"Received valid JSON from LLM, but JSON was missing fields: {str(e)}")
+            raise LLMJSONParsingError(f"Received valid JSON from LLM, but JSON was missing fields: {e!s}")
 
         if self.clean_func_args:
             function_name, function_parameters = self.clean_function_args(function_name, function_parameters)
@@ -282,9 +282,9 @@ class Airoboros21InnerMonologueWrapper(Airoboros21Wrapper):
             func_str = ""
             func_str += f"{schema['name']}:"
             func_str += f"\n  description: {schema['description']}"
-            func_str += f"\n  params:"
+            func_str += "\n  params:"
             if add_inner_thoughts:
-                func_str += f"\n    inner_thoughts: Deep inner monologue private to you only."
+                func_str += "\n    inner_thoughts: Deep inner monologue private to you only."
             for param_k, param_v in schema["parameters"]["properties"].items():
                 # TODO we're ignoring type
                 func_str += f"\n    {param_k}: {param_v['description']}"
@@ -292,8 +292,8 @@ class Airoboros21InnerMonologueWrapper(Airoboros21Wrapper):
             return func_str
 
         # prompt += f"\nPlease select the most suitable function and parameters from the list of available functions below, based on the user's input. Provide your response in JSON format."
-        prompt += f"\nPlease select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
-        prompt += f"\nAvailable functions:"
+        prompt += "\nPlease select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
+        prompt += "\nAvailable functions:"
         if function_documentation is not None:
             prompt += f"\n{function_documentation}"
         else:
@@ -360,7 +360,7 @@ class Airoboros21InnerMonologueWrapper(Airoboros21Wrapper):
                 prompt += f"\n{assistant_prefix}:"
                 # need to add the function call if there was one
                 inner_thoughts = message["content"]
-                if "function_call" in message and message["function_call"]:
+                if message.get("function_call"):
                     prompt += f"\n{create_function_call(message['function_call'], inner_thoughts=inner_thoughts)}"
             elif message["role"] in ["function", "tool"]:
                 # TODO find a good way to add this
@@ -375,7 +375,7 @@ class Airoboros21InnerMonologueWrapper(Airoboros21Wrapper):
             prompt += "\n### RESPONSE"
 
         if self.include_assistant_prefix:
-            prompt += f"\nASSISTANT:"
+            prompt += "\nASSISTANT:"
             if self.assistant_prefix_extra:
                 prompt += self.assistant_prefix_extra
 
@@ -421,7 +421,7 @@ class Airoboros21InnerMonologueWrapper(Airoboros21Wrapper):
         try:
             function_json_output = clean_json(raw_llm_output)
         except Exception as e:
-            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{str(e)}")
+            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{e!s}")
         try:
             # NOTE: weird bug can happen where 'function' gets nested if the prefix in the prompt isn't abided by
             if isinstance(function_json_output["function"], dict):
@@ -430,7 +430,7 @@ class Airoboros21InnerMonologueWrapper(Airoboros21Wrapper):
             function_parameters = function_json_output["params"]
         except KeyError as e:
             raise LLMJSONParsingError(
-                f"Received valid JSON from LLM, but JSON was missing fields: {str(e)}. JSON result was:\n{function_json_output}"
+                f"Received valid JSON from LLM, but JSON was missing fields: {e!s}. JSON result was:\n{function_json_output}"
             )
 
         if self.clean_func_args:

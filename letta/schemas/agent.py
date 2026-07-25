@@ -1,9 +1,11 @@
 from enum import Enum
-from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from letta.constants import CORE_MEMORY_LINE_NUMBER_WARNING, DEFAULT_EMBEDDING_CHUNK_SIZE
+from letta.constants import (
+    CORE_MEMORY_LINE_NUMBER_WARNING,
+    DEFAULT_EMBEDDING_CHUNK_SIZE,
+)
 from letta.helpers import ToolRulesSolver
 from letta.schemas.block import CreateBlock
 from letta.schemas.embedding_config import EmbeddingConfig
@@ -57,9 +59,9 @@ class AgentState(OrmMetadataBase, validate_assignment=True):
     id: str = Field(..., description="The id of the agent. Assigned by the database.")
     name: str = Field(..., description="The name of the agent.")
     # tool rules
-    tool_rules: Optional[List[ToolRule]] = Field(default=None, description="The list of tool rules.")
+    tool_rules: list[ToolRule] | None = Field(default=None, description="The list of tool rules.")
     # in-context memory
-    message_ids: Optional[List[str]] = Field(default=None, description="The ids of the messages in the agent's in-context memory.")
+    message_ids: list[str] | None = Field(default=None, description="The ids of the messages in the agent's in-context memory.")
 
     # system prompt
     system: str = Field(..., description="The system prompt used by the agent.")
@@ -70,42 +72,42 @@ class AgentState(OrmMetadataBase, validate_assignment=True):
     # llm information
     llm_config: LLMConfig = Field(..., description="The LLM configuration used by the agent.")
     embedding_config: EmbeddingConfig = Field(..., description="The embedding configuration used by the agent.")
-    response_format: Optional[ResponseFormatUnion] = Field(
+    response_format: ResponseFormatUnion | None = Field(
         None, description="The response format used by the agent when returning from `send_message`."
     )
 
     # This is an object representing the in-process state of a running `Agent`
     # Field in this object can be theoretically edited by tools, and will be persisted by the ORM
-    organization_id: Optional[str] = Field(None, description="The unique identifier of the organization associated with the agent.")
+    organization_id: str | None = Field(None, description="The unique identifier of the organization associated with the agent.")
 
-    description: Optional[str] = Field(None, description="The description of the agent.")
-    metadata: Optional[Dict] = Field(None, description="The metadata of the agent.")
+    description: str | None = Field(None, description="The description of the agent.")
+    metadata: dict | None = Field(None, description="The metadata of the agent.")
 
     memory: Memory = Field(..., description="The in-context memory of the agent.")
-    tools: List[Tool] = Field(..., description="The tools used by the agent.")
-    sources: List[Source] = Field(..., description="The sources used by the agent.")
-    tags: List[str] = Field(..., description="The tags associated with the agent.")
-    tool_exec_environment_variables: List[AgentEnvironmentVariable] = Field(
+    tools: list[Tool] = Field(..., description="The tools used by the agent.")
+    sources: list[Source] = Field(..., description="The sources used by the agent.")
+    tags: list[str] = Field(..., description="The tags associated with the agent.")
+    tool_exec_environment_variables: list[AgentEnvironmentVariable] = Field(
         default_factory=list, description="The environment variables for tool execution specific to this agent."
     )
-    project_id: Optional[str] = Field(None, description="The id of the project the agent belongs to.")
-    template_id: Optional[str] = Field(None, description="The id of the template the agent belongs to.")
-    base_template_id: Optional[str] = Field(None, description="The base template id of the agent.")
-    identity_ids: List[str] = Field([], description="The ids of the identities associated with this agent.")
+    project_id: str | None = Field(None, description="The id of the project the agent belongs to.")
+    template_id: str | None = Field(None, description="The id of the template the agent belongs to.")
+    base_template_id: str | None = Field(None, description="The base template id of the agent.")
+    identity_ids: list[str] = Field([], description="The ids of the identities associated with this agent.")
 
     # An advanced configuration that makes it so this agent does not remember any previous messages
     message_buffer_autoclear: bool = Field(
         False,
         description="If set to True, the agent will not remember previous messages (though the agent will still retain state via core memory blocks and archival/recall memory). Not recommended unless you have an advanced use case.",
     )
-    enable_sleeptime: Optional[bool] = Field(
+    enable_sleeptime: bool | None = Field(
         None,
         description="If set to True, memory management will move to a background agent thread.",
     )
 
-    multi_agent_group: Optional[Group] = Field(None, description="The multi-agent group that this agent manages")
+    multi_agent_group: Group | None = Field(None, description="The multi-agent group that this agent manages")
 
-    def get_agent_env_vars_as_dict(self) -> Dict[str, str]:
+    def get_agent_env_vars_as_dict(self) -> dict[str, str]:
         # Get environment variables for this agent specifically
         per_agent_env_vars = {}
         for agent_env_var_obj in self.tool_exec_environment_variables:
@@ -113,29 +115,29 @@ class AgentState(OrmMetadataBase, validate_assignment=True):
         return per_agent_env_vars
 
 
-class CreateAgent(BaseModel, validate_assignment=True):  #
+class CreateAgent(BaseModel, validate_assignment=True):
     # all optional as server can generate defaults
     name: str = Field(default_factory=lambda: create_random_username(), description="The name of the agent.")
 
     # memory creation
-    memory_blocks: Optional[List[CreateBlock]] = Field(
+    memory_blocks: list[CreateBlock] | None = Field(
         None,
         description="The blocks to create in the agent's in-context memory.",
     )
     # TODO: This is a legacy field and should be removed ASAP to force `tool_ids` usage
-    tools: Optional[List[str]] = Field(None, description="The tools used by the agent.")
-    tool_ids: Optional[List[str]] = Field(None, description="The ids of the tools used by the agent.")
-    source_ids: Optional[List[str]] = Field(None, description="The ids of the sources used by the agent.")
-    block_ids: Optional[List[str]] = Field(None, description="The ids of the blocks used by the agent.")
-    tool_rules: Optional[List[ToolRule]] = Field(None, description="The tool rules governing the agent.")
-    tags: Optional[List[str]] = Field(None, description="The tags associated with the agent.")
-    system: Optional[str] = Field(None, description="The system prompt used by the agent.")
+    tools: list[str] | None = Field(None, description="The tools used by the agent.")
+    tool_ids: list[str] | None = Field(None, description="The ids of the tools used by the agent.")
+    source_ids: list[str] | None = Field(None, description="The ids of the sources used by the agent.")
+    block_ids: list[str] | None = Field(None, description="The ids of the blocks used by the agent.")
+    tool_rules: list[ToolRule] | None = Field(None, description="The tool rules governing the agent.")
+    tags: list[str] | None = Field(None, description="The tags associated with the agent.")
+    system: str | None = Field(None, description="The system prompt used by the agent.")
     agent_type: AgentType = Field(default_factory=lambda: AgentType.memgpt_agent, description="The type of agent.")
-    llm_config: Optional[LLMConfig] = Field(None, description="The LLM configuration used by the agent.")
-    embedding_config: Optional[EmbeddingConfig] = Field(None, description="The embedding configuration used by the agent.")
+    llm_config: LLMConfig | None = Field(None, description="The LLM configuration used by the agent.")
+    embedding_config: EmbeddingConfig | None = Field(None, description="The embedding configuration used by the agent.")
     # Note: if this is None, then we'll populate with the standard "more human than human" initial message sequence
     # If the client wants to make this empty, then the client can set the arg to an empty list
-    initial_message_sequence: Optional[List[MessageCreate]] = Field(
+    initial_message_sequence: list[MessageCreate] | None = Field(
         None, description="The initial set of messages to put in the agent's in-context memory."
     )
     include_base_tools: bool = Field(
@@ -147,47 +149,47 @@ class CreateAgent(BaseModel, validate_assignment=True):  #
     include_base_tool_rules: bool = Field(
         True, description="If true, attaches the Letta base tool rules (e.g. deny all tools not explicitly allowed)."
     )
-    description: Optional[str] = Field(None, description="The description of the agent.")
-    metadata: Optional[Dict] = Field(None, description="The metadata of the agent.")
-    model: Optional[str] = Field(
+    description: str | None = Field(None, description="The description of the agent.")
+    metadata: dict | None = Field(None, description="The metadata of the agent.")
+    model: str | None = Field(
         None,
         description="The LLM configuration handle used by the agent, specified in the format "
         "provider/model-name, as an alternative to specifying llm_config.",
     )
-    embedding: Optional[str] = Field(
+    embedding: str | None = Field(
         None, description="The embedding configuration handle used by the agent, specified in the format provider/model-name."
     )
-    context_window_limit: Optional[int] = Field(None, description="The context window limit used by the agent.")
-    embedding_chunk_size: Optional[int] = Field(DEFAULT_EMBEDDING_CHUNK_SIZE, description="The embedding chunk size used by the agent.")
-    max_tokens: Optional[int] = Field(
+    context_window_limit: int | None = Field(None, description="The context window limit used by the agent.")
+    embedding_chunk_size: int | None = Field(DEFAULT_EMBEDDING_CHUNK_SIZE, description="The embedding chunk size used by the agent.")
+    max_tokens: int | None = Field(
         None,
         description="The maximum number of tokens to generate, including reasoning step. If not set, the model will use its default value.",
     )
-    max_reasoning_tokens: Optional[int] = Field(
+    max_reasoning_tokens: int | None = Field(
         None, description="The maximum number of tokens to generate for reasoning step. If not set, the model will use its default value."
     )
-    enable_reasoner: Optional[bool] = Field(False, description="Whether to enable internal extended thinking step for a reasoner model.")
-    from_template: Optional[str] = Field(None, description="The template id used to configure the agent")
+    enable_reasoner: bool | None = Field(False, description="Whether to enable internal extended thinking step for a reasoner model.")
+    from_template: str | None = Field(None, description="The template id used to configure the agent")
     template: bool = Field(False, description="Whether the agent is a template")
-    project: Optional[str] = Field(
+    project: str | None = Field(
         None,
         deprecated=True,
         description="Deprecated: Project should now be passed via the X-Project header instead of in the request body. If using the sdk, this can be done via the new x_project field below.",
     )
-    tool_exec_environment_variables: Optional[Dict[str, str]] = Field(
+    tool_exec_environment_variables: dict[str, str] | None = Field(
         None, description="The environment variables for tool execution specific to this agent."
     )
-    memory_variables: Optional[Dict[str, str]] = Field(None, description="The variables that should be set for the agent.")
-    project_id: Optional[str] = Field(None, description="The id of the project the agent belongs to.")
-    template_id: Optional[str] = Field(None, description="The id of the template the agent belongs to.")
-    base_template_id: Optional[str] = Field(None, description="The base template id of the agent.")
-    identity_ids: Optional[List[str]] = Field(None, description="The ids of the identities associated with this agent.")
+    memory_variables: dict[str, str] | None = Field(None, description="The variables that should be set for the agent.")
+    project_id: str | None = Field(None, description="The id of the project the agent belongs to.")
+    template_id: str | None = Field(None, description="The id of the template the agent belongs to.")
+    base_template_id: str | None = Field(None, description="The base template id of the agent.")
+    identity_ids: list[str] | None = Field(None, description="The ids of the identities associated with this agent.")
     message_buffer_autoclear: bool = Field(
         False,
         description="If set to True, the agent will not remember previous messages (though the agent will still retain state via core memory blocks and archival/recall memory). Not recommended unless you have an advanced use case.",
     )
-    enable_sleeptime: Optional[bool] = Field(None, description="If set to True, memory management will move to a background agent thread.")
-    response_format: Optional[ResponseFormatUnion] = Field(None, description="The response format for the agent.")
+    enable_sleeptime: bool | None = Field(None, description="If set to True, memory management will move to a background agent thread.")
+    response_format: ResponseFormatUnion | None = Field(None, description="The response format for the agent.")
 
     @field_validator("name")
     @classmethod
@@ -211,7 +213,7 @@ class CreateAgent(BaseModel, validate_assignment=True):  #
 
     @field_validator("model")
     @classmethod
-    def validate_model(cls, model: Optional[str]) -> Optional[str]:
+    def validate_model(cls, model: str | None) -> str | None:
         if not model:
             return model
 
@@ -223,7 +225,7 @@ class CreateAgent(BaseModel, validate_assignment=True):  #
 
     @field_validator("embedding")
     @classmethod
-    def validate_embedding(cls, embedding: Optional[str]) -> Optional[str]:
+    def validate_embedding(cls, embedding: str | None) -> str | None:
         if not embedding:
             return embedding
 
@@ -246,46 +248,46 @@ class CreateAgent(BaseModel, validate_assignment=True):  #
 
 
 class UpdateAgent(BaseModel):
-    name: Optional[str] = Field(None, description="The name of the agent.")
-    tool_ids: Optional[List[str]] = Field(None, description="The ids of the tools used by the agent.")
-    source_ids: Optional[List[str]] = Field(None, description="The ids of the sources used by the agent.")
-    block_ids: Optional[List[str]] = Field(None, description="The ids of the blocks used by the agent.")
-    tags: Optional[List[str]] = Field(None, description="The tags associated with the agent.")
-    system: Optional[str] = Field(None, description="The system prompt used by the agent.")
-    tool_rules: Optional[List[ToolRule]] = Field(None, description="The tool rules governing the agent.")
-    llm_config: Optional[LLMConfig] = Field(None, description="The LLM configuration used by the agent.")
-    embedding_config: Optional[EmbeddingConfig] = Field(None, description="The embedding configuration used by the agent.")
-    message_ids: Optional[List[str]] = Field(None, description="The ids of the messages in the agent's in-context memory.")
-    description: Optional[str] = Field(None, description="The description of the agent.")
-    metadata: Optional[Dict] = Field(None, description="The metadata of the agent.")
-    tool_exec_environment_variables: Optional[Dict[str, str]] = Field(
+    name: str | None = Field(None, description="The name of the agent.")
+    tool_ids: list[str] | None = Field(None, description="The ids of the tools used by the agent.")
+    source_ids: list[str] | None = Field(None, description="The ids of the sources used by the agent.")
+    block_ids: list[str] | None = Field(None, description="The ids of the blocks used by the agent.")
+    tags: list[str] | None = Field(None, description="The tags associated with the agent.")
+    system: str | None = Field(None, description="The system prompt used by the agent.")
+    tool_rules: list[ToolRule] | None = Field(None, description="The tool rules governing the agent.")
+    llm_config: LLMConfig | None = Field(None, description="The LLM configuration used by the agent.")
+    embedding_config: EmbeddingConfig | None = Field(None, description="The embedding configuration used by the agent.")
+    message_ids: list[str] | None = Field(None, description="The ids of the messages in the agent's in-context memory.")
+    description: str | None = Field(None, description="The description of the agent.")
+    metadata: dict | None = Field(None, description="The metadata of the agent.")
+    tool_exec_environment_variables: dict[str, str] | None = Field(
         None, description="The environment variables for tool execution specific to this agent."
     )
-    project_id: Optional[str] = Field(None, description="The id of the project the agent belongs to.")
-    template_id: Optional[str] = Field(None, description="The id of the template the agent belongs to.")
-    base_template_id: Optional[str] = Field(None, description="The base template id of the agent.")
-    identity_ids: Optional[List[str]] = Field(None, description="The ids of the identities associated with this agent.")
-    message_buffer_autoclear: Optional[bool] = Field(
+    project_id: str | None = Field(None, description="The id of the project the agent belongs to.")
+    template_id: str | None = Field(None, description="The id of the template the agent belongs to.")
+    base_template_id: str | None = Field(None, description="The base template id of the agent.")
+    identity_ids: list[str] | None = Field(None, description="The ids of the identities associated with this agent.")
+    message_buffer_autoclear: bool | None = Field(
         None,
         description="If set to True, the agent will not remember previous messages (though the agent will still retain state via core memory blocks and archival/recall memory). Not recommended unless you have an advanced use case.",
     )
-    model: Optional[str] = Field(
+    model: str | None = Field(
         None,
         description="The LLM configuration handle used by the agent, specified in the format "
         "provider/model-name, as an alternative to specifying llm_config.",
     )
-    embedding: Optional[str] = Field(
+    embedding: str | None = Field(
         None, description="The embedding configuration handle used by the agent, specified in the format provider/model-name."
     )
-    enable_sleeptime: Optional[bool] = Field(None, description="If set to True, memory management will move to a background agent thread.")
-    response_format: Optional[ResponseFormatUnion] = Field(None, description="The response format for the agent.")
+    enable_sleeptime: bool | None = Field(None, description="If set to True, memory management will move to a background agent thread.")
+    response_format: ResponseFormatUnion | None = Field(None, description="The response format for the agent.")
 
     class Config:
         extra = "ignore"  # Ignores extra fields
 
 
 class AgentStepResponse(BaseModel):
-    messages: List[Message] = Field(..., description="The messages generated during the agent's step.")
+    messages: list[Message] = Field(..., description="The messages generated during the agent's step.")
     heartbeat_request: bool = Field(..., description="Whether the agent requested a heartbeat (i.e. follow-up execution).")
     function_failed: bool = Field(..., description="Whether the agent step ended because a function call failed.")
     in_context_memory_warning: bool = Field(
@@ -299,7 +301,7 @@ class AgentStepState(BaseModel):
     tool_rules_solver: ToolRulesSolver = Field(..., description="The current state of the ToolRulesSolver")
 
 
-def get_prompt_template_for_agent_type(agent_type: Optional[AgentType] = None):
+def get_prompt_template_for_agent_type(agent_type: AgentType | None = None):
 
     # Sleeptime agents use the MemGPT v2 memory tools (line numbers)
     # MemGPT v2 tools use line-number, so core memory blocks should have line numbers

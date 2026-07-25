@@ -1,5 +1,4 @@
 from enum import Enum
-from typing import List, Optional
 
 from mcp import Tool
 from pydantic import BaseModel, Field
@@ -34,8 +33,8 @@ class SSEServerConfig(BaseServerConfig):
 class StdioServerConfig(BaseServerConfig):
     type: MCPServerType = MCPServerType.STDIO
     command: str = Field(..., description="The command to run (MCP 'local' client will run this command)")
-    args: List[str] = Field(..., description="The arguments to pass to the command")
-    env: Optional[dict[str, str]] = Field(None, description="Environment variables to set")
+    args: list[str] = Field(..., description="The arguments to pass to the command")
+    env: dict[str, str] | None = Field(None, description="Environment variables to set")
 
     def to_dict(self) -> dict:
         values = {

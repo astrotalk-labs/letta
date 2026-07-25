@@ -2,7 +2,6 @@ import asyncio
 import os
 import time
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Set, Tuple
 
 import sqlalchemy as sa
 from sqlalchemy import delete, func, insert, literal, or_, select
@@ -24,34 +23,41 @@ from letta.helpers.datetime_helpers import AsyncTimer, get_utc_time
 from letta.llm_api.llm_client import LLMClient
 from letta.log import get_logger
 from letta.orm import Agent as AgentModel
-from letta.orm import AgentPassage, AgentsTags
+from letta.orm import (
+    AgentsTags,
+    BlocksAgents,
+    IdentitiesAgents,
+    SourcesAgents,
+    ToolsAgents,
+)
 from letta.orm import Block as BlockModel
-from letta.orm import BlocksAgents
 from letta.orm import Group as GroupModel
-from letta.orm import IdentitiesAgents
 from letta.orm import Source as SourceModel
-from letta.orm import SourcesAgents
 from letta.orm import Tool as ToolModel
-from letta.orm import ToolsAgents
 from letta.orm.enums import ToolType
 from letta.orm.errors import NoResultFound
 from letta.orm.sandbox_config import AgentEnvironmentVariable
-from letta.orm.sandbox_config import AgentEnvironmentVariable as AgentEnvironmentVariableModel
+from letta.orm.sandbox_config import (
+    AgentEnvironmentVariable as AgentEnvironmentVariableModel,
+)
 from letta.orm.sqlalchemy_base import AccessType
 from letta.otel.tracing import trace_method
 from letta.schemas.agent import AgentState as PydanticAgentState
-from letta.schemas.agent import AgentType, CreateAgent, UpdateAgent, get_prompt_template_for_agent_type
-from letta.schemas.block import DEFAULT_BLOCKS
+from letta.schemas.agent import (
+    AgentType,
+    CreateAgent,
+    UpdateAgent,
+    get_prompt_template_for_agent_type,
+)
+from letta.schemas.block import DEFAULT_BLOCKS, BlockUpdate
 from letta.schemas.block import Block as PydanticBlock
-from letta.schemas.block import BlockUpdate
 from letta.schemas.embedding_config import EmbeddingConfig
 from letta.schemas.enums import ProviderType
 from letta.schemas.group import Group as PydanticGroup
 from letta.schemas.group import ManagerType
 from letta.schemas.memory import ContextWindowOverview, Memory
-from letta.schemas.message import Message
+from letta.schemas.message import Message, MessageCreate, MessageUpdate
 from letta.schemas.message import Message as PydanticMessage
-from letta.schemas.message import MessageCreate, MessageUpdate
 from letta.schemas.passage import Passage as PydanticPassage
 from letta.schemas.source import Source as PydanticSource
 from letta.schemas.tool import Tool as PydanticTool
@@ -63,8 +69,13 @@ from letta.serialize_schemas.marshmallow_tool import SerializedToolSchema
 from letta.serialize_schemas.pydantic_agent_schema import AgentSchema
 from letta.server.db import db_registry
 from letta.services.block_manager import BlockManager
-from letta.services.context_window_calculator.context_window_calculator import ContextWindowCalculator
-from letta.services.context_window_calculator.token_counter import AnthropicTokenCounter, TiktokenCounter
+from letta.services.context_window_calculator.context_window_calculator import (
+    ContextWindowCalculator,
+)
+from letta.services.context_window_calculator.token_counter import (
+    AnthropicTokenCounter,
+    TiktokenCounter,
+)
 from letta.services.files_agents_manager import FileAgentManager
 from letta.services.helpers.agent_manager_helper import (
     _apply_filters,
@@ -104,7 +115,7 @@ class AgentManager:
         self.file_agent_manager = FileAgentManager()
 
     @staticmethod
-    def _resolve_tools(session, names: Set[str], ids: Set[str], org_id: str) -> Tuple[Dict[str, str], Dict[str, str]]:
+    def _resolve_tools(session, names: set[str], ids: set[str], org_id: str) -> tuple[dict[str, str], dict[str, str]]:
         """
         Bulk‑fetch all ToolModel rows matching either name ∈ names or id ∈ ids
         (and scoped to this organization), and return two maps:
@@ -132,7 +143,7 @@ class AgentManager:
         return name_to_id, id_to_name
 
     @staticmethod
-    async def _resolve_tools_async(session, names: Set[str], ids: Set[str], org_id: str) -> Tuple[Dict[str, str], Dict[str, str]]:
+    async def _resolve_tools_async(session, names: set[str], ids: set[str], org_id: str) -> tuple[dict[str, str], dict[str, str]]:
         """
         Bulk‑fetch all ToolModel rows matching either name ∈ names or id ∈ ids
         (and scoped to this organization), and return two maps:
@@ -232,7 +243,7 @@ class AgentManager:
     # Basic CRUD operations
     # ======================================================================================================================
     @trace_method
-    def create_agent(self, agent_create: CreateAgent, actor: PydanticUser, _test_only_force_id: Optional[str] = None) -> PydanticAgentState:
+    def create_agent(self, agent_create: CreateAgent, actor: PydanticUser, _test_only_force_id: str | None = None) -> PydanticAgentState:
         # validate required configs
         if not agent_create.llm_config or not agent_create.embedding_config:
             raise ValueError("llm_config and embedding_config are required")
@@ -382,7 +393,7 @@ class AgentManager:
 
     @trace_method
     async def create_agent_async(
-        self, agent_create: CreateAgent, actor: PydanticUser, _test_only_force_id: Optional[str] = None
+        self, agent_create: CreateAgent, actor: PydanticUser, _test_only_force_id: str | None = None
     ) -> PydanticAgentState:
         # validate required configs
         if not agent_create.llm_config or not agent_create.embedding_config:
@@ -545,8 +556,8 @@ class AgentManager:
 
     @enforce_types
     def _generate_initial_message_sequence(
-        self, actor: PydanticUser, agent_state: PydanticAgentState, supplied_initial_message_sequence: Optional[List[MessageCreate]] = None
-    ) -> List[Message]:
+        self, actor: PydanticUser, agent_state: PydanticAgentState, supplied_initial_message_sequence: list[MessageCreate] | None = None
+    ) -> list[Message]:
         init_messages = initialize_message_sequence(
             agent_state=agent_state, memory_edit_timestamp=get_utc_time(), include_initial_boot_message=True
         )
@@ -573,7 +584,7 @@ class AgentManager:
     @trace_method
     @enforce_types
     def append_initial_message_sequence_to_in_context_messages(
-        self, actor: PydanticUser, agent_state: PydanticAgentState, initial_message_sequence: Optional[List[MessageCreate]] = None
+        self, actor: PydanticUser, agent_state: PydanticAgentState, initial_message_sequence: list[MessageCreate] | None = None
     ) -> PydanticAgentState:
         init_messages = self._generate_initial_message_sequence(actor, agent_state, initial_message_sequence)
         return self.append_to_in_context_messages(init_messages, agent_id=agent_state.id, actor=actor)
@@ -581,7 +592,7 @@ class AgentManager:
     @trace_method
     @enforce_types
     async def append_initial_message_sequence_to_in_context_messages_async(
-        self, actor: PydanticUser, agent_state: PydanticAgentState, initial_message_sequence: Optional[List[MessageCreate]] = None
+        self, actor: PydanticUser, agent_state: PydanticAgentState, initial_message_sequence: list[MessageCreate] | None = None
     ) -> PydanticAgentState:
         init_messages = self._generate_initial_message_sequence(actor, agent_state, initial_message_sequence)
         return await self.append_to_in_context_messages_async(init_messages, agent_id=agent_state.id, actor=actor)
@@ -829,21 +840,21 @@ class AgentManager:
     def list_agents(
         self,
         actor: PydanticUser,
-        name: Optional[str] = None,
-        tags: Optional[List[str]] = None,
+        name: str | None = None,
+        tags: list[str] | None = None,
         match_all_tags: bool = False,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        limit: Optional[int] = 50,
-        query_text: Optional[str] = None,
-        project_id: Optional[str] = None,
-        template_id: Optional[str] = None,
-        base_template_id: Optional[str] = None,
-        identity_id: Optional[str] = None,
-        identifier_keys: Optional[List[str]] = None,
-        include_relationships: Optional[List[str]] = None,
+        before: str | None = None,
+        after: str | None = None,
+        limit: int | None = 50,
+        query_text: str | None = None,
+        project_id: str | None = None,
+        template_id: str | None = None,
+        base_template_id: str | None = None,
+        identity_id: str | None = None,
+        identifier_keys: list[str] | None = None,
+        include_relationships: list[str] | None = None,
         ascending: bool = True,
-    ) -> List[PydanticAgentState]:
+    ) -> list[PydanticAgentState]:
         """
         Retrieves agents with optimized filtering and optional field selection.
 
@@ -888,21 +899,21 @@ class AgentManager:
     async def list_agents_async(
         self,
         actor: PydanticUser,
-        name: Optional[str] = None,
-        tags: Optional[List[str]] = None,
+        name: str | None = None,
+        tags: list[str] | None = None,
         match_all_tags: bool = False,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        limit: Optional[int] = 50,
-        query_text: Optional[str] = None,
-        project_id: Optional[str] = None,
-        template_id: Optional[str] = None,
-        base_template_id: Optional[str] = None,
-        identity_id: Optional[str] = None,
-        identifier_keys: Optional[List[str]] = None,
-        include_relationships: Optional[List[str]] = None,
+        before: str | None = None,
+        after: str | None = None,
+        limit: int | None = 50,
+        query_text: str | None = None,
+        project_id: str | None = None,
+        template_id: str | None = None,
+        base_template_id: str | None = None,
+        identity_id: str | None = None,
+        identifier_keys: list[str] | None = None,
+        include_relationships: list[str] | None = None,
         ascending: bool = True,
-    ) -> List[PydanticAgentState]:
+    ) -> list[PydanticAgentState]:
         """
         Retrieves agents with optimized filtering and optional field selection.
 
@@ -948,10 +959,10 @@ class AgentManager:
     def list_agents_matching_tags(
         self,
         actor: PydanticUser,
-        match_all: List[str],
-        match_some: List[str],
-        limit: Optional[int] = 50,
-    ) -> List[PydanticAgentState]:
+        match_all: list[str],
+        match_some: list[str],
+        limit: int | None = 50,
+    ) -> list[PydanticAgentState]:
         """
         Retrieves agents in the same organization that match all specified `match_all` tags
         and at least one tag from `match_some`. The query is optimized for efficiency by
@@ -992,10 +1003,10 @@ class AgentManager:
     async def list_agents_matching_tags_async(
         self,
         actor: PydanticUser,
-        match_all: List[str],
-        match_some: List[str],
-        limit: Optional[int] = 50,
-    ) -> List[PydanticAgentState]:
+        match_all: list[str],
+        match_some: list[str],
+        limit: int | None = 50,
+    ) -> list[PydanticAgentState]:
         """
         Retrieves agents in the same organization that match all specified `match_all` tags
         and at least one tag from `match_some`. The query is optimized for efficiency by
@@ -1067,7 +1078,7 @@ class AgentManager:
         self,
         agent_id: str,
         actor: PydanticUser,
-        include_relationships: Optional[List[str]] = None,
+        include_relationships: list[str] | None = None,
     ) -> PydanticAgentState:
         """Fetch an agent by its ID."""
         async with db_registry.async_session() as session:
@@ -1080,7 +1091,7 @@ class AgentManager:
         self,
         agent_ids: list[str],
         actor: PydanticUser,
-        include_relationships: Optional[List[str]] = None,
+        include_relationships: list[str] | None = None,
     ) -> list[PydanticAgentState]:
         """Fetch a list of agents by their IDs."""
         async with db_registry.async_session() as session:
@@ -1214,8 +1225,8 @@ class AgentManager:
         actor: PydanticUser,
         append_copy_suffix: bool = True,
         override_existing_tools: bool = True,
-        project_id: Optional[str] = None,
-        strip_messages: Optional[bool] = False,
+        project_id: str | None = None,
+        strip_messages: bool | None = False,
     ) -> PydanticAgentState:
         serialized_agent_dict = serialized_agent.model_dump()
         tool_data_list = serialized_agent_dict.pop("tools", [])
@@ -1281,7 +1292,7 @@ class AgentManager:
     def _set_environment_variables(
         self,
         agent_id: str,
-        env_vars: Dict[str, str],
+        env_vars: dict[str, str],
         actor: PydanticUser,
     ) -> PydanticAgentState:
         """
@@ -1334,7 +1345,7 @@ class AgentManager:
 
     @trace_method
     @enforce_types
-    def list_groups(self, agent_id: str, actor: PydanticUser, manager_type: Optional[str] = None) -> List[PydanticGroup]:
+    def list_groups(self, agent_id: str, actor: PydanticUser, manager_type: str | None = None) -> list[PydanticGroup]:
         with db_registry.session() as session:
             agent = AgentModel.read(db_session=session, identifier=agent_id, actor=actor)
             if manager_type:
@@ -1351,7 +1362,7 @@ class AgentManager:
     # TODO: This can also be made more efficient, instead of getting, setting, we can do it all in one db session for one query.
     @trace_method
     @enforce_types
-    def get_in_context_messages(self, agent_id: str, actor: PydanticUser) -> List[PydanticMessage]:
+    def get_in_context_messages(self, agent_id: str, actor: PydanticUser) -> list[PydanticMessage]:
         message_ids = self.get_agent_by_id(agent_id=agent_id, actor=actor).message_ids
         return self.message_manager.get_messages_by_ids(message_ids=message_ids, actor=actor)
 
@@ -1443,7 +1454,7 @@ class AgentManager:
     @trace_method
     @enforce_types
     async def rebuild_system_prompt_async(
-        self, agent_id: str, actor: PydanticUser, force=False, update_timestamp=True, tool_rules_solver: Optional[ToolRulesSolver] = None
+        self, agent_id: str, actor: PydanticUser, force=False, update_timestamp=True, tool_rules_solver: ToolRulesSolver | None = None
     ) -> PydanticAgentState:
         """Rebuilds the system message with the latest memory object and any shared memory block updates
 
@@ -1517,12 +1528,12 @@ class AgentManager:
 
     @trace_method
     @enforce_types
-    def set_in_context_messages(self, agent_id: str, message_ids: List[str], actor: PydanticUser) -> PydanticAgentState:
+    def set_in_context_messages(self, agent_id: str, message_ids: list[str], actor: PydanticUser) -> PydanticAgentState:
         return self.update_agent(agent_id=agent_id, agent_update=UpdateAgent(message_ids=message_ids), actor=actor)
 
     @trace_method
     @enforce_types
-    async def set_in_context_messages_async(self, agent_id: str, message_ids: List[str], actor: PydanticUser) -> PydanticAgentState:
+    async def set_in_context_messages_async(self, agent_id: str, message_ids: list[str], actor: PydanticUser) -> PydanticAgentState:
         return await self.update_agent_async(agent_id=agent_id, agent_update=UpdateAgent(message_ids=message_ids), actor=actor)
 
     @trace_method
@@ -1542,7 +1553,7 @@ class AgentManager:
 
     @trace_method
     @enforce_types
-    def prepend_to_in_context_messages(self, messages: List[PydanticMessage], agent_id: str, actor: PydanticUser) -> PydanticAgentState:
+    def prepend_to_in_context_messages(self, messages: list[PydanticMessage], agent_id: str, actor: PydanticUser) -> PydanticAgentState:
         message_ids = self.get_agent_by_id(agent_id=agent_id, actor=actor).message_ids
         new_messages = self.message_manager.create_many_messages(messages, actor=actor)
         message_ids = [message_ids[0]] + [m.id for m in new_messages] + message_ids[1:]
@@ -1550,7 +1561,7 @@ class AgentManager:
 
     @trace_method
     @enforce_types
-    def append_to_in_context_messages(self, messages: List[PydanticMessage], agent_id: str, actor: PydanticUser) -> PydanticAgentState:
+    def append_to_in_context_messages(self, messages: list[PydanticMessage], agent_id: str, actor: PydanticUser) -> PydanticAgentState:
         messages = self.message_manager.create_many_messages(messages, actor=actor)
         message_ids = self.get_agent_by_id(agent_id=agent_id, actor=actor).message_ids or []
         message_ids += [m.id for m in messages]
@@ -1559,7 +1570,7 @@ class AgentManager:
     @trace_method
     @enforce_types
     async def append_to_in_context_messages_async(
-        self, messages: List[PydanticMessage], agent_id: str, actor: PydanticUser
+        self, messages: list[PydanticMessage], agent_id: str, actor: PydanticUser
     ) -> PydanticAgentState:
         messages = await self.message_manager.create_many_messages_async(messages, actor=actor)
         agent = await self.get_agent_by_id_async(agent_id=agent_id, actor=actor)
@@ -1762,7 +1773,7 @@ class AgentManager:
 
     @trace_method
     @enforce_types
-    def list_attached_sources(self, agent_id: str, actor: PydanticUser) -> List[PydanticSource]:
+    def list_attached_sources(self, agent_id: str, actor: PydanticUser) -> list[PydanticSource]:
         """
         Lists all sources attached to an agent.
 
@@ -1782,7 +1793,7 @@ class AgentManager:
 
     @trace_method
     @enforce_types
-    async def list_attached_sources_async(self, agent_id: str, actor: PydanticUser) -> List[PydanticSource]:
+    async def list_attached_sources_async(self, agent_id: str, actor: PydanticUser) -> list[PydanticSource]:
         """
         Lists all sources attached to an agent.
 
@@ -2040,21 +2051,21 @@ class AgentManager:
     def list_agent_passages(
         self,
         actor: PydanticUser,
-        agent_id: Optional[str] = None,
-        file_id: Optional[str] = None,
-        limit: Optional[int] = 50,
-        query_text: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        source_id: Optional[str] = None,
+        agent_id: str | None = None,
+        file_id: str | None = None,
+        limit: int | None = 50,
+        query_text: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        before: str | None = None,
+        after: str | None = None,
+        source_id: str | None = None,
         embed_query: bool = False,
         ascending: bool = True,
-        embedding_config: Optional[EmbeddingConfig] = None,
+        embedding_config: EmbeddingConfig | None = None,
         agent_only: bool = False,
-        task_id: Optional[str] = None,
-    ) -> List[PydanticPassage]:
+        task_id: str | None = None,
+    ) -> list[PydanticPassage]:
         """List archival memory passages for an agent.
 
         Supports text search, vector similarity search, date filtering, and cursor-based
@@ -2112,18 +2123,18 @@ class AgentManager:
     async def list_agent_passages_async(
         self,
         actor: PydanticUser,
-        agent_id: Optional[str] = None,
-        limit: Optional[int] = 50,
-        query_text: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
+        agent_id: str | None = None,
+        limit: int | None = 50,
+        query_text: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        before: str | None = None,
+        after: str | None = None,
         embed_query: bool = False,
         ascending: bool = True,
-        embedding_config: Optional[EmbeddingConfig] = None,
-        task_id: Optional[str] = None,
-    ) -> List[PydanticPassage]:
+        embedding_config: EmbeddingConfig | None = None,
+        task_id: str | None = None,
+    ) -> list[PydanticPassage]:
         """Lists all passages attached to an agent."""
         async with db_registry.async_session() as session:
             _t0 = time.perf_counter()
@@ -2379,7 +2390,7 @@ class AgentManager:
 
     @trace_method
     @enforce_types
-    def list_attached_tools(self, agent_id: str, actor: PydanticUser) -> List[PydanticTool]:
+    def list_attached_tools(self, agent_id: str, actor: PydanticUser) -> list[PydanticTool]:
         """
         List all tools attached to an agent.
 
@@ -2400,8 +2411,8 @@ class AgentManager:
     @trace_method
     @enforce_types
     def list_tags(
-        self, actor: PydanticUser, after: Optional[str] = None, limit: Optional[int] = 50, query_text: Optional[str] = None
-    ) -> List[str]:
+        self, actor: PydanticUser, after: str | None = None, limit: int | None = 50, query_text: str | None = None
+    ) -> list[str]:
         """
         Get all tags a user has created, ordered alphabetically.
 
@@ -2435,8 +2446,8 @@ class AgentManager:
     @trace_method
     @enforce_types
     async def list_tags_async(
-        self, actor: PydanticUser, after: Optional[str] = None, limit: Optional[int] = 50, query_text: Optional[str] = None
-    ) -> List[str]:
+        self, actor: PydanticUser, after: str | None = None, limit: int | None = 50, query_text: str | None = None
+    ) -> list[str]:
         """
         Get all tags a user has created, ordered alphabetically.
 
@@ -2480,7 +2491,7 @@ class AgentManager:
             anthropic_client = LLMClient.create(provider_type=ProviderType.anthropic, actor=actor)
             model = agent_state.llm_config.model if agent_state.llm_config.model_endpoint_type == "anthropic" else None
 
-            token_counter = AnthropicTokenCounter(anthropic_client, model)  # noqa
+            token_counter = AnthropicTokenCounter(anthropic_client, model)
         else:
             token_counter = TiktokenCounter(agent_state.llm_config.model)
 

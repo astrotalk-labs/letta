@@ -1,4 +1,4 @@
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -50,28 +50,28 @@ class LLMConfig(BaseModel):
         "xai",
         "anthropic_vertex",
     ] = Field(..., description="The endpoint type for the model.")
-    model_endpoint: Optional[str] = Field(None, description="The endpoint for the model.")
-    provider_name: Optional[str] = Field(None, description="The provider name for the model.")
-    provider_category: Optional[ProviderCategory] = Field(None, description="The provider category for the model.")
-    model_wrapper: Optional[str] = Field(None, description="The wrapper for the model.")
+    model_endpoint: str | None = Field(None, description="The endpoint for the model.")
+    provider_name: str | None = Field(None, description="The provider name for the model.")
+    provider_category: ProviderCategory | None = Field(None, description="The provider category for the model.")
+    model_wrapper: str | None = Field(None, description="The wrapper for the model.")
     context_window: int = Field(..., description="The context window size for the model.")
-    put_inner_thoughts_in_kwargs: Optional[bool] = Field(
+    put_inner_thoughts_in_kwargs: bool | None = Field(
         True,
         description="Puts 'inner_thoughts' as a kwarg in the function call if this is set to True. This helps with function calling performance and also the generation of inner thoughts.",
     )
-    handle: Optional[str] = Field(None, description="The handle for this config, in the format provider/model-name.")
+    handle: str | None = Field(None, description="The handle for this config, in the format provider/model-name.")
     temperature: float = Field(
         0.7,
         description="The temperature to use when generating text with the model. A higher temperature will result in more random text.",
     )
-    max_tokens: Optional[int] = Field(
+    max_tokens: int | None = Field(
         4096,
         description="The maximum number of tokens to generate. If not set, the model will use its default value.",
     )
     enable_reasoner: bool = Field(
         False, description="Whether or not the model should use extended thinking if it is a 'reasoning' style model"
     )
-    reasoning_effort: Optional[Literal["low", "medium", "high"]] = Field(
+    reasoning_effort: Literal["low", "medium", "high"] | None = Field(
         None,
         description="The reasoning effort to use when generating text reasoning models",
     )

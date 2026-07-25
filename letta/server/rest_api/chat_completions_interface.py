@@ -1,9 +1,13 @@
 import asyncio
 from collections import deque
+from collections.abc import AsyncGenerator
 from datetime import datetime
-from typing import AsyncGenerator, Optional, Union
 
-from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice, ChoiceDelta
+from openai.types.chat.chat_completion_chunk import (
+    ChatCompletionChunk,
+    Choice,
+    ChoiceDelta,
+)
 
 from letta.constants import DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG
 from letta.local_llm.constants import INNER_THOUGHTS_KWARG
@@ -78,7 +82,7 @@ class ChatCompletionsStreamingInterface(AgentChunkStreamingInterface):
 
     async def _create_generator(
         self,
-    ) -> AsyncGenerator[Union[LettaMessage, MessageStreamStatus], None]:
+    ) -> AsyncGenerator[LettaMessage | MessageStreamStatus, None]:
         """
         An asynchronous generator that yields queued items as they arrive.
         Ends when _active is set to False or when timing out.
@@ -160,9 +164,9 @@ class ChatCompletionsStreamingInterface(AgentChunkStreamingInterface):
         message_id: str,
         message_date: datetime,
         expect_reasoning_content: bool = False,
-        name: Optional[str] = None,
+        name: str | None = None,
         message_index: int = 0,
-        prev_message_type: Optional[str] = None,
+        prev_message_type: str | None = None,
     ) -> None:
         """
         Called externally with a ChatCompletionChunkResponse. Transforms
@@ -172,35 +176,35 @@ class ChatCompletionsStreamingInterface(AgentChunkStreamingInterface):
         if processed_chunk is not None:
             self._push_to_buffer(processed_chunk)
 
-    def user_message(self, msg: str, msg_obj: Optional[Message] = None) -> None:
+    def user_message(self, msg: str, msg_obj: Message | None = None) -> None:
         """
         Handle user messages. Here, it's a no-op, but included if your
         pipeline needs to respond to user messages distinctly.
         """
         return
 
-    def internal_monologue(self, msg: str, msg_obj: Optional[Message] = None, chunk_index: Optional[int] = None) -> None:
+    def internal_monologue(self, msg: str, msg_obj: Message | None = None, chunk_index: int | None = None) -> None:
         """
         Handle LLM reasoning or internal monologue. Example usage: if you want
         to capture chain-of-thought for debugging in a non-streaming scenario.
         """
         return
 
-    def assistant_message(self, msg: str, msg_obj: Optional[Message] = None) -> None:
+    def assistant_message(self, msg: str, msg_obj: Message | None = None) -> None:
         """
         Handle direct assistant messages. This class primarily handles them
         as function calls, so it's a no-op by default.
         """
         return
 
-    def function_message(self, msg: str, msg_obj: Optional[Message] = None, chunk_index: Optional[int] = None) -> None:
+    def function_message(self, msg: str, msg_obj: Message | None = None, chunk_index: int | None = None) -> None:
         """
         Handle function-related log messages, typically of the form:
         It's a no-op by default.
         """
         return
 
-    def _process_chunk_to_openai_style(self, chunk: ChatCompletionChunkResponse) -> Optional[ChatCompletionChunk]:
+    def _process_chunk_to_openai_style(self, chunk: ChatCompletionChunkResponse) -> ChatCompletionChunk | None:
         """
         Optionally transform an inbound OpenAI-style chunk so that partial
         content (especially from a 'send_message' tool) is exposed as text

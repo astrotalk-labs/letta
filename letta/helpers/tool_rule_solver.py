@@ -1,4 +1,3 @@
-from typing import List, Optional, Set, Union
 
 from pydantic import BaseModel, Field
 
@@ -24,34 +23,34 @@ class ToolRuleValidationError(Exception):
 
 
 class ToolRulesSolver(BaseModel):
-    init_tool_rules: List[InitToolRule] = Field(
+    init_tool_rules: list[InitToolRule] = Field(
         default_factory=list, description="Initial tool rules to be used at the start of tool execution."
     )
-    continue_tool_rules: List[ContinueToolRule] = Field(
+    continue_tool_rules: list[ContinueToolRule] = Field(
         default_factory=list, description="Continue tool rules to be used to continue tool execution."
     )
     # TODO: This should be renamed?
     # TODO: These are tools that control the set of allowed functions in the next turn
-    child_based_tool_rules: List[Union[ChildToolRule, ConditionalToolRule, MaxCountPerStepToolRule]] = Field(
+    child_based_tool_rules: list[ChildToolRule | ConditionalToolRule | MaxCountPerStepToolRule] = Field(
         default_factory=list, description="Standard tool rules for controlling execution sequence and allowed transitions."
     )
-    parent_tool_rules: List[ParentToolRule] = Field(
+    parent_tool_rules: list[ParentToolRule] = Field(
         default_factory=list, description="Filter tool rules to be used to filter out tools from the available set."
     )
-    terminal_tool_rules: List[TerminalToolRule] = Field(
+    terminal_tool_rules: list[TerminalToolRule] = Field(
         default_factory=list, description="Terminal tool rules that end the agent loop if called."
     )
-    tool_call_history: List[str] = Field(default_factory=list, description="History of tool calls, updated with each tool call.")
+    tool_call_history: list[str] = Field(default_factory=list, description="History of tool calls, updated with each tool call.")
 
     def __init__(
         self,
-        tool_rules: Optional[List[BaseToolRule]] = None,
-        init_tool_rules: Optional[List[InitToolRule]] = None,
-        continue_tool_rules: Optional[List[ContinueToolRule]] = None,
-        child_based_tool_rules: Optional[List[Union[ChildToolRule, ConditionalToolRule, MaxCountPerStepToolRule]]] = None,
-        parent_tool_rules: Optional[List[ParentToolRule]] = None,
-        terminal_tool_rules: Optional[List[TerminalToolRule]] = None,
-        tool_call_history: Optional[List[str]] = None,
+        tool_rules: list[BaseToolRule] | None = None,
+        init_tool_rules: list[InitToolRule] | None = None,
+        continue_tool_rules: list[ContinueToolRule] | None = None,
+        child_based_tool_rules: list[ChildToolRule | ConditionalToolRule | MaxCountPerStepToolRule] | None = None,
+        parent_tool_rules: list[ParentToolRule] | None = None,
+        terminal_tool_rules: list[TerminalToolRule] | None = None,
+        tool_call_history: list[str] | None = None,
         **kwargs,
     ):
         super().__init__(
@@ -98,8 +97,8 @@ class ToolRulesSolver(BaseModel):
         self.tool_call_history.clear()
 
     def get_allowed_tool_names(
-        self, available_tools: Set[str], error_on_empty: bool = False, last_function_response: Optional[str] = None
-    ) -> List[str]:
+        self, available_tools: set[str], error_on_empty: bool = False, last_function_response: str | None = None
+    ) -> list[str]:
         """Get a list of tool names allowed based on the last tool called."""
         # TODO: This piece of code here is quite ugly and deserves a refactor
         # TODO: There's some weird logic encoded here:
@@ -142,7 +141,7 @@ class ToolRulesSolver(BaseModel):
         """Check if the tool is defined as a continue tool in the tool rules."""
         return any(rule.tool_name == tool_name for rule in self.continue_tool_rules)
 
-    def compile_tool_rule_prompts(self) -> Optional[Block]:
+    def compile_tool_rule_prompts(self) -> Block | None:
         """
         Compile prompt templates from all tool rules into an ephemeral Block.
 
@@ -172,7 +171,7 @@ class ToolRulesSolver(BaseModel):
             )
         return None
 
-    def guess_rule_violation(self, tool_name: str) -> List[str]:
+    def guess_rule_violation(self, tool_name: str) -> list[str]:
         """
         Check if the given tool name or the previous tool in history matches any tool rule,
         and return rendered prompt templates for matching rules.

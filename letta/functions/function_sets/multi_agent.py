@@ -1,7 +1,7 @@
 import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 from letta.functions.helpers import (
     _send_message_to_all_agents_in_group_async,
@@ -75,7 +75,7 @@ def send_message_to_agent_async(self: "Agent", message: str, other_agent_id: str
     return "Successfully sent message"
 
 
-def send_message_to_agents_matching_tags(self: "Agent", message: str, match_all: List[str], match_some: List[str]) -> List[str]:
+def send_message_to_agents_matching_tags(self: "Agent", message: str, match_all: list[str], match_some: list[str]) -> list[str]:
     """
     Sends a message to all agents within the same organization that match the specified tag criteria. Agents must possess *all* of the tags in `match_all` and *at least one* of the tags in `match_some` to receive the message.
 
@@ -143,7 +143,7 @@ def send_message_to_agents_matching_tags(self: "Agent", message: str, match_all:
     return results
 
 
-def send_message_to_all_agents_in_group(self: "Agent", message: str) -> List[str]:
+def send_message_to_all_agents_in_group(self: "Agent", message: str) -> list[str]:
     """
     Sends a message to all agents within the same multi-agent group.
 

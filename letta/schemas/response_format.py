@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Annotated, Any, Dict, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, validator
 
@@ -28,7 +28,7 @@ class ResponseFormat(BaseModel):
 # ---------------------
 
 # SQLAlchemy type for database mapping
-ResponseFormatDict = Dict[str, Any]
+ResponseFormatDict = dict[str, Any]
 
 
 class TextResponseFormat(ResponseFormat):
@@ -47,13 +47,13 @@ class JsonSchemaResponseFormat(ResponseFormat):
         ResponseFormatType.json_schema,
         description="The type of the response format.",
     )
-    json_schema: Dict[str, Any] = Field(
+    json_schema: dict[str, Any] = Field(
         ...,
         description="The JSON schema of the response.",
     )
 
     @validator("json_schema")
-    def validate_json_schema(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_json_schema(cls, v: dict[str, Any]) -> dict[str, Any]:
         """Validate that the provided schema is a valid JSON schema."""
         if not isinstance(v, dict):
             raise ValueError("JSON schema must be a dictionary")
@@ -73,6 +73,6 @@ class JsonObjectResponseFormat(ResponseFormat):
 
 # Pydantic type for validation
 ResponseFormatUnion = Annotated[
-    Union[TextResponseFormat | JsonSchemaResponseFormat | JsonObjectResponseFormat],
+    TextResponseFormat | JsonSchemaResponseFormat | JsonObjectResponseFormat,
     Field(discriminator="type"),
 ]

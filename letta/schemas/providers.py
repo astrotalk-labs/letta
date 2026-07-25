@@ -1,13 +1,21 @@
 import warnings
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Literal
 
 import aiohttp
 import requests
 from pydantic import BaseModel, Field, model_validator
 
-from letta.constants import DEFAULT_EMBEDDING_CHUNK_SIZE, LETTA_MODEL_ENDPOINT, LLM_MAX_TOKENS, MIN_CONTEXT_WINDOW
-from letta.llm_api.azure_openai import get_azure_chat_completions_endpoint, get_azure_embeddings_endpoint
+from letta.constants import (
+    DEFAULT_EMBEDDING_CHUNK_SIZE,
+    LETTA_MODEL_ENDPOINT,
+    LLM_MAX_TOKENS,
+    MIN_CONTEXT_WINDOW,
+)
+from letta.llm_api.azure_openai import (
+    get_azure_chat_completions_endpoint,
+    get_azure_embeddings_endpoint,
+)
 from letta.llm_api.azure_openai_constants import AZURE_MODEL_TO_CONTEXT_LENGTH
 from letta.schemas.embedding_config import EmbeddingConfig
 from letta.schemas.embedding_config_overrides import EMBEDDING_HANDLE_OVERRIDES
@@ -23,14 +31,14 @@ class ProviderBase(LettaBase):
 
 
 class Provider(ProviderBase):
-    id: Optional[str] = Field(None, description="The id of the provider, lazily created by the database manager.")
+    id: str | None = Field(None, description="The id of the provider, lazily created by the database manager.")
     name: str = Field(..., description="The name of the provider")
     provider_type: ProviderType = Field(..., description="The type of the provider")
     provider_category: ProviderCategory = Field(..., description="The category of the provider (base or byok)")
-    api_key: Optional[str] = Field(None, description="API key used for requests to the provider.")
-    base_url: Optional[str] = Field(None, description="Base URL for the provider.")
-    organization_id: Optional[str] = Field(None, description="The organization id of the user")
-    updated_at: Optional[datetime] = Field(None, description="The last update timestamp of the provider.")
+    api_key: str | None = Field(None, description="API key used for requests to the provider.")
+    base_url: str | None = Field(None, description="Base URL for the provider.")
+    organization_id: str | None = Field(None, description="The organization id of the user")
+    updated_at: datetime | None = Field(None, description="The last update timestamp of the provider.")
 
     @model_validator(mode="after")
     def default_base_url(self):
@@ -46,29 +54,29 @@ class Provider(ProviderBase):
         """Check if the API key is valid for the provider"""
         raise NotImplementedError
 
-    def list_llm_models(self) -> List[LLMConfig]:
+    def list_llm_models(self) -> list[LLMConfig]:
         return []
 
-    async def list_llm_models_async(self) -> List[LLMConfig]:
+    async def list_llm_models_async(self) -> list[LLMConfig]:
         return []
 
-    def list_embedding_models(self) -> List[EmbeddingConfig]:
+    def list_embedding_models(self) -> list[EmbeddingConfig]:
         return []
 
-    async def list_embedding_models_async(self) -> List[EmbeddingConfig]:
+    async def list_embedding_models_async(self) -> list[EmbeddingConfig]:
         return self.list_embedding_models()
 
-    def get_model_context_window(self, model_name: str) -> Optional[int]:
+    def get_model_context_window(self, model_name: str) -> int | None:
         raise NotImplementedError
 
-    async def get_model_context_window_async(self, model_name: str) -> Optional[int]:
+    async def get_model_context_window_async(self, model_name: str) -> int | None:
         raise NotImplementedError
 
     def provider_tag(self) -> str:
         """String representation of the provider for display purposes"""
         raise NotImplementedError
 
-    def get_handle(self, model_name: str, is_embedding: bool = False, base_name: Optional[str] = None) -> str:
+    def get_handle(self, model_name: str, is_embedding: bool = False, base_name: str | None = None) -> str:
         """
         Get the handle for a model, with support for custom overrides.
 
@@ -138,7 +146,7 @@ class LettaProvider(Provider):
     provider_type: Literal[ProviderType.letta] = Field(ProviderType.letta, description="The type of the provider.")
     provider_category: ProviderCategory = Field(ProviderCategory.base, description="The category of the provider (base or byok)")
 
-    def list_llm_models(self) -> List[LLMConfig]:
+    def list_llm_models(self) -> list[LLMConfig]:
         return [
             LLMConfig(
                 model="letta-free",  # NOTE: renamed
@@ -151,7 +159,7 @@ class LettaProvider(Provider):
             )
         ]
 
-    async def list_llm_models_async(self) -> List[LLMConfig]:
+    async def list_llm_models_async(self) -> list[LLMConfig]:
         return [
             LLMConfig(
                 model="letta-free",  # NOTE: renamed
@@ -188,7 +196,7 @@ class OpenAIProvider(Provider):
 
         openai_check_valid_api_key(self.base_url, self.api_key)
 
-    def _get_models(self) -> List[dict]:
+    def _get_models(self) -> list[dict]:
         from letta.llm_api.openai import openai_get_model_list
 
         # Some hardcoded support for OpenRouter (so that we only get models with tool calling support)...
@@ -213,7 +221,7 @@ class OpenAIProvider(Provider):
 
         return data
 
-    async def _get_models_async(self) -> List[dict]:
+    async def _get_models_async(self) -> list[dict]:
         from letta.llm_api.openai import openai_get_model_list_async
 
         # Some hardcoded support for OpenRouter (so that we only get models with tool calling support)...
@@ -238,15 +246,15 @@ class OpenAIProvider(Provider):
 
         return data
 
-    def list_llm_models(self) -> List[LLMConfig]:
+    def list_llm_models(self) -> list[LLMConfig]:
         data = self._get_models()
         return self._list_llm_models(data)
 
-    async def list_llm_models_async(self) -> List[LLMConfig]:
+    async def list_llm_models_async(self) -> list[LLMConfig]:
         data = await self._get_models_async()
         return self._list_llm_models(data)
 
-    def _list_llm_models(self, data) -> List[LLMConfig]:
+    def _list_llm_models(self, data) -> list[LLMConfig]:
         configs = []
         for model in data:
             assert "id" in model, f"OpenAI model missing 'id' field: {model}"
@@ -333,7 +341,7 @@ class OpenAIProvider(Provider):
 
         return configs
 
-    def list_embedding_models(self) -> List[EmbeddingConfig]:
+    def list_embedding_models(self) -> list[EmbeddingConfig]:
         if self.base_url == "https://api.openai.com/v1":
             # TODO: actually automatically list models for OpenAI
             return [
@@ -368,7 +376,7 @@ class OpenAIProvider(Provider):
             data = self._get_models()
             return self._list_embedding_models(data)
 
-    async def list_embedding_models_async(self) -> List[EmbeddingConfig]:
+    async def list_embedding_models_async(self) -> list[EmbeddingConfig]:
         if self.base_url == "https://api.openai.com/v1":
             # TODO: actually automatically list models for OpenAI
             return [
@@ -403,7 +411,7 @@ class OpenAIProvider(Provider):
             data = await self._get_models_async()
             return self._list_embedding_models(data)
 
-    def _list_embedding_models(self, data) -> List[EmbeddingConfig]:
+    def _list_embedding_models(self, data) -> list[EmbeddingConfig]:
         configs = []
         for model in data:
             assert "id" in model, f"Model missing 'id' field: {model}"
@@ -473,17 +481,15 @@ class DeepSeekProvider(OpenAIProvider):
     base_url: str = Field("https://api.deepseek.com/v1", description="Base URL for the DeepSeek API.")
     api_key: str = Field(..., description="API key for the DeepSeek API.")
 
-    def get_model_context_window_size(self, model_name: str) -> Optional[int]:
+    def get_model_context_window_size(self, model_name: str) -> int | None:
         # DeepSeek doesn't return context window in the model listing,
         # so these are hardcoded from their website
-        if model_name == "deepseek-reasoner":
-            return 64000
-        elif model_name == "deepseek-chat":
+        if model_name == "deepseek-reasoner" or model_name == "deepseek-chat":
             return 64000
         else:
             return None
 
-    def list_llm_models(self) -> List[LLMConfig]:
+    def list_llm_models(self) -> list[LLMConfig]:
         from letta.llm_api.openai import openai_get_model_list
 
         response = openai_get_model_list(self.base_url, api_key=self.api_key)
@@ -527,7 +533,7 @@ class DeepSeekProvider(OpenAIProvider):
 
         return configs
 
-    def list_embedding_models(self) -> List[EmbeddingConfig]:
+    def list_embedding_models(self) -> list[EmbeddingConfig]:
         # No embeddings supported
         return []
 
@@ -536,9 +542,9 @@ class LMStudioOpenAIProvider(OpenAIProvider):
     provider_type: Literal[ProviderType.lmstudio_openai] = Field(ProviderType.lmstudio_openai, description="The type of the provider.")
     provider_category: ProviderCategory = Field(ProviderCategory.base, description="The category of the provider (base or byok)")
     base_url: str = Field(..., description="Base URL for the LMStudio OpenAI API.")
-    api_key: Optional[str] = Field(None, description="API key for the LMStudio API.")
+    api_key: str | None = Field(None, description="API key for the LMStudio API.")
 
-    def list_llm_models(self) -> List[LLMConfig]:
+    def list_llm_models(self) -> list[LLMConfig]:
         from letta.llm_api.openai import openai_get_model_list
 
         # For LMStudio, we want to hit 'GET /api/v0/models' instead of 'GET /v1/models'
@@ -597,7 +603,7 @@ class LMStudioOpenAIProvider(OpenAIProvider):
 
         return configs
 
-    def list_embedding_models(self) -> List[EmbeddingConfig]:
+    def list_embedding_models(self) -> list[EmbeddingConfig]:
         from letta.llm_api.openai import openai_get_model_list
 
         # For LMStudio, we want to hit 'GET /api/v0/models' instead of 'GET /v1/models'
@@ -665,24 +671,15 @@ class XAIProvider(OpenAIProvider):
     api_key: str = Field(..., description="API key for the xAI/Grok API.")
     base_url: str = Field("https://api.x.ai/v1", description="Base URL for the xAI/Grok API.")
 
-    def get_model_context_window_size(self, model_name: str) -> Optional[int]:
+    def get_model_context_window_size(self, model_name: str) -> int | None:
         # xAI doesn't return context window in the model listing,
         # so these are hardcoded from their website
-        if model_name == "grok-2-1212":
-            return 131072
-        # NOTE: disabling the minis for now since they return weird MM parts
-        # elif model_name == "grok-3-mini-fast-beta":
-        #     return 131072
-        # elif model_name == "grok-3-mini-beta":
-        #     return 131072
-        elif model_name == "grok-3-fast-beta":
-            return 131072
-        elif model_name == "grok-3-beta":
+        if model_name == "grok-2-1212" or model_name == "grok-3-fast-beta" or model_name == "grok-3-beta":
             return 131072
         else:
             return None
 
-    def list_llm_models(self) -> List[LLMConfig]:
+    def list_llm_models(self) -> list[LLMConfig]:
         from letta.llm_api.openai import openai_get_model_list
 
         response = openai_get_model_list(self.base_url, api_key=self.api_key)
@@ -721,7 +718,7 @@ class XAIProvider(OpenAIProvider):
 
         return configs
 
-    def list_embedding_models(self) -> List[EmbeddingConfig]:
+    def list_embedding_models(self) -> list[EmbeddingConfig]:
         # No embeddings supported
         return []
 
@@ -737,19 +734,19 @@ class AnthropicProvider(Provider):
 
         anthropic_check_valid_api_key(self.api_key)
 
-    def list_llm_models(self) -> List[LLMConfig]:
+    def list_llm_models(self) -> list[LLMConfig]:
         from letta.llm_api.anthropic import anthropic_get_model_list
 
         models = anthropic_get_model_list(api_key=self.api_key)
         return self._list_llm_models(models)
 
-    async def list_llm_models_async(self) -> List[LLMConfig]:
+    async def list_llm_models_async(self) -> list[LLMConfig]:
         from letta.llm_api.anthropic import anthropic_get_model_list_async
 
         models = await anthropic_get_model_list_async(api_key=self.api_key)
         return self._list_llm_models(models)
 
-    def _list_llm_models(self, models) -> List[LLMConfig]:
+    def _list_llm_models(self, models) -> list[LLMConfig]:
         from letta.llm_api.anthropic import MODEL_LIST
 
         configs = []
@@ -815,7 +812,7 @@ class MistralProvider(Provider):
     api_key: str = Field(..., description="API key for the Mistral API.")
     base_url: str = "https://api.mistral.ai/v1"
 
-    def list_llm_models(self) -> List[LLMConfig]:
+    def list_llm_models(self) -> list[LLMConfig]:
         from letta.llm_api.mistral import mistral_get_model_list
 
         # Some hardcoded support for OpenRouter (so that we only get models with tool calling support)...
@@ -842,11 +839,11 @@ class MistralProvider(Provider):
 
         return configs
 
-    def list_embedding_models(self) -> List[EmbeddingConfig]:
+    def list_embedding_models(self) -> list[EmbeddingConfig]:
         # Not supported for mistral
         return []
 
-    def get_model_context_window(self, model_name: str) -> Optional[int]:
+    def get_model_context_window(self, model_name: str) -> int | None:
         # Redoing this is fine because it's a pretty lightweight call
         models = self.list_llm_models()
 
@@ -866,12 +863,12 @@ class OllamaProvider(OpenAIProvider):
     provider_type: Literal[ProviderType.ollama] = Field(ProviderType.ollama, description="The type of the provider.")
     provider_category: ProviderCategory = Field(ProviderCategory.base, description="The category of the provider (base or byok)")
     base_url: str = Field(..., description="Base URL for the Ollama API.")
-    api_key: Optional[str] = Field(None, description="API key for the Ollama API (default: `None`).")
+    api_key: str | None = Field(None, description="API key for the Ollama API (default: `None`).")
     default_prompt_formatter: str = Field(
         ..., description="Default prompt formatter (aka model wrapper) to use on a /completions style API."
     )
 
-    async def list_llm_models_async(self) -> List[LLMConfig]:
+    async def list_llm_models_async(self) -> list[LLMConfig]:
         """Async version of list_llm_models below"""
         endpoint = f"{self.base_url}/api/tags"
         async with aiohttp.ClientSession() as session:
@@ -900,7 +897,7 @@ class OllamaProvider(OpenAIProvider):
             )
         return configs
 
-    def list_llm_models(self) -> List[LLMConfig]:
+    def list_llm_models(self) -> list[LLMConfig]:
         # https://github.com/ollama/ollama/blob/main/docs/api.md#list-local-models
         response = requests.get(f"{self.base_url}/api/tags")
         if response.status_code != 200:
@@ -927,7 +924,7 @@ class OllamaProvider(OpenAIProvider):
             )
         return configs
 
-    def get_model_context_window(self, model_name: str) -> Optional[int]:
+    def get_model_context_window(self, model_name: str) -> int | None:
         response = requests.post(f"{self.base_url}/api/show", json={"name": model_name, "verbose": True})
         response_json = response.json()
 
@@ -981,7 +978,7 @@ class OllamaProvider(OpenAIProvider):
                 return value
         return None
 
-    async def list_embedding_models_async(self) -> List[EmbeddingConfig]:
+    async def list_embedding_models_async(self) -> list[EmbeddingConfig]:
         """Async version of list_embedding_models below"""
         endpoint = f"{self.base_url}/api/tags"
         async with aiohttp.ClientSession() as session:
@@ -1008,7 +1005,7 @@ class OllamaProvider(OpenAIProvider):
             )
         return configs
 
-    def list_embedding_models(self) -> List[EmbeddingConfig]:
+    def list_embedding_models(self) -> list[EmbeddingConfig]:
         # https://github.com/ollama/ollama/blob/main/docs/api.md#list-local-models
         response = requests.get(f"{self.base_url}/api/tags")
         if response.status_code != 200:
@@ -1040,7 +1037,7 @@ class GroqProvider(OpenAIProvider):
     base_url: str = "https://api.groq.com/openai/v1"
     api_key: str = Field(..., description="API key for the Groq API.")
 
-    def list_llm_models(self) -> List[LLMConfig]:
+    def list_llm_models(self) -> list[LLMConfig]:
         from letta.llm_api.openai import openai_get_model_list
 
         response = openai_get_model_list(self.base_url, api_key=self.api_key)
@@ -1061,7 +1058,7 @@ class GroqProvider(OpenAIProvider):
             )
         return configs
 
-    def list_embedding_models(self) -> List[EmbeddingConfig]:
+    def list_embedding_models(self) -> list[EmbeddingConfig]:
         return []
 
 
@@ -1080,20 +1077,19 @@ class TogetherProvider(OpenAIProvider):
     api_key: str = Field(..., description="API key for the TogetherAI API.")
     default_prompt_formatter: str = Field(..., description="Default prompt formatter (aka model wrapper) to use on vLLM /completions API.")
 
-    def list_llm_models(self) -> List[LLMConfig]:
+    def list_llm_models(self) -> list[LLMConfig]:
         from letta.llm_api.openai import openai_get_model_list
 
         models = openai_get_model_list(self.base_url, api_key=self.api_key)
         return self._list_llm_models(models)
 
-    async def list_llm_models_async(self) -> List[LLMConfig]:
+    async def list_llm_models_async(self) -> list[LLMConfig]:
         from letta.llm_api.openai import openai_get_model_list_async
 
         models = await openai_get_model_list_async(self.base_url, api_key=self.api_key)
         return self._list_llm_models(models)
 
-    def _list_llm_models(self, models) -> List[LLMConfig]:
-        pass
+    def _list_llm_models(self, models) -> list[LLMConfig]:
 
         # TogetherAI's response is missing the 'data' field
         # assert "data" in response, f"OpenAI model query response missing 'data' field: {response}"
@@ -1140,7 +1136,7 @@ class TogetherProvider(OpenAIProvider):
 
         return configs
 
-    def list_embedding_models(self) -> List[EmbeddingConfig]:
+    def list_embedding_models(self) -> list[EmbeddingConfig]:
         # TODO renable once we figure out how to pass API keys through properly
         return []
 
@@ -1206,7 +1202,7 @@ class GoogleAIProvider(Provider):
         model_options = [str(m["name"]) for m in model_options]
 
         # filter by model names
-        model_options = [mo[len("models/") :] if mo.startswith("models/") else mo for mo in model_options]
+        model_options = [mo.removeprefix("models/") for mo in model_options]
 
         # Add support for all gemini models
         model_options = [mo for mo in model_options if str(mo).startswith("gemini-")]
@@ -1239,7 +1235,7 @@ class GoogleAIProvider(Provider):
         model_options = [str(m["name"]) for m in model_options]
 
         # filter by model names
-        model_options = [mo[len("models/") :] if mo.startswith("models/") else mo for mo in model_options]
+        model_options = [mo.removeprefix("models/") for mo in model_options]
 
         # Add support for all gemini models
         model_options = [mo for mo in model_options if str(mo).startswith("gemini-")]
@@ -1281,7 +1277,7 @@ class GoogleAIProvider(Provider):
         # filter by 'generateContent' models
         model_options = [mo for mo in model_options if "embedContent" in mo["supportedGenerationMethods"]]
         model_options = [str(m["name"]) for m in model_options]
-        model_options = [mo[len("models/") :] if mo.startswith("models/") else mo for mo in model_options]
+        model_options = [mo.removeprefix("models/") for mo in model_options]
 
         configs = []
         for model in model_options:
@@ -1297,7 +1293,7 @@ class GoogleAIProvider(Provider):
             )
         return configs
 
-    def get_model_context_window(self, model_name: str) -> Optional[int]:
+    def get_model_context_window(self, model_name: str) -> int | None:
         from letta.llm_api.google_ai_client import google_ai_get_model_context_window
 
         if model_name in LLM_MAX_TOKENS:
@@ -1305,8 +1301,10 @@ class GoogleAIProvider(Provider):
         else:
             return google_ai_get_model_context_window(self.base_url, self.api_key, model_name)
 
-    async def get_model_context_window_async(self, model_name: str) -> Optional[int]:
-        from letta.llm_api.google_ai_client import google_ai_get_model_context_window_async
+    async def get_model_context_window_async(self, model_name: str) -> int | None:
+        from letta.llm_api.google_ai_client import (
+            google_ai_get_model_context_window_async,
+        )
 
         if model_name in LLM_MAX_TOKENS:
             return LLM_MAX_TOKENS[model_name]
@@ -1320,7 +1318,7 @@ class GoogleVertexProvider(Provider):
     google_cloud_project: str = Field(..., description="GCP project ID for the Google Vertex API.")
     google_cloud_location: str = Field(..., description="GCP region for the Google Vertex API.")
 
-    def list_llm_models(self) -> List[LLMConfig]:
+    def list_llm_models(self) -> list[LLMConfig]:
         from letta.llm_api.google_constants import GOOGLE_MODEL_TO_CONTEXT_LENGTH
 
         configs = []
@@ -1361,7 +1359,7 @@ class GoogleVertexProvider(Provider):
             )
         return configs
 
-    def list_embedding_models(self) -> List[EmbeddingConfig]:
+    def list_embedding_models(self) -> list[EmbeddingConfig]:
         from letta.llm_api.google_constants import GOOGLE_EMBEDING_MODEL_TO_DIM
 
         configs = []
@@ -1398,8 +1396,10 @@ class AzureProvider(Provider):
             values["api_version"] = cls.model_fields["latest_api_version"].default
         return values
 
-    def list_llm_models(self) -> List[LLMConfig]:
-        from letta.llm_api.azure_openai import azure_openai_get_chat_completion_model_list
+    def list_llm_models(self) -> list[LLMConfig]:
+        from letta.llm_api.azure_openai import (
+            azure_openai_get_chat_completion_model_list,
+        )
 
         model_options = azure_openai_get_chat_completion_model_list(self.base_url, api_key=self.api_key, api_version=self.api_version)
         configs = []
@@ -1420,7 +1420,7 @@ class AzureProvider(Provider):
             )
         return configs
 
-    def list_embedding_models(self) -> List[EmbeddingConfig]:
+    def list_embedding_models(self) -> list[EmbeddingConfig]:
         from letta.llm_api.azure_openai import azure_openai_get_embeddings_model_list
 
         model_options = azure_openai_get_embeddings_model_list(
@@ -1442,7 +1442,7 @@ class AzureProvider(Provider):
             )
         return configs
 
-    def get_model_context_window(self, model_name: str) -> Optional[int]:
+    def get_model_context_window(self, model_name: str) -> int | None:
         """
         This is hardcoded for now, since there is no API endpoints to retrieve metadata for a model.
         """
@@ -1460,7 +1460,7 @@ class VLLMChatCompletionsProvider(Provider):
     provider_category: ProviderCategory = Field(ProviderCategory.base, description="The category of the provider (base or byok)")
     base_url: str = Field(..., description="Base URL for the vLLM API.")
 
-    def list_llm_models(self) -> List[LLMConfig]:
+    def list_llm_models(self) -> list[LLMConfig]:
         # not supported with vLLM
         from letta.llm_api.openai import openai_get_model_list
 
@@ -1482,7 +1482,7 @@ class VLLMChatCompletionsProvider(Provider):
             )
         return configs
 
-    def list_embedding_models(self) -> List[EmbeddingConfig]:
+    def list_embedding_models(self) -> list[EmbeddingConfig]:
         # not supported with vLLM
         return []
 
@@ -1496,7 +1496,7 @@ class VLLMCompletionsProvider(Provider):
     base_url: str = Field(..., description="Base URL for the vLLM API.")
     default_prompt_formatter: str = Field(..., description="Default prompt formatter (aka model wrapper) to use on vLLM /completions API.")
 
-    def list_llm_models(self) -> List[LLMConfig]:
+    def list_llm_models(self) -> list[LLMConfig]:
         # not supported with vLLM
         from letta.llm_api.openai import openai_get_model_list
 
@@ -1518,7 +1518,7 @@ class VLLMCompletionsProvider(Provider):
             )
         return configs
 
-    def list_embedding_models(self) -> List[EmbeddingConfig]:
+    def list_embedding_models(self) -> list[EmbeddingConfig]:
         # not supported with vLLM
         return []
 
@@ -1556,7 +1556,7 @@ class AnthropicBedrockProvider(Provider):
     def list_embedding_models(self):
         return []
 
-    def get_model_context_window(self, model_name: str) -> Optional[int]:
+    def get_model_context_window(self, model_name: str) -> int | None:
         # Context windows for Claude models
         from letta.llm_api.aws_bedrock import bedrock_get_model_context_window
 

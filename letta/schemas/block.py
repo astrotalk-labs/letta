@@ -1,9 +1,12 @@
-from typing import Optional
 
 from pydantic import Field, model_validator
 from typing_extensions import Self
 
-from letta.constants import CORE_MEMORY_BLOCK_CHAR_LIMIT, DEFAULT_HUMAN_BLOCK_DESCRIPTION, DEFAULT_PERSONA_BLOCK_DESCRIPTION
+from letta.constants import (
+    CORE_MEMORY_BLOCK_CHAR_LIMIT,
+    DEFAULT_HUMAN_BLOCK_DESCRIPTION,
+    DEFAULT_PERSONA_BLOCK_DESCRIPTION,
+)
 from letta.schemas.letta_base import LettaBase
 
 # block of the LLM context
@@ -19,19 +22,19 @@ class BaseBlock(LettaBase, validate_assignment=True):
     limit: int = Field(CORE_MEMORY_BLOCK_CHAR_LIMIT, description="Character limit of the block.")
 
     # template data (optional)
-    template_name: Optional[str] = Field(None, description="Name of the block if it is a template.", alias="name")
+    template_name: str | None = Field(None, description="Name of the block if it is a template.", alias="name")
     is_template: bool = Field(False, description="Whether the block is a template (e.g. saved human/persona options).")
-    preserve_on_migration: Optional[bool] = Field(False, description="Preserve the block on template migration.")
+    preserve_on_migration: bool | None = Field(False, description="Preserve the block on template migration.")
 
     # context window label
-    label: Optional[str] = Field(None, description="Label of the block (e.g. 'human', 'persona') in the context window.")
+    label: str | None = Field(None, description="Label of the block (e.g. 'human', 'persona') in the context window.")
 
     # permissions of the agent
     read_only: bool = Field(False, description="Whether the agent has read-only access to the block.")
 
     # metadata
-    description: Optional[str] = Field(None, description="Description of the block.")
-    metadata: Optional[dict] = Field({}, description="Metadata of the block.")
+    description: str | None = Field(None, description="Description of the block.")
+    metadata: dict | None = Field({}, description="Metadata of the block.")
 
     # def __len__(self):
     #     return len(self.value)
@@ -43,7 +46,7 @@ class BaseBlock(LettaBase, validate_assignment=True):
     def verify_char_limit(self) -> Self:
         # self.limit can be None from
         if self.limit is not None and self.value and len(self.value) > self.limit:
-            error_msg = f"Edit failed: Exceeds {self.limit} character limit (requested {len(self.value)}) - {str(self)}."
+            error_msg = f"Edit failed: Exceeds {self.limit} character limit (requested {len(self.value)}) - {self!s}."
             raise ValueError(error_msg)
 
         return self
@@ -75,25 +78,25 @@ class Block(BaseBlock):
     id: str = BaseBlock.generate_id_field()
 
     # associated user/agent
-    organization_id: Optional[str] = Field(None, description="The unique identifier of the organization associated with the block.")
+    organization_id: str | None = Field(None, description="The unique identifier of the organization associated with the block.")
 
     # default orm fields
-    created_by_id: Optional[str] = Field(None, description="The id of the user that made this Block.")
-    last_updated_by_id: Optional[str] = Field(None, description="The id of the user that last updated this Block.")
+    created_by_id: str | None = Field(None, description="The id of the user that made this Block.")
+    last_updated_by_id: str | None = Field(None, description="The id of the user that last updated this Block.")
 
 
 class Human(Block):
     """Human block of the LLM context"""
 
     label: str = "human"
-    description: Optional[str] = Field(DEFAULT_HUMAN_BLOCK_DESCRIPTION, description="Description of the block.")
+    description: str | None = Field(DEFAULT_HUMAN_BLOCK_DESCRIPTION, description="Description of the block.")
 
 
 class Persona(Block):
     """Persona block of the LLM context"""
 
     label: str = "persona"
-    description: Optional[str] = Field(DEFAULT_PERSONA_BLOCK_DESCRIPTION, description="Description of the block.")
+    description: str | None = Field(DEFAULT_PERSONA_BLOCK_DESCRIPTION, description="Description of the block.")
 
 
 DEFAULT_BLOCKS = [Human(value=""), Persona(value="")]
@@ -102,8 +105,8 @@ DEFAULT_BLOCKS = [Human(value=""), Persona(value="")]
 class BlockUpdate(BaseBlock):
     """Update a block"""
 
-    limit: Optional[int] = Field(None, description="Character limit of the block.")
-    value: Optional[str] = Field(None, description="Value of the block.")
+    limit: int | None = Field(None, description="Character limit of the block.")
+    value: str | None = Field(None, description="Value of the block.")
 
     class Config:
         extra = "ignore"  # Ignores extra fields
@@ -118,7 +121,7 @@ class CreateBlock(BaseBlock):
 
     # block templates
     is_template: bool = False
-    template_name: Optional[str] = Field(None, description="Name of the block if it is a template.", alias="name")
+    template_name: str | None = Field(None, description="Name of the block if it is a template.", alias="name")
 
 
 class CreateHuman(CreateBlock):

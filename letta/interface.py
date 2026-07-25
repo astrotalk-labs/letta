@@ -1,12 +1,14 @@
 import re
 from abc import ABC, abstractmethod
-from typing import List, Optional
 
 from colorama import Fore, Style, init
 
 from letta.constants import CLI_WARNING_PREFIX
 from letta.helpers.json_helpers import json_loads
-from letta.local_llm.constants import ASSISTANT_MESSAGE_CLI_SYMBOL, INNER_THOUGHTS_CLI_SYMBOL
+from letta.local_llm.constants import (
+    ASSISTANT_MESSAGE_CLI_SYMBOL,
+    INNER_THOUGHTS_CLI_SYMBOL,
+)
 from letta.schemas.message import Message
 from letta.utils import printd
 
@@ -25,22 +27,22 @@ class AgentInterface(ABC):
     """
 
     @abstractmethod
-    def user_message(self, msg: str, msg_obj: Optional[Message] = None):
+    def user_message(self, msg: str, msg_obj: Message | None = None):
         """Letta receives a user message"""
         raise NotImplementedError
 
     @abstractmethod
-    def internal_monologue(self, msg: str, msg_obj: Optional[Message] = None, chunk_index: Optional[int] = None):
+    def internal_monologue(self, msg: str, msg_obj: Message | None = None, chunk_index: int | None = None):
         """Letta generates some internal monologue"""
         raise NotImplementedError
 
     @abstractmethod
-    def assistant_message(self, msg: str, msg_obj: Optional[Message] = None):
+    def assistant_message(self, msg: str, msg_obj: Message | None = None):
         """Letta uses send_message"""
         raise NotImplementedError
 
     @abstractmethod
-    def function_message(self, msg: str, msg_obj: Optional[Message] = None, chunk_index: Optional[int] = None):
+    def function_message(self, msg: str, msg_obj: Message | None = None, chunk_index: int | None = None):
         """Letta calls a function"""
         raise NotImplementedError
 
@@ -79,7 +81,7 @@ class CLIInterface(AgentInterface):
             print(fstr.format(msg=msg))
 
     @staticmethod
-    def internal_monologue(msg: str, msg_obj: Optional[Message] = None, chunk_index: Optional[int] = None):
+    def internal_monologue(msg: str, msg_obj: Message | None = None, chunk_index: int | None = None):
         # ANSI escape code for italic is '\x1B[3m'
         fstr = f"\x1B[3m{Fore.LIGHTBLACK_EX}{INNER_THOUGHTS_CLI_SYMBOL} {{msg}}{Style.RESET_ALL}"
         if STRIP_UI:
@@ -87,21 +89,21 @@ class CLIInterface(AgentInterface):
         print(fstr.format(msg=msg))
 
     @staticmethod
-    def assistant_message(msg: str, msg_obj: Optional[Message] = None):
+    def assistant_message(msg: str, msg_obj: Message | None = None):
         fstr = f"{Fore.YELLOW}{Style.BRIGHT}{ASSISTANT_MESSAGE_CLI_SYMBOL} {Fore.YELLOW}{{msg}}{Style.RESET_ALL}"
         if STRIP_UI:
             fstr = "{msg}"
         print(fstr.format(msg=msg))
 
     @staticmethod
-    def memory_message(msg: str, msg_obj: Optional[Message] = None):
+    def memory_message(msg: str, msg_obj: Message | None = None):
         fstr = f"{Fore.LIGHTMAGENTA_EX}{Style.BRIGHT}🧠 {Fore.LIGHTMAGENTA_EX}{{msg}}{Style.RESET_ALL}"
         if STRIP_UI:
             fstr = "{msg}"
         print(fstr.format(msg=msg))
 
     @staticmethod
-    def system_message(msg: str, msg_obj: Optional[Message] = None):
+    def system_message(msg: str, msg_obj: Message | None = None):
         fstr = f"{Fore.MAGENTA}{Style.BRIGHT}🖥️ [system] {Fore.MAGENTA}{msg}{Style.RESET_ALL}"
         if STRIP_UI:
             fstr = "{msg}"
@@ -110,11 +112,11 @@ class CLIInterface(AgentInterface):
     @staticmethod
     def user_message(
         msg: str,
-        msg_obj: Optional[Message] = None,
+        msg_obj: Message | None = None,
         raw: bool = False,
         dump: bool = False,
         debug: bool = DEBUG,
-        chunk_index: Optional[int] = None,
+        chunk_index: int | None = None,
     ):
         def print_user_message(icon, msg, printf=print):
             if STRIP_UI:
@@ -161,7 +163,7 @@ class CLIInterface(AgentInterface):
             printd_user_message("🧑", msg_json)
 
     @staticmethod
-    def function_message(msg: str, msg_obj: Optional[Message] = None, debug: bool = DEBUG, chunk_index: Optional[int] = None):
+    def function_message(msg: str, msg_obj: Message | None = None, debug: bool = DEBUG, chunk_index: int | None = None):
         def print_function_message(icon, msg, color=Fore.RED, printf=print):
             if STRIP_UI:
                 printf(f"⚡{icon} [function] {msg}")
@@ -246,7 +248,7 @@ class CLIInterface(AgentInterface):
                 printd_function_message("", msg)
 
     @staticmethod
-    def print_messages(message_sequence: List[Message], dump=False):
+    def print_messages(message_sequence: list[Message], dump=False):
         # rewrite to dict format
         message_sequence = [msg.to_openai_dict() for msg in message_sequence]
 
@@ -281,15 +283,13 @@ class CLIInterface(AgentInterface):
                     CLIInterface.internal_monologue(content)
             elif role == "user":
                 CLIInterface.user_message(content, dump=dump)
-            elif role == "function":
-                CLIInterface.function_message(content, debug=dump)
-            elif role == "tool":
+            elif role == "function" or role == "tool":
                 CLIInterface.function_message(content, debug=dump)
             else:
                 print(f"Unknown role: {content}")
 
     @staticmethod
-    def print_messages_simple(message_sequence: List[Message]):
+    def print_messages_simple(message_sequence: list[Message]):
         # rewrite to dict format
         message_sequence = [msg.to_openai_dict() for msg in message_sequence]
 
@@ -307,7 +307,7 @@ class CLIInterface(AgentInterface):
                 print(f"Unknown role: {content}")
 
     @staticmethod
-    def print_messages_raw(message_sequence: List[Message]):
+    def print_messages_raw(message_sequence: list[Message]):
         # rewrite to dict format
         message_sequence = [msg.to_openai_dict() for msg in message_sequence]
 

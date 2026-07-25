@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, status
 from fastapi.responses import JSONResponse
@@ -6,7 +6,12 @@ from fastapi.responses import JSONResponse
 from letta.errors import LLMAuthenticationError
 from letta.orm.errors import NoResultFound
 from letta.schemas.enums import ProviderType
-from letta.schemas.providers import Provider, ProviderCheck, ProviderCreate, ProviderUpdate
+from letta.schemas.providers import (
+    Provider,
+    ProviderCheck,
+    ProviderCreate,
+    ProviderUpdate,
+)
 from letta.server.rest_api.utils import get_letta_server
 
 if TYPE_CHECKING:
@@ -15,13 +20,13 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/providers", tags=["providers"])
 
 
-@router.get("/", response_model=List[Provider], operation_id="list_providers")
+@router.get("/", response_model=list[Provider], operation_id="list_providers")
 async def list_providers(
-    name: Optional[str] = Query(None),
-    provider_type: Optional[ProviderType] = Query(None),
-    after: Optional[str] = Query(None),
-    limit: Optional[int] = Query(50),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    name: str | None = Query(None),
+    provider_type: ProviderType | None = Query(None),
+    after: str | None = Query(None),
+    limit: int | None = Query(50),
+    actor_id: str | None = Header(None, alias="user_id"),
     server: "SyncServer" = Depends(get_letta_server),
 ):
     """
@@ -42,7 +47,7 @@ async def list_providers(
 @router.post("/", response_model=Provider, operation_id="create_provider")
 async def create_provider(
     request: ProviderCreate = Body(...),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
     server: "SyncServer" = Depends(get_letta_server),
 ):
     """
@@ -60,7 +65,7 @@ async def create_provider(
 async def modify_provider(
     provider_id: str,
     request: ProviderUpdate = Body(...),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
     server: "SyncServer" = Depends(get_letta_server),
 ):
     """
@@ -89,7 +94,7 @@ def check_provider(
 @router.delete("/{provider_id}", response_model=None, operation_id="delete_provider")
 async def delete_provider(
     provider_id: str,
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
     server: "SyncServer" = Depends(get_letta_server),
 ):
     """

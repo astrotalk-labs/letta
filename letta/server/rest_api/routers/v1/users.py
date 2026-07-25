@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
@@ -13,10 +13,10 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/users", tags=["users", "admin"])
 
 
-@router.get("/", tags=["admin"], response_model=List[User], operation_id="list_users")
+@router.get("/", tags=["admin"], response_model=list[User], operation_id="list_users")
 async def list_users(
-    after: Optional[str] = Query(None),
-    limit: Optional[int] = Query(50),
+    after: str | None = Query(None),
+    limit: int | None = Query(50),
     server: "SyncServer" = Depends(get_letta_server),
 ):
     """
@@ -65,7 +65,7 @@ async def delete_user(
     try:
         user = await server.user_manager.get_actor_by_id_async(actor_id=user_id)
         if user is None:
-            raise HTTPException(status_code=404, detail=f"User does not exist")
+            raise HTTPException(status_code=404, detail="User does not exist")
         await server.user_manager.delete_actor_by_id_async(user_id=user_id)
     except HTTPException:
         raise

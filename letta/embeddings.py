@@ -1,16 +1,20 @@
 import uuid
-from typing import Any, List, Optional
+from typing import Any
 
 import numpy as np
 import tiktoken
 from openai import OpenAI
 
-from letta.constants import EMBEDDING_TO_TOKENIZER_DEFAULT, EMBEDDING_TO_TOKENIZER_MAP, MAX_EMBEDDING_DIM
+from letta.constants import (
+    EMBEDDING_TO_TOKENIZER_DEFAULT,
+    EMBEDDING_TO_TOKENIZER_MAP,
+    MAX_EMBEDDING_DIM,
+)
 from letta.schemas.embedding_config import EmbeddingConfig
 from letta.utils import is_valid_url, printd
 
 
-def parse_and_chunk_text(text: str, chunk_size: int) -> List[str]:
+def parse_and_chunk_text(text: str, chunk_size: int) -> list[str]:
     from llama_index.core import Document as LlamaIndexDocument
     from llama_index.core.node_parser import SentenceSplitter
 
@@ -26,7 +30,7 @@ def truncate_text(text: str, max_length: int, encoding) -> str:
     return encoding.decode(encoded_text)
 
 
-def check_and_split_text(text: str, embedding_model: str) -> List[str]:
+def check_and_split_text(text: str, embedding_model: str) -> list[str]:
     """Split text into chunks of max_length tokens or less"""
 
     if embedding_model in EMBEDDING_TO_TOKENIZER_MAP:
@@ -86,7 +90,7 @@ class EmbeddingEndpoint:
         self._base_url = base_url
         self._timeout = timeout
 
-    def _call_api(self, text: str) -> List[float]:
+    def _call_api(self, text: str) -> list[float]:
         if not is_valid_url(self._base_url):
             raise ValueError(
                 f"Embeddings endpoint does not have a valid URL (set to: '{self._base_url}'). Make sure embedding_endpoint is set correctly in your Letta config."
@@ -121,7 +125,7 @@ class EmbeddingEndpoint:
 
         return embedding
 
-    def get_text_embedding(self, text: str) -> List[float]:
+    def get_text_embedding(self, text: str) -> list[float]:
         return self._call_api(text)
 
 
@@ -225,7 +229,7 @@ def query_embedding(embedding_model, query_text: str):
     return query_vec
 
 
-def embedding_model(config: EmbeddingConfig, user_id: Optional[uuid.UUID] = None):
+def embedding_model(config: EmbeddingConfig, user_id: uuid.UUID | None = None):
     """Return LlamaIndex embedding model to use for embeddings"""
 
     endpoint_type = config.embedding_endpoint_type

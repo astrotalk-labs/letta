@@ -5,7 +5,12 @@ import httpx
 
 from letta import system
 from letta.schemas.enums import MessageRole
-from letta.schemas.letta_message_content import Base64Image, ImageContent, ImageSourceType, TextContent
+from letta.schemas.letta_message_content import (
+    Base64Image,
+    ImageContent,
+    ImageSourceType,
+    TextContent,
+)
 from letta.schemas.message import Message, MessageCreate
 
 

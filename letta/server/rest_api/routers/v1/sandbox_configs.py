@@ -1,18 +1,29 @@
 import os
 import shutil
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from letta.log import get_logger
-from letta.schemas.environment_variables import SandboxEnvironmentVariable as PydanticEnvVar
-from letta.schemas.environment_variables import SandboxEnvironmentVariableCreate, SandboxEnvironmentVariableUpdate
-from letta.schemas.sandbox_config import LocalSandboxConfig
+from letta.schemas.environment_variables import (
+    SandboxEnvironmentVariable as PydanticEnvVar,
+)
+from letta.schemas.environment_variables import (
+    SandboxEnvironmentVariableCreate,
+    SandboxEnvironmentVariableUpdate,
+)
+from letta.schemas.sandbox_config import (
+    LocalSandboxConfig,
+    SandboxConfigCreate,
+    SandboxConfigUpdate,
+    SandboxType,
+)
 from letta.schemas.sandbox_config import SandboxConfig as PydanticSandboxConfig
-from letta.schemas.sandbox_config import SandboxConfigCreate, SandboxConfigUpdate, SandboxType
 from letta.server.rest_api.utils import get_letta_server, get_user_id
 from letta.server.server import SyncServer
-from letta.services.helpers.tool_execution_helper import create_venv_for_local_sandbox, install_pip_requirements_for_sandbox
+from letta.services.helpers.tool_execution_helper import (
+    create_venv_for_local_sandbox,
+    install_pip_requirements_for_sandbox,
+)
 
 router = APIRouter(prefix="/sandbox-config", tags=["sandbox-config"])
 
@@ -99,11 +110,11 @@ async def delete_sandbox_config(
     await server.sandbox_config_manager.delete_sandbox_config_async(sandbox_config_id, actor)
 
 
-@router.get("/", response_model=List[PydanticSandboxConfig])
+@router.get("/", response_model=list[PydanticSandboxConfig])
 async def list_sandbox_configs(
     limit: int = Query(1000, description="Number of results to return"),
-    after: Optional[str] = Query(None, description="Pagination cursor to fetch the next set of results"),
-    sandbox_type: Optional[SandboxType] = Query(None, description="Filter for this specific sandbox type"),
+    after: str | None = Query(None, description="Pagination cursor to fetch the next set of results"),
+    sandbox_type: SandboxType | None = Query(None, description="Filter for this specific sandbox type"),
     server: SyncServer = Depends(get_letta_server),
     actor_id: str = Depends(get_user_id),
 ):
@@ -189,11 +200,11 @@ async def delete_sandbox_env_var(
     await server.sandbox_config_manager.delete_sandbox_env_var_async(env_var_id, actor)
 
 
-@router.get("/{sandbox_config_id}/environment-variable", response_model=List[PydanticEnvVar])
+@router.get("/{sandbox_config_id}/environment-variable", response_model=list[PydanticEnvVar])
 async def list_sandbox_env_vars(
     sandbox_config_id: str,
     limit: int = Query(1000, description="Number of results to return"),
-    after: Optional[str] = Query(None, description="Pagination cursor to fetch the next set of results"),
+    after: str | None = Query(None, description="Pagination cursor to fetch the next set of results"),
     server: SyncServer = Depends(get_letta_server),
     actor_id: str = Depends(get_user_id),
 ):

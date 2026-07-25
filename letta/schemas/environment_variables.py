@@ -1,4 +1,3 @@
-from typing import Optional
 
 from pydantic import Field
 
@@ -10,20 +9,20 @@ class EnvironmentVariableBase(OrmMetadataBase):
     id: str = Field(..., description="The unique identifier for the environment variable.")
     key: str = Field(..., description="The name of the environment variable.")
     value: str = Field(..., description="The value of the environment variable.")
-    description: Optional[str] = Field(None, description="An optional description of the environment variable.")
-    organization_id: Optional[str] = Field(None, description="The ID of the organization this environment variable belongs to.")
+    description: str | None = Field(None, description="An optional description of the environment variable.")
+    organization_id: str | None = Field(None, description="The ID of the organization this environment variable belongs to.")
 
 
 class EnvironmentVariableCreateBase(LettaBase):
     key: str = Field(..., description="The name of the environment variable.")
     value: str = Field(..., description="The value of the environment variable.")
-    description: Optional[str] = Field(None, description="An optional description of the environment variable.")
+    description: str | None = Field(None, description="An optional description of the environment variable.")
 
 
 class EnvironmentVariableUpdateBase(LettaBase):
-    key: Optional[str] = Field(None, description="The name of the environment variable.")
-    value: Optional[str] = Field(None, description="The value of the environment variable.")
-    description: Optional[str] = Field(None, description="An optional description of the environment variable.")
+    key: str | None = Field(None, description="The name of the environment variable.")
+    value: str | None = Field(None, description="The value of the environment variable.")
+    description: str | None = Field(None, description="An optional description of the environment variable.")
 
 
 # Environment Variable

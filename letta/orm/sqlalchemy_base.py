@@ -1,9 +1,10 @@
+import builtins
 import inspect
 from datetime import datetime
 from enum import Enum
 from functools import wraps
 from pprint import pformat
-from typing import TYPE_CHECKING, List, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Literal, Optional
 
 from sqlalchemy import Sequence, String, and_, delete, func, or_, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError, TimeoutError
@@ -13,7 +14,12 @@ from sqlalchemy.orm.interfaces import ORMOption
 
 from letta.log import get_logger
 from letta.orm.base import Base, CommonSqlalchemyMetaMixins
-from letta.orm.errors import DatabaseTimeoutError, ForeignKeyConstraintViolationError, NoResultFound, UniqueConstraintViolationError
+from letta.orm.errors import (
+    DatabaseTimeoutError,
+    ForeignKeyConstraintViolationError,
+    NoResultFound,
+    UniqueConstraintViolationError,
+)
 from letta.orm.sqlite_functions import adapt_array
 
 if TYPE_CHECKING:
@@ -67,23 +73,23 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         cls,
         *,
         db_session: "Session",
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        limit: Optional[int] = 50,
-        query_text: Optional[str] = None,
-        query_embedding: Optional[List[float]] = None,
+        before: str | None = None,
+        after: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        limit: int | None = 50,
+        query_text: str | None = None,
+        query_embedding: list[float] | None = None,
         ascending: bool = True,
         actor: Optional["User"] = None,
-        access: Optional[List[Literal["read", "write", "admin"]]] = ["read"],
+        access: list[Literal["read", "write", "admin"]] | None = ["read"],
         access_type: AccessType = AccessType.ORGANIZATION,
-        join_model: Optional[Base] = None,
-        join_conditions: Optional[Union[Tuple, List]] = None,
-        identifier_keys: Optional[List[str]] = None,
-        identity_id: Optional[str] = None,
+        join_model: Base | None = None,
+        join_conditions: tuple | list | None = None,
+        identifier_keys: list[str] | None = None,
+        identity_id: str | None = None,
         **kwargs,
-    ) -> List["SqlalchemyBase"]:
+    ) -> list["SqlalchemyBase"]:
         """
         List records with before/after pagination, ordering by created_at.
         Can use both before and after to fetch a window of records.
@@ -162,24 +168,24 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         cls,
         *,
         db_session: "AsyncSession",
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        limit: Optional[int] = 50,
-        query_text: Optional[str] = None,
-        query_embedding: Optional[List[float]] = None,
+        before: str | None = None,
+        after: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        limit: int | None = 50,
+        query_text: str | None = None,
+        query_embedding: builtins.list[float] | None = None,
         ascending: bool = True,
         actor: Optional["User"] = None,
-        access: Optional[List[Literal["read", "write", "admin"]]] = ["read"],
+        access: builtins.list[Literal["read", "write", "admin"]] | None = ["read"],
         access_type: AccessType = AccessType.ORGANIZATION,
-        join_model: Optional[Base] = None,
-        join_conditions: Optional[Union[Tuple, List]] = None,
-        identifier_keys: Optional[List[str]] = None,
-        identity_id: Optional[str] = None,
+        join_model: Base | None = None,
+        join_conditions: tuple | builtins.list | None = None,
+        identifier_keys: builtins.list[str] | None = None,
+        identity_id: str | None = None,
         query_options: Sequence[ORMOption] | None = None,  # ← new
         **kwargs,
-    ) -> List["SqlalchemyBase"]:
+    ) -> builtins.list["SqlalchemyBase"]:
         """
         Async version of list method above.
         NOTE: Keep in sync.
@@ -262,19 +268,19 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         *,
         before_obj,
         after_obj,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        limit: Optional[int] = 50,
-        query_text: Optional[str] = None,
-        query_embedding: Optional[List[float]] = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        limit: int | None = 50,
+        query_text: str | None = None,
+        query_embedding: builtins.list[float] | None = None,
         ascending: bool = True,
         actor: Optional["User"] = None,
-        access: Optional[List[Literal["read", "write", "admin"]]] = ["read"],
+        access: builtins.list[Literal["read", "write", "admin"]] | None = ["read"],
         access_type: AccessType = AccessType.ORGANIZATION,
-        join_model: Optional[Base] = None,
-        join_conditions: Optional[Union[Tuple, List]] = None,
-        identifier_keys: Optional[List[str]] = None,
-        identity_id: Optional[str] = None,
+        join_model: Base | None = None,
+        join_conditions: tuple | builtins.list | None = None,
+        identifier_keys: builtins.list[str] | None = None,
+        identity_id: str | None = None,
         check_is_deleted: bool = False,
         **kwargs,
     ):
@@ -432,9 +438,9 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
     def read(
         cls,
         db_session: "Session",
-        identifier: Optional[str] = None,
+        identifier: str | None = None,
         actor: Optional["User"] = None,
-        access: Optional[List[Literal["read", "write", "admin"]]] = ["read"],
+        access: builtins.list[Literal["read", "write", "admin"]] | None = ["read"],
         access_type: AccessType = AccessType.ORGANIZATION,
         check_is_deleted: bool = False,
         **kwargs,
@@ -471,9 +477,9 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
     async def read_async(
         cls,
         db_session: "AsyncSession",
-        identifier: Optional[str] = None,
+        identifier: str | None = None,
         actor: Optional["User"] = None,
-        access: Optional[List[Literal["read", "write", "admin"]]] = ["read"],
+        access: builtins.list[Literal["read", "write", "admin"]] | None = ["read"],
         access_type: AccessType = AccessType.ORGANIZATION,
         check_is_deleted: bool = False,
         **kwargs,
@@ -515,13 +521,13 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
     def read_multiple(
         cls,
         db_session: "Session",
-        identifiers: List[str] = [],
+        identifiers: builtins.list[str] = [],
         actor: Optional["User"] = None,
-        access: Optional[List[Literal["read", "write", "admin"]]] = ["read"],
+        access: builtins.list[Literal["read", "write", "admin"]] | None = ["read"],
         access_type: AccessType = AccessType.ORGANIZATION,
         check_is_deleted: bool = False,
         **kwargs,
-    ) -> List["SqlalchemyBase"]:
+    ) -> builtins.list["SqlalchemyBase"]:
         """The primary accessor for ORM record(s)
         Args:
             db_session: the database session to use when retrieving the record
@@ -545,13 +551,13 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
     async def read_multiple_async(
         cls,
         db_session: "AsyncSession",
-        identifiers: List[str] = [],
+        identifiers: builtins.list[str] = [],
         actor: Optional["User"] = None,
-        access: Optional[List[Literal["read", "write", "admin"]]] = ["read"],
+        access: builtins.list[Literal["read", "write", "admin"]] | None = ["read"],
         access_type: AccessType = AccessType.ORGANIZATION,
         check_is_deleted: bool = False,
         **kwargs,
-    ) -> List["SqlalchemyBase"]:
+    ) -> builtins.list["SqlalchemyBase"]:
         """
         Async version of read_multiple(...)
         The primary accessor for ORM record(s)
@@ -565,9 +571,9 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
     @classmethod
     def _read_multiple_preprocess(
         cls,
-        identifiers: List[str],
+        identifiers: builtins.list[str],
         actor: Optional["User"],
-        access: Optional[List[Literal["read", "write", "admin"]]],
+        access: builtins.list[Literal["read", "write", "admin"]] | None,
         access_type: AccessType,
         check_is_deleted: bool,
         **kwargs,
@@ -605,7 +611,7 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         return query, query_conditions
 
     @classmethod
-    def _read_multiple_postprocess(cls, results, identifiers: List[str], query_conditions) -> List["SqlalchemyBase"]:
+    def _read_multiple_postprocess(cls, results, identifiers: builtins.list[str], query_conditions) -> builtins.list["SqlalchemyBase"]:
         if results:  # if empty list a.k.a. no results
             if len(identifiers) > 0:
                 # find which identifiers were not found
@@ -663,7 +669,7 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
 
     @classmethod
     @handle_db_timeout
-    def batch_create(cls, items: List["SqlalchemyBase"], db_session: "Session", actor: Optional["User"] = None) -> List["SqlalchemyBase"]:
+    def batch_create(cls, items: builtins.list["SqlalchemyBase"], db_session: "Session", actor: Optional["User"] = None) -> builtins.list["SqlalchemyBase"]:
         """
         Create multiple records in a single transaction for better performance.
         Args:
@@ -705,8 +711,8 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
     @classmethod
     @handle_db_timeout
     async def batch_create_async(
-        cls, items: List["SqlalchemyBase"], db_session: "AsyncSession", actor: Optional["User"] = None
-    ) -> List["SqlalchemyBase"]:
+        cls, items: builtins.list["SqlalchemyBase"], db_session: "AsyncSession", actor: Optional["User"] = None
+    ) -> builtins.list["SqlalchemyBase"]:
         """
         Async version of batch_create method.
         Create multiple records in a single transaction for better performance.
@@ -801,9 +807,9 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
     async def bulk_hard_delete_async(
         cls,
         db_session: "AsyncSession",
-        identifiers: List[str],
+        identifiers: builtins.list[str],
         actor: Optional["User"],
-        access: Optional[List[Literal["read", "write", "admin"]]] = ["write"],
+        access: builtins.list[Literal["read", "write", "admin"]] | None = ["write"],
         access_type: AccessType = AccessType.ORGANIZATION,
     ) -> None:
         """Permanently removes the record from the database asynchronously."""
@@ -863,7 +869,7 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         *,
         db_session: "Session",
         actor: Optional["User"] = None,
-        access: Optional[List[Literal["read", "write", "admin"]]] = ["read"],
+        access: builtins.list[Literal["read", "write", "admin"]] | None = ["read"],
         access_type: AccessType = AccessType.ORGANIZATION,
         check_is_deleted: bool = False,
         **kwargs,
@@ -897,7 +903,7 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         *,
         db_session: "Session",
         actor: Optional["User"] = None,
-        access: Optional[List[Literal["read", "write", "admin"]]] = ["read"],
+        access: builtins.list[Literal["read", "write", "admin"]] | None = ["read"],
         access_type: AccessType = AccessType.ORGANIZATION,
         check_is_deleted: bool = False,
         **kwargs,
@@ -939,7 +945,7 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         *,
         db_session: "AsyncSession",
         actor: Optional["User"] = None,
-        access: Optional[List[Literal["read", "write", "admin"]]] = ["read"],
+        access: builtins.list[Literal["read", "write", "admin"]] | None = ["read"],
         access_type: AccessType = AccessType.ORGANIZATION,
         check_is_deleted: bool = False,
         **kwargs,
@@ -976,7 +982,7 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
         cls,
         query: "Select",
         actor: "User",
-        access: List[Literal["read", "write", "admin"]],
+        access: builtins.list[Literal["read", "write", "admin"]],
         access_type: AccessType = AccessType.ORGANIZATION,
     ) -> "Select":
         """applies a WHERE clause restricting results to the given actor and access level
@@ -1059,7 +1065,7 @@ class SqlalchemyBase(CommonSqlalchemyMetaMixins, Base):
 
         # Explicitly map metadata_ to metadata in Pydantic model
         if hasattr(self, "metadata_") and hasattr(model, "metadata_"):
-            setattr(model, "metadata_", self.metadata_)  # Ensures correct assignment
+            model.metadata_ = self.metadata_  # Ensures correct assignment
 
         return model
 

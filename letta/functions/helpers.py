@@ -3,7 +3,7 @@ import json
 import logging
 import threading
 from random import uniform
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Optional, Union
 
 import humps
 from pydantic import BaseModel, Field, create_model
@@ -46,7 +46,7 @@ def generate_langchain_tool_wrapper(
     _assert_all_classes_are_imported(tool, additional_imports_module_attr_map)
 
     tool_instantiation = f"tool = {generate_imported_tool_instantiation_call_str(tool)}"
-    run_call = f"return tool._run(**kwargs)"
+    run_call = "return tool._run(**kwargs)"
     func_name = humps.decamelize(tool_name)
 
     # Combine all parts into the wrapper function
@@ -131,7 +131,7 @@ def _find_required_class_names_for_import(obj: Union["LangChainBaseTool", BaseMo
     return list(class_names)
 
 
-def generate_imported_tool_instantiation_call_str(obj: Any) -> Optional[str]:
+def generate_imported_tool_instantiation_call_str(obj: Any) -> str | None:
     if isinstance(obj, (int, float, str, bool, type(None))):
         # This is the base case
         # If it is a basic Python type, we trivially return the string version of that value
@@ -160,7 +160,7 @@ def generate_imported_tool_instantiation_call_str(obj: Any) -> Optional[str]:
         for k, v in obj.items():
             python_string = generate_imported_tool_instantiation_call_str(v)
             if python_string:
-                dict_items.append(f"{repr(k)}: {python_string}")
+                dict_items.append(f"{k!r}: {python_string}")
 
         joined_items = ", ".join(dict_items)
         return f"{{{joined_items}}}"
@@ -194,7 +194,7 @@ def _is_base_model(obj: Any):
     return isinstance(obj, BaseModel)
 
 
-def _generate_import_code(module_attr_map: Optional[dict]):
+def _generate_import_code(module_attr_map: dict | None):
     if not module_attr_map:
         return ""
 
@@ -210,7 +210,7 @@ def _generate_import_code(module_attr_map: Optional[dict]):
 def _parse_letta_response_for_assistant_message(
     target_agent_id: str,
     letta_response: LettaResponse,
-) -> Optional[str]:
+) -> str | None:
     messages = []
     for m in letta_response.messages:
         if isinstance(m, AssistantMessage):
@@ -225,10 +225,10 @@ def _parse_letta_response_for_assistant_message(
 
 async def async_execute_send_message_to_agent(
     sender_agent: "Agent",
-    messages: List[MessageCreate],
+    messages: list[MessageCreate],
     other_agent_id: str,
     log_prefix: str,
-) -> Optional[str]:
+) -> str | None:
     """
     Async helper to:
       1) validate the target agent exists & is in the same org,
@@ -256,10 +256,10 @@ async def async_execute_send_message_to_agent(
 
 def execute_send_message_to_agent(
     sender_agent: "Agent",
-    messages: List[MessageCreate],
+    messages: list[MessageCreate],
     other_agent_id: str,
     log_prefix: str,
-) -> Optional[str]:
+) -> str | None:
     """
     Synchronous wrapper that calls `async_execute_send_message_to_agent` using asyncio.run.
     This function must be called from a synchronous context (i.e., no running event loop).
@@ -271,8 +271,8 @@ async def _send_message_to_agent_no_stream(
     server: "SyncServer",
     agent_id: str,
     actor: User,
-    messages: List[MessageCreate],
-    metadata: Optional[dict] = None,
+    messages: list[MessageCreate],
+    metadata: dict | None = None,
 ) -> LettaResponse:
     """
     A simpler helper to send messages to a single agent WITHOUT streaming.
@@ -304,10 +304,10 @@ async def _async_send_message_with_retries(
     server: "SyncServer",
     sender_agent: "Agent",
     target_agent_id: str,
-    messages: List[MessageCreate],
+    messages: list[MessageCreate],
     max_retries: int,
     timeout: int,
-    logging_prefix: Optional[str] = None,
+    logging_prefix: str | None = None,
 ) -> str:
     logging_prefix = logging_prefix or "[_async_send_message_with_retries]"
 
@@ -353,7 +353,7 @@ async def _async_send_message_with_retries(
 
 def fire_and_forget_send_to_agent(
     sender_agent: "Agent",
-    messages: List[MessageCreate],
+    messages: list[MessageCreate],
     other_agent_id: str,
     log_prefix: str,
     use_retries: bool = False,
@@ -436,8 +436,8 @@ def fire_and_forget_send_to_agent(
 
 
 async def _send_message_to_agents_matching_tags_async(
-    sender_agent: "Agent", server: "SyncServer", messages: List[MessageCreate], matching_agents: List["AgentState"]
-) -> List[str]:
+    sender_agent: "Agent", server: "SyncServer", messages: list[MessageCreate], matching_agents: list["AgentState"]
+) -> list[str]:
     async def _send_single(agent_state):
         return await _async_send_message_with_retries(
             server=server,
@@ -460,7 +460,7 @@ async def _send_message_to_agents_matching_tags_async(
     return final
 
 
-async def _send_message_to_all_agents_in_group_async(sender_agent: "Agent", message: str) -> List[str]:
+async def _send_message_to_all_agents_in_group_async(sender_agent: "Agent", message: str) -> list[str]:
     server = get_letta_server()
 
     augmented_message = (
@@ -501,7 +501,7 @@ async def _send_message_to_all_agents_in_group_async(sender_agent: "Agent", mess
     return final
 
 
-def generate_model_from_args_json_schema(schema: Dict[str, Any]) -> Type[BaseModel]:
+def generate_model_from_args_json_schema(schema: dict[str, Any]) -> type[BaseModel]:
     """Creates a Pydantic model from a JSON schema.
 
     Args:
@@ -520,7 +520,7 @@ def generate_model_from_args_json_schema(schema: Dict[str, Any]) -> Type[BaseMod
     return _create_model_from_schema(schema.get("title", "DynamicModel"), schema, nested_models)
 
 
-def _create_model_from_schema(name: str, model_schema: Dict[str, Any], nested_models: Dict[str, Type[BaseModel]] = None) -> Type[BaseModel]:
+def _create_model_from_schema(name: str, model_schema: dict[str, Any], nested_models: dict[str, type[BaseModel]] = None) -> type[BaseModel]:
     fields = {}
     for field_name, field_schema in model_schema["properties"].items():
         field_type = _get_field_type(field_schema, nested_models)
@@ -531,7 +531,7 @@ def _create_model_from_schema(name: str, model_schema: Dict[str, Any], nested_mo
     return create_model(name, **fields)
 
 
-def _get_field_type(field_schema: Dict[str, Any], nested_models: Dict[str, Type[BaseModel]] = None) -> Any:
+def _get_field_type(field_schema: dict[str, Any], nested_models: dict[str, type[BaseModel]] = None) -> Any:
     """Helper to convert JSON schema types to Python types."""
     if field_schema.get("type") == "string":
         return str
@@ -544,8 +544,8 @@ def _get_field_type(field_schema: Dict[str, Any], nested_models: Dict[str, Type[
     elif field_schema.get("type") == "array":
         item_type = field_schema["items"].get("$ref", "").split("/")[-1]
         if item_type and nested_models and item_type in nested_models:
-            return List[nested_models[item_type]]
-        return List[_get_field_type(field_schema["items"], nested_models)]
+            return list[nested_models[item_type]]
+        return list[_get_field_type(field_schema["items"], nested_models)]
     elif field_schema.get("type") == "object":
         if "$ref" in field_schema:
             ref_type = field_schema["$ref"].split("/")[-1]
@@ -566,7 +566,7 @@ def _get_field_type(field_schema: Dict[str, Any], nested_models: Dict[str, Type[
                 # If nested_type is Any, fall back to `dict`, or raise, depending on how strict you want to be
                 if nested_type == Any:
                     return dict
-                return Dict[str, nested_type]
+                return dict[str, nested_type]
 
         return dict
     elif field_schema.get("$ref") is not None:
@@ -593,11 +593,11 @@ def _get_field_type(field_schema: Dict[str, Any], nested_models: Dict[str, Type[
 
 
 def extract_send_message_from_steps_messages(
-    steps_messages: List[List[Message]],
+    steps_messages: list[list[Message]],
     agent_send_message_tool_name: str = DEFAULT_MESSAGE_TOOL,
     agent_send_message_tool_kwarg: str = DEFAULT_MESSAGE_TOOL_KWARG,
-    logger: Optional[logging.Logger] = None,
-) -> List[str]:
+    logger: logging.Logger | None = None,
+) -> list[str]:
     extracted_messages = []
 
     for step in steps_messages:

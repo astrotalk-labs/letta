@@ -1,4 +1,3 @@
-from typing import List, Optional
 
 from letta.constants import DEFAULT_ORG_ID, DEFAULT_ORG_NAME
 from letta.orm.errors import NoResultFound
@@ -21,7 +20,7 @@ class OrganizationManager:
 
     @enforce_types
     @trace_method
-    def get_organization_by_id(self, org_id: str) -> Optional[PydanticOrganization]:
+    def get_organization_by_id(self, org_id: str) -> PydanticOrganization | None:
         """Fetch an organization by ID."""
         with db_registry.session() as session:
             organization = OrganizationModel.read(db_session=session, identifier=org_id)
@@ -29,7 +28,7 @@ class OrganizationManager:
 
     @enforce_types
     @trace_method
-    async def get_organization_by_id_async(self, org_id: str) -> Optional[PydanticOrganization]:
+    async def get_organization_by_id_async(self, org_id: str) -> PydanticOrganization | None:
         """Fetch an organization by ID."""
         async with db_registry.async_session() as session:
             organization = await OrganizationModel.read_async(db_session=session, identifier=org_id)
@@ -81,7 +80,7 @@ class OrganizationManager:
 
     @enforce_types
     @trace_method
-    async def update_organization_name_using_id_async(self, org_id: str, name: Optional[str] = None) -> PydanticOrganization:
+    async def update_organization_name_using_id_async(self, org_id: str, name: str | None = None) -> PydanticOrganization:
         """Update an organization."""
         async with db_registry.async_session() as session:
             org = await OrganizationModel.read_async(db_session=session, identifier=org_id)
@@ -121,7 +120,7 @@ class OrganizationManager:
 
     @enforce_types
     @trace_method
-    async def list_organizations_async(self, after: Optional[str] = None, limit: Optional[int] = 50) -> List[PydanticOrganization]:
+    async def list_organizations_async(self, after: str | None = None, limit: int | None = 50) -> list[PydanticOrganization]:
         """List all organizations with optional pagination."""
         async with db_registry.async_session() as session:
             organizations = await OrganizationModel.list_async(

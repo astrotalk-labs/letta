@@ -1,7 +1,7 @@
 import uuid
 import xml.etree.ElementTree as ET
-from typing import List, Optional, Tuple
 
+from letta.debug_util import debug_log
 from letta.schemas.agent import AgentState
 from letta.schemas.letta_message import MessageType
 from letta.schemas.letta_response import LettaResponse
@@ -10,7 +10,6 @@ from letta.schemas.message import Message, MessageCreate
 from letta.schemas.usage import LettaUsageStatistics
 from letta.schemas.user import User
 from letta.server.rest_api.utils import create_input_messages
-from letta.debug_util import debug_log
 from letta.services.message_manager import MessageManager
 
 
@@ -18,8 +17,8 @@ def _create_letta_response(
     new_in_context_messages: list[Message],
     use_assistant_message: bool,
     usage: LettaUsageStatistics,
-    stop_reason: Optional[LettaStopReason] = None,
-    include_return_message_types: Optional[List[MessageType]] = None,
+    stop_reason: LettaStopReason | None = None,
+    include_return_message_types: list[MessageType] | None = None,
 ) -> LettaResponse:
     """
     Converts the newly created/persisted messages into a LettaResponse.
@@ -41,11 +40,11 @@ def _create_letta_response(
 
 
 def _prepare_in_context_messages(
-    input_messages: List[MessageCreate],
+    input_messages: list[MessageCreate],
     agent_state: AgentState,
     message_manager: MessageManager,
     actor: User,
-) -> Tuple[List[Message], List[Message]]:
+) -> tuple[list[Message], list[Message]]:
     """
     Prepares in-context messages for an agent, based on the current state and a new user input.
 
@@ -77,11 +76,11 @@ def _prepare_in_context_messages(
 
 
 async def _prepare_in_context_messages_async(
-    input_messages: List[MessageCreate],
+    input_messages: list[MessageCreate],
     agent_state: AgentState,
     message_manager: MessageManager,
     actor: User,
-) -> Tuple[List[Message], List[Message]]:
+) -> tuple[list[Message], list[Message]]:
     """
     Prepares in-context messages for an agent, based on the current state and a new user input.
     Async version of _prepare_in_context_messages.
@@ -114,11 +113,11 @@ async def _prepare_in_context_messages_async(
 
 
 async def prepare_in_context_messages_no_persist_async(
-    input_messages: List[MessageCreate],
+    input_messages: list[MessageCreate],
     agent_state: AgentState,
     message_manager: MessageManager,
     actor: User,
-) -> Tuple[List[Message], List[Message]]:
+) -> tuple[list[Message], list[Message]]:
     """
     Prepares in-context messages for an agent, based on the current state and a new user input.
 
@@ -145,7 +144,7 @@ async def prepare_in_context_messages_no_persist_async(
     return current_in_context_messages, new_in_context_messages
 
 
-def serialize_message_history(messages: List[str], context: str) -> str:
+def serialize_message_history(messages: list[str], context: str) -> str:
     """
     Produce an XML document like:
 
@@ -172,7 +171,7 @@ def serialize_message_history(messages: List[str], context: str) -> str:
     return ET.tostring(root, encoding="unicode")
 
 
-def deserialize_message_history(xml_str: str) -> Tuple[List[str], str]:
+def deserialize_message_history(xml_str: str) -> tuple[list[str], str]:
     """
     Parse the XML back into (messages, context). Raises ValueError if tags are missing.
     """

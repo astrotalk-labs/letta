@@ -15,9 +15,9 @@ class LLMClient:
         provider_type: ProviderType,
         put_inner_thoughts_first: bool = True,
         actor: Optional["User"] = None,
-        at_user_id: Optional[str] = None,
-        user_cohort: Optional[str] = None,
-    ) -> Optional[LLMClientBase]:
+        at_user_id: str | None = None,
+        user_cohort: str | None = None,
+    ) -> LLMClientBase | None:
         """
         Create an LLM client based on the model endpoint type.
 

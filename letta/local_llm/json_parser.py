@@ -47,7 +47,7 @@ def extract_first_json(string: str):
                 try:
                     return json_loads(string[start_index : i + 1])
                 except json.JSONDecodeError as e:
-                    raise LLMJSONParsingError(f"Matched closing bracket, but decode failed with error: {str(e)}")
+                    raise LLMJSONParsingError(f"Matched closing bracket, but decode failed with error: {e!s}")
     printd("No valid JSON object found.")
     raise LLMJSONParsingError("Couldn't find starting bracket")
 
