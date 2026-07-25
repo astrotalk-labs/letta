@@ -1,5 +1,5 @@
 import datetime
-from typing import List, Literal, Optional, Union
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -24,44 +24,44 @@ class ToolCall(BaseModel):
 class LogProbToken(BaseModel):
     token: str
     logprob: float
-    bytes: Optional[List[int]]
+    bytes: list[int] | None
 
 
 # Legacy?
 class MessageContentLogProb(BaseModel):
     token: str
     logprob: float
-    bytes: Optional[List[int]]
-    top_logprobs: Optional[List[LogProbToken]]
+    bytes: list[int] | None
+    top_logprobs: list[LogProbToken] | None
 
 
 class TopLogprob(BaseModel):
     token: str
-    bytes: Optional[List[int]] = None
+    bytes: list[int] | None = None
     logprob: float
 
 
 class ChatCompletionTokenLogprob(BaseModel):
     token: str
-    bytes: Optional[List[int]] = None
+    bytes: list[int] | None = None
     logprob: float
-    top_logprobs: List[TopLogprob]
+    top_logprobs: list[TopLogprob]
 
 
 class ChoiceLogprobs(BaseModel):
-    content: Optional[List[ChatCompletionTokenLogprob]] = None
+    content: list[ChatCompletionTokenLogprob] | None = None
 
-    refusal: Optional[List[ChatCompletionTokenLogprob]] = None
+    refusal: list[ChatCompletionTokenLogprob] | None = None
 
 
 class Message(BaseModel):
-    content: Optional[str] = None
-    tool_calls: Optional[List[ToolCall]] = None
+    content: str | None = None
+    tool_calls: list[ToolCall] | None = None
     role: str
-    function_call: Optional[FunctionCall] = None  # Deprecated
-    reasoning_content: Optional[str] = None  # Used in newer reasoning APIs, e.g. DeepSeek
-    reasoning_content_signature: Optional[str] = None  # NOTE: for Anthropic
-    redacted_reasoning_content: Optional[str] = None  # NOTE: for Anthropic
+    function_call: FunctionCall | None = None  # Deprecated
+    reasoning_content: str | None = None  # Used in newer reasoning APIs, e.g. DeepSeek
+    reasoning_content_signature: str | None = None  # NOTE: for Anthropic
+    redacted_reasoning_content: str | None = None  # NOTE: for Anthropic
     omitted_reasoning_content: bool = False  # NOTE: for OpenAI o1/o3
 
 
@@ -69,8 +69,8 @@ class Choice(BaseModel):
     finish_reason: str
     index: int
     message: Message
-    logprobs: Optional[ChoiceLogprobs] = None
-    seed: Optional[int] = None  # found in TogetherAI
+    logprobs: ChoiceLogprobs | None = None
+    seed: int | None = None  # found in TogetherAI
 
 
 class UsageStatisticsPromptTokenDetails(BaseModel):
@@ -102,8 +102,8 @@ class UsageStatistics(BaseModel):
     prompt_tokens: int = 0
     total_tokens: int = 0
 
-    prompt_tokens_details: Optional[UsageStatisticsPromptTokenDetails] = None
-    completion_tokens_details: Optional[UsageStatisticsCompletionTokenDetails] = None
+    prompt_tokens_details: UsageStatisticsPromptTokenDetails | None = None
+    completion_tokens_details: UsageStatisticsCompletionTokenDetails | None = None
 
     def __add__(self, other: "UsageStatistics") -> "UsageStatistics":
 
@@ -138,11 +138,11 @@ class ChatCompletionResponse(BaseModel):
     """https://platform.openai.com/docs/api-reference/chat/object"""
 
     id: str
-    choices: List[Choice]
-    created: Union[datetime.datetime, int]
-    model: Optional[str] = None  # NOTE: this is not consistent with OpenAI API standard, however is necessary to support local LLMs
+    choices: list[Choice]
+    created: datetime.datetime | int
+    model: str | None = None  # NOTE: this is not consistent with OpenAI API standard, however is necessary to support local LLMs
     # system_fingerprint: str  # docs say this is mandatory, but in reality API returns None
-    system_fingerprint: Optional[str] = None
+    system_fingerprint: str | None = None
     # object: str = Field(default="chat.completion")
     object: Literal["chat.completion"] = "chat.completion"
     usage: UsageStatistics
@@ -153,18 +153,18 @@ class ChatCompletionResponse(BaseModel):
 
 class FunctionCallDelta(BaseModel):
     # arguments: Optional[str] = None
-    name: Optional[str] = None
-    arguments: Optional[str] = None
+    name: str | None = None
+    arguments: str | None = None
     # name: str
 
 
 class ToolCallDelta(BaseModel):
     index: int
-    id: Optional[str] = None
+    id: str | None = None
     # "Currently, only function is supported"
     type: Literal["function"] = "function"
     # function: ToolCallFunction
-    function: Optional[FunctionCallDelta] = None
+    function: FunctionCallDelta | None = None
 
 
 class MessageDelta(BaseModel):
@@ -186,31 +186,31 @@ class MessageDelta(BaseModel):
     }
     """
 
-    content: Optional[str] = None
-    reasoning_content: Optional[str] = None
-    reasoning_content_signature: Optional[str] = None  # NOTE: for Anthropic
-    redacted_reasoning_content: Optional[str] = None  # NOTE: for Anthropic
-    tool_calls: Optional[List[ToolCallDelta]] = None
-    role: Optional[str] = None
-    function_call: Optional[FunctionCallDelta] = None  # Deprecated
+    content: str | None = None
+    reasoning_content: str | None = None
+    reasoning_content_signature: str | None = None  # NOTE: for Anthropic
+    redacted_reasoning_content: str | None = None  # NOTE: for Anthropic
+    tool_calls: list[ToolCallDelta] | None = None
+    role: str | None = None
+    function_call: FunctionCallDelta | None = None  # Deprecated
 
 
 class ChunkChoice(BaseModel):
-    finish_reason: Optional[str] = None  # NOTE: when streaming will be null
+    finish_reason: str | None = None  # NOTE: when streaming will be null
     index: int
     delta: MessageDelta
-    logprobs: Optional[ChoiceLogprobs] = None
+    logprobs: ChoiceLogprobs | None = None
 
 
 class ChatCompletionChunkResponse(BaseModel):
     """https://platform.openai.com/docs/api-reference/chat/streaming"""
 
     id: str
-    choices: List[ChunkChoice]
-    created: Union[datetime.datetime, int]
+    choices: list[ChunkChoice]
+    created: datetime.datetime | int
     model: str
     # system_fingerprint: str  # docs say this is mandatory, but in reality API returns None
-    system_fingerprint: Optional[str] = None
+    system_fingerprint: str | None = None
     # object: str = Field(default="chat.completion")
     object: Literal["chat.completion.chunk"] = "chat.completion.chunk"
     output_tokens: int = 0

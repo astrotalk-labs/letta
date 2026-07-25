@@ -1,4 +1,3 @@
-from typing import List, Optional, Union
 
 from letta.orm.provider import Provider as ProviderModel
 from letta.otel.tracing import trace_method
@@ -108,11 +107,11 @@ class ProviderManager:
     def list_providers(
         self,
         actor: PydanticUser,
-        name: Optional[str] = None,
-        provider_type: Optional[ProviderType] = None,
-        after: Optional[str] = None,
-        limit: Optional[int] = 50,
-    ) -> List[PydanticProvider]:
+        name: str | None = None,
+        provider_type: ProviderType | None = None,
+        after: str | None = None,
+        limit: int | None = 50,
+    ) -> list[PydanticProvider]:
         """List all providers with optional pagination."""
         filter_kwargs = {}
         if name:
@@ -135,11 +134,11 @@ class ProviderManager:
     async def list_providers_async(
         self,
         actor: PydanticUser,
-        name: Optional[str] = None,
-        provider_type: Optional[ProviderType] = None,
-        after: Optional[str] = None,
-        limit: Optional[int] = 50,
-    ) -> List[PydanticProvider]:
+        name: str | None = None,
+        provider_type: ProviderType | None = None,
+        after: str | None = None,
+        limit: int | None = 50,
+    ) -> list[PydanticProvider]:
         """List all providers with optional pagination."""
         filter_kwargs = {}
         if name:
@@ -159,19 +158,19 @@ class ProviderManager:
 
     @enforce_types
     @trace_method
-    def get_provider_id_from_name(self, provider_name: Union[str, None], actor: PydanticUser) -> Optional[str]:
+    def get_provider_id_from_name(self, provider_name: str | None, actor: PydanticUser) -> str | None:
         providers = self.list_providers(name=provider_name, actor=actor)
         return providers[0].id if providers else None
 
     @enforce_types
     @trace_method
-    def get_override_key(self, provider_name: Union[str, None], actor: PydanticUser) -> Optional[str]:
+    def get_override_key(self, provider_name: str | None, actor: PydanticUser) -> str | None:
         providers = self.list_providers(name=provider_name, actor=actor)
         return providers[0].api_key if providers else None
 
     @enforce_types
     @trace_method
-    async def get_override_key_async(self, provider_name: Union[str, None], actor: PydanticUser) -> Optional[str]:
+    async def get_override_key_async(self, provider_name: str | None, actor: PydanticUser) -> str | None:
         providers = await self.list_providers_async(name=provider_name, actor=actor)
         return providers[0].api_key if providers else None
 

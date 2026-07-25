@@ -1,5 +1,4 @@
 import mimetypes
-from typing import List, Optional
 
 from fastapi import UploadFile
 
@@ -49,12 +48,12 @@ class FileProcessor:
     async def process(
         self,
         server: SyncServer,
-        agent_states: List[AgentState],
+        agent_states: list[AgentState],
         source_id: str,
         content: bytes,
         file: UploadFile,
-        job: Optional[Job] = None,
-    ) -> List[Passage]:
+        job: Job | None = None,
+    ) -> list[Passage]:
         file_metadata = self._extract_upload_file_metadata(file, source_id=source_id)
         filename = file_metadata.file_name
 
@@ -130,7 +129,7 @@ class FileProcessor:
             return all_passages
 
         except Exception as e:
-            logger.error(f"File processing failed for {filename}: {str(e)}")
+            logger.error(f"File processing failed for {filename}: {e!s}")
 
             # update job status
             if job:

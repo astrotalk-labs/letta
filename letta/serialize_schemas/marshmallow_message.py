@@ -1,4 +1,3 @@
-from typing import Dict
 
 from marshmallow import post_dump, pre_load
 
@@ -18,7 +17,7 @@ class SerializedMessageSchema(BaseSchema):
     tool_calls = ToolCallField()
 
     @post_dump
-    def sanitize_ids(self, data: Dict, **kwargs) -> Dict:
+    def sanitize_ids(self, data: dict, **kwargs) -> dict:
         # keep id for remapping later on agent dump
         # agent dump will then get rid of message ids
         del data["_created_by_id"]
@@ -28,7 +27,7 @@ class SerializedMessageSchema(BaseSchema):
         return data
 
     @pre_load
-    def regenerate_ids(self, data: Dict, **kwargs) -> Dict:
+    def regenerate_ids(self, data: dict, **kwargs) -> dict:
         if self.Meta.model:
             # Skip regenerating ID, as agent dump will do it
             data["_created_by_id"] = self.actor.id

@@ -1,9 +1,15 @@
 from collections import OrderedDict
-from typing import Any, Dict, Optional
+from typing import Any
 
 from letta.constants import COMPOSIO_ENTITY_ENV_VAR_KEY, PRE_EXECUTION_MESSAGE_ARG
-from letta.functions.ast_parsers import coerce_dict_args_by_annotations, get_function_annotations_from_source
-from letta.functions.composio_helpers import execute_composio_action, generate_composio_action_from_func_name
+from letta.functions.ast_parsers import (
+    coerce_dict_args_by_annotations,
+    get_function_annotations_from_source,
+)
+from letta.functions.composio_helpers import (
+    execute_composio_action,
+    generate_composio_action_from_func_name,
+)
 from letta.helpers.composio_helpers import get_composio_api_key
 from letta.orm.enums import ToolType
 from letta.schemas.agent import AgentState
@@ -14,7 +20,7 @@ from letta.services.tool_executor.tool_execution_sandbox import ToolExecutionSan
 from letta.utils import get_friendly_error_msg
 
 
-def enable_strict_mode(tool_schema: Dict[str, Any]) -> Dict[str, Any]:
+def enable_strict_mode(tool_schema: dict[str, Any]) -> dict[str, Any]:
     """Enables strict mode for a tool schema by setting 'strict' to True and
     disallowing additional properties in the parameters.
 
@@ -39,7 +45,7 @@ def enable_strict_mode(tool_schema: Dict[str, Any]) -> Dict[str, Any]:
     return schema
 
 
-def add_pre_execution_message(tool_schema: Dict[str, Any], description: Optional[str] = None) -> Dict[str, Any]:
+def add_pre_execution_message(tool_schema: dict[str, Any], description: str | None = None) -> dict[str, Any]:
     """Adds a `pre_execution_message` parameter to a tool schema to prompt a natural, human-like message before executing the tool.
 
     Args:
@@ -89,7 +95,7 @@ def add_pre_execution_message(tool_schema: Dict[str, Any], description: Optional
     return schema
 
 
-def remove_request_heartbeat(tool_schema: Dict[str, Any]) -> Dict[str, Any]:
+def remove_request_heartbeat(tool_schema: dict[str, Any]) -> dict[str, Any]:
     """Removes the `request_heartbeat` parameter from a tool schema if it exists.
 
     Args:
@@ -127,7 +133,7 @@ def execute_external_tool(
     target_letta_tool: Tool,
     actor: User,
     allow_agent_state_modifications: bool = False,
-) -> tuple[Any, Optional[SandboxRunResult]]:
+) -> tuple[Any, SandboxRunResult | None]:
     # TODO: need to have an AgentState object that actually has full access to the block data
     # this is because the sandbox tools need to be able to access block.value to edit this data
     try:

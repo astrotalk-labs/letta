@@ -6,9 +6,7 @@ the GrowthBook API (or loads it from a local JSON file as fallback).
 
 import json
 import threading
-import time
 from pathlib import Path
-from typing import Optional
 
 import httpx
 
@@ -33,9 +31,9 @@ class GBFeaturesService:
 
     def __init__(
         self,
-        client_key: Optional[str] = None,
+        client_key: str | None = None,
         api_host: str = "https://cdn.growthbook.io",
-        features_json_path: Optional[str] = None,
+        features_json_path: str | None = None,
         refresh_interval: int = _DEFAULT_REFRESH_INTERVAL,
     ):
         self._client_key = client_key
@@ -45,7 +43,7 @@ class GBFeaturesService:
 
         self._features_json: str = "{}"
         self._lock = threading.Lock()
-        self._refresh_thread: Optional[threading.Thread] = None
+        self._refresh_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
         # Load initial features

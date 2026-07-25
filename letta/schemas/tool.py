@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import Field, model_validator
 
@@ -14,7 +14,10 @@ from letta.constants import (
 )
 from letta.functions.ast_parsers import get_function_name_and_docstring
 from letta.functions.composio_helpers import generate_composio_tool_wrapper
-from letta.functions.functions import derive_openai_json_schema, get_json_schema_from_module
+from letta.functions.functions import (
+    derive_openai_json_schema,
+    get_json_schema_from_module,
+)
 from letta.functions.mcp_client.types import MCPTool
 from letta.functions.schema_generator import (
     generate_schema_from_args_schema_v2,
@@ -48,25 +51,25 @@ class Tool(BaseTool):
 
     id: str = BaseTool.generate_id_field()
     tool_type: ToolType = Field(ToolType.CUSTOM, description="The type of the tool.")
-    description: Optional[str] = Field(None, description="The description of the tool.")
-    source_type: Optional[str] = Field(None, description="The type of the source code.")
-    organization_id: Optional[str] = Field(None, description="The unique identifier of the organization associated with the tool.")
-    name: Optional[str] = Field(None, description="The name of the function.")
-    tags: List[str] = Field([], description="Metadata tags.")
+    description: str | None = Field(None, description="The description of the tool.")
+    source_type: str | None = Field(None, description="The type of the source code.")
+    organization_id: str | None = Field(None, description="The unique identifier of the organization associated with the tool.")
+    name: str | None = Field(None, description="The name of the function.")
+    tags: list[str] = Field([], description="Metadata tags.")
 
     # code
-    source_code: Optional[str] = Field(None, description="The source code of the function.")
-    json_schema: Optional[Dict] = Field(None, description="The JSON schema of the function.")
-    args_json_schema: Optional[Dict] = Field(None, description="The args JSON schema of the function.")
+    source_code: str | None = Field(None, description="The source code of the function.")
+    json_schema: dict | None = Field(None, description="The JSON schema of the function.")
+    args_json_schema: dict | None = Field(None, description="The args JSON schema of the function.")
 
     # tool configuration
     return_char_limit: int = Field(FUNCTION_RETURN_CHAR_LIMIT, description="The maximum number of characters in the response.")
-    pip_requirements: Optional[List[PipRequirement]] = Field(None, description="Optional list of pip packages required by this tool.")
+    pip_requirements: list[PipRequirement] | None = Field(None, description="Optional list of pip packages required by this tool.")
 
     # metadata fields
-    created_by_id: Optional[str] = Field(None, description="The id of the user that made this Tool.")
-    last_updated_by_id: Optional[str] = Field(None, description="The id of the user that made this Tool.")
-    metadata_: Optional[Dict[str, Any]] = Field(default_factory=dict, description="A dictionary of additional metadata for the tool.")
+    created_by_id: str | None = Field(None, description="The id of the user that made this Tool.")
+    last_updated_by_id: str | None = Field(None, description="The id of the user that made this Tool.")
+    metadata_: dict[str, Any] | None = Field(default_factory=dict, description="A dictionary of additional metadata for the tool.")
 
     @model_validator(mode="after")
     def refresh_source_code_and_json_schema(self):
@@ -95,7 +98,7 @@ class Tool(BaseTool):
                 try:
                     self.json_schema = derive_openai_json_schema(source_code=self.source_code)
                 except Exception as e:
-                    error_msg = f"Failed to derive json schema for tool with id={self.id} name={self.name}. Error: {str(e)}"
+                    error_msg = f"Failed to derive json schema for tool with id={self.id} name={self.name}. Error: {e!s}"
                     logger.error(error_msg)
         elif self.tool_type in {ToolType.LETTA_CORE, ToolType.LETTA_MEMORY_CORE, ToolType.LETTA_SLEEPTIME_CORE}:
             # If it's letta core tool, we generate the json_schema on the fly here
@@ -138,16 +141,16 @@ class Tool(BaseTool):
 
 
 class ToolCreate(LettaBase):
-    description: Optional[str] = Field(None, description="The description of the tool.")
-    tags: List[str] = Field([], description="Metadata tags.")
+    description: str | None = Field(None, description="The description of the tool.")
+    tags: list[str] = Field([], description="Metadata tags.")
     source_code: str = Field(..., description="The source code of the function.")
     source_type: str = Field("python", description="The source type of the function.")
-    json_schema: Optional[Dict] = Field(
+    json_schema: dict | None = Field(
         None, description="The JSON schema of the function (auto-generated from source_code if not provided)"
     )
-    args_json_schema: Optional[Dict] = Field(None, description="The args JSON schema of the function.")
+    args_json_schema: dict | None = Field(None, description="The args JSON schema of the function.")
     return_char_limit: int = Field(FUNCTION_RETURN_CHAR_LIMIT, description="The maximum number of characters in the response.")
-    pip_requirements: Optional[List[PipRequirement]] = Field(None, description="Optional list of pip packages required by this tool.")
+    pip_requirements: list[PipRequirement] | None = Field(None, description="Optional list of pip packages required by this tool.")
 
     # TODO should we put the HTTP / API fetch inside from_mcp?
     # async def from_mcp(cls, mcp_server: str, mcp_tool_name: str) -> "ToolCreate":
@@ -247,16 +250,16 @@ class ToolCreate(LettaBase):
 
 
 class ToolUpdate(LettaBase):
-    description: Optional[str] = Field(None, description="The description of the tool.")
-    tags: Optional[List[str]] = Field(None, description="Metadata tags.")
-    source_code: Optional[str] = Field(None, description="The source code of the function.")
-    source_type: Optional[str] = Field(None, description="The type of the source code.")
-    json_schema: Optional[Dict] = Field(
+    description: str | None = Field(None, description="The description of the tool.")
+    tags: list[str] | None = Field(None, description="Metadata tags.")
+    source_code: str | None = Field(None, description="The source code of the function.")
+    source_type: str | None = Field(None, description="The type of the source code.")
+    json_schema: dict | None = Field(
         None, description="The JSON schema of the function (auto-generated from source_code if not provided)"
     )
-    args_json_schema: Optional[Dict] = Field(None, description="The args JSON schema of the function.")
-    return_char_limit: Optional[int] = Field(None, description="The maximum number of characters in the response.")
-    pip_requirements: Optional[List[PipRequirement]] = Field(None, description="Optional list of pip packages required by this tool.")
+    args_json_schema: dict | None = Field(None, description="The args JSON schema of the function.")
+    return_char_limit: int | None = Field(None, description="The maximum number of characters in the response.")
+    pip_requirements: list[PipRequirement] | None = Field(None, description="Optional list of pip packages required by this tool.")
 
     class Config:
         extra = "ignore"  # Allows extra fields without validation errors
@@ -265,12 +268,12 @@ class ToolUpdate(LettaBase):
 
 class ToolRunFromSource(LettaBase):
     source_code: str = Field(..., description="The source code of the function.")
-    args: Dict[str, Any] = Field(..., description="The arguments to pass to the tool.")
-    env_vars: Dict[str, str] = Field(None, description="The environment variables to pass to the tool.")
-    name: Optional[str] = Field(None, description="The name of the tool to run.")
-    source_type: Optional[str] = Field(None, description="The type of the source code.")
-    args_json_schema: Optional[Dict] = Field(None, description="The args JSON schema of the function.")
-    json_schema: Optional[Dict] = Field(
+    args: dict[str, Any] = Field(..., description="The arguments to pass to the tool.")
+    env_vars: dict[str, str] = Field(None, description="The environment variables to pass to the tool.")
+    name: str | None = Field(None, description="The name of the tool to run.")
+    source_type: str | None = Field(None, description="The type of the source code.")
+    args_json_schema: dict | None = Field(None, description="The args JSON schema of the function.")
+    json_schema: dict | None = Field(
         None, description="The JSON schema of the function (auto-generated from source_code if not provided)"
     )
-    pip_requirements: Optional[List[PipRequirement]] = Field(None, description="Optional list of pip packages required by this tool.")
+    pip_requirements: list[PipRequirement] | None = Field(None, description="Optional list of pip packages required by this tool.")

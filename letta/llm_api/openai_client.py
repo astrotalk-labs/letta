@@ -1,5 +1,4 @@
 import os
-from typing import List, Optional
 
 import openai
 from openai import AsyncAzureOpenAI, AsyncOpenAI, AsyncStream, OpenAI
@@ -19,9 +18,17 @@ from letta.errors import (
     LLMServerError,
     LLMUnprocessableEntityError,
 )
-from letta.llm_api.helpers import add_inner_thoughts_to_functions, convert_to_structured_output, unpack_all_inner_thoughts_from_kwargs
+from letta.llm_api.helpers import (
+    add_inner_thoughts_to_functions,
+    convert_to_structured_output,
+    unpack_all_inner_thoughts_from_kwargs,
+)
 from letta.llm_api.llm_client_base import LLMClientBase
-from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION, INNER_THOUGHTS_KWARG_DESCRIPTION_GO_FIRST
+from letta.local_llm.constants import (
+    INNER_THOUGHTS_KWARG,
+    INNER_THOUGHTS_KWARG_DESCRIPTION,
+    INNER_THOUGHTS_KWARG_DESCRIPTION_GO_FIRST,
+)
 from letta.log import get_logger
 from letta.otel.tracing import trace_method
 from letta.schemas.embedding_config import EmbeddingConfig
@@ -29,11 +36,16 @@ from letta.schemas.enums import ProviderCategory, ProviderType
 from letta.schemas.letta_message_content import MessageContentType
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.message import Message as PydanticMessage
-from letta.schemas.openai.chat_completion_request import ChatCompletionRequest
-from letta.schemas.openai.chat_completion_request import FunctionCall as ToolFunctionChoiceFunctionCall
-from letta.schemas.openai.chat_completion_request import FunctionSchema
+from letta.schemas.openai.chat_completion_request import (
+    ChatCompletionRequest,
+    FunctionSchema,
+    ToolFunctionChoice,
+    cast_message_to_subtype,
+)
+from letta.schemas.openai.chat_completion_request import (
+    FunctionCall as ToolFunctionChoiceFunctionCall,
+)
 from letta.schemas.openai.chat_completion_request import Tool as OpenAITool
-from letta.schemas.openai.chat_completion_request import ToolFunctionChoice, cast_message_to_subtype
 from letta.schemas.openai.chat_completion_response import ChatCompletionResponse
 from letta.settings import model_settings
 
@@ -160,10 +172,10 @@ class OpenAIClient(LLMClientBase):
     @trace_method
     def build_request_data(
         self,
-        messages: List[PydanticMessage],
+        messages: list[PydanticMessage],
         llm_config: LLMConfig,
-        tools: Optional[List[dict]] = None,  # Keep as dict for now as per base class
-        force_tool_call: Optional[str] = None,
+        tools: list[dict] | None = None,  # Keep as dict for now as per base class
+        force_tool_call: str | None = None,
     ) -> dict:
         """
         Constructs a request object in the expected data format for the OpenAI API.
@@ -217,7 +229,7 @@ class OpenAIClient(LLMClientBase):
             messages=fill_image_content_in_messages(openai_message_list, messages),
             tools=[OpenAITool(type="function", function=f) for f in tools] if tools else None,
             tool_choice=tool_choice,
-            user=str(),
+            user="",
             max_completion_tokens=llm_config.max_tokens,
             # NOTE: the reasoners that don't support temperature require 1.0, not None
             temperature=llm_config.temperature if supports_temperature_param(model) else 1.0,
@@ -276,7 +288,7 @@ class OpenAIClient(LLMClientBase):
     def convert_response_to_chat_completion(
         self,
         response_data: dict,
-        input_messages: List[PydanticMessage],  # Included for consistency, maybe used later
+        input_messages: list[PydanticMessage],  # Included for consistency, maybe used later
         llm_config: LLMConfig,
     ) -> ChatCompletionResponse:
         """
@@ -312,7 +324,7 @@ class OpenAIClient(LLMClientBase):
         return response_stream
 
     @trace_method
-    async def request_embeddings(self, inputs: List[str], embedding_config: EmbeddingConfig) -> List[dict]:
+    async def request_embeddings(self, inputs: list[str], embedding_config: EmbeddingConfig) -> list[dict]:
         """Request embeddings given texts and embedding config"""
         kwargs = self._prepare_client_kwargs_embedding(embedding_config)
         if embedding_config.embedding_endpoint_type == "azure":
@@ -332,7 +344,7 @@ class OpenAIClient(LLMClientBase):
         if isinstance(e, openai.APIConnectionError):
             logger.warning(f"[OpenAI] API connection error: {e}")
             return LLMConnectionError(
-                message=f"Failed to connect to OpenAI: {str(e)}",
+                message=f"Failed to connect to OpenAI: {e!s}",
                 code=ErrorCode.INTERNAL_SERVER_ERROR,
                 details={"cause": str(e.__cause__) if e.__cause__ else None},
             )
@@ -340,56 +352,56 @@ class OpenAIClient(LLMClientBase):
         if isinstance(e, openai.RateLimitError):
             logger.warning(f"[OpenAI] Rate limited (429). Consider backoff. Error: {e}")
             return LLMRateLimitError(
-                message=f"Rate limited by OpenAI: {str(e)}",
+                message=f"Rate limited by OpenAI: {e!s}",
                 code=ErrorCode.RATE_LIMIT_EXCEEDED,
                 details=e.body,  # Include body which often has rate limit details
             )
 
         if isinstance(e, openai.BadRequestError):
-            logger.warning(f"[OpenAI] Bad request (400): {str(e)}")
+            logger.warning(f"[OpenAI] Bad request (400): {e!s}")
             # BadRequestError can signify different issues (e.g., invalid args, context length)
             # Check message content if finer-grained errors are needed
             # Example: if "context_length_exceeded" in str(e): return LLMContextLengthExceededError(...)
             # TODO: This is a super soft check. Not sure if we can do better, needs more investigation.
             if "This model's maximum context length is" in str(e):
                 return ContextWindowExceededError(
-                    message=f"Bad request to OpenAI (context window exceeded): {str(e)}",
+                    message=f"Bad request to OpenAI (context window exceeded): {e!s}",
                 )
             else:
                 return LLMBadRequestError(
-                    message=f"Bad request to OpenAI: {str(e)}",
+                    message=f"Bad request to OpenAI: {e!s}",
                     code=ErrorCode.INVALID_ARGUMENT,  # Or more specific if detectable
                     details=e.body,
                 )
 
         if isinstance(e, openai.AuthenticationError):
-            logger.error(f"[OpenAI] Authentication error (401): {str(e)}")  # More severe log level
+            logger.error(f"[OpenAI] Authentication error (401): {e!s}")  # More severe log level
             return LLMAuthenticationError(
-                message=f"Authentication failed with OpenAI: {str(e)}", code=ErrorCode.UNAUTHENTICATED, details=e.body
+                message=f"Authentication failed with OpenAI: {e!s}", code=ErrorCode.UNAUTHENTICATED, details=e.body
             )
 
         if isinstance(e, openai.PermissionDeniedError):
-            logger.error(f"[OpenAI] Permission denied (403): {str(e)}")  # More severe log level
+            logger.error(f"[OpenAI] Permission denied (403): {e!s}")  # More severe log level
             return LLMPermissionDeniedError(
-                message=f"Permission denied by OpenAI: {str(e)}", code=ErrorCode.PERMISSION_DENIED, details=e.body
+                message=f"Permission denied by OpenAI: {e!s}", code=ErrorCode.PERMISSION_DENIED, details=e.body
             )
 
         if isinstance(e, openai.NotFoundError):
-            logger.warning(f"[OpenAI] Resource not found (404): {str(e)}")
+            logger.warning(f"[OpenAI] Resource not found (404): {e!s}")
             # Could be invalid model name, etc.
-            return LLMNotFoundError(message=f"Resource not found in OpenAI: {str(e)}", code=ErrorCode.NOT_FOUND, details=e.body)
+            return LLMNotFoundError(message=f"Resource not found in OpenAI: {e!s}", code=ErrorCode.NOT_FOUND, details=e.body)
 
         if isinstance(e, openai.UnprocessableEntityError):
-            logger.warning(f"[OpenAI] Unprocessable entity (422): {str(e)}")
+            logger.warning(f"[OpenAI] Unprocessable entity (422): {e!s}")
             return LLMUnprocessableEntityError(
-                message=f"Invalid request content for OpenAI: {str(e)}",
+                message=f"Invalid request content for OpenAI: {e!s}",
                 code=ErrorCode.INVALID_ARGUMENT,  # Usually validation errors
                 details=e.body,
             )
 
         # General API error catch-all
         if isinstance(e, openai.APIStatusError):
-            logger.warning(f"[OpenAI] API status error ({e.status_code}): {str(e)}")
+            logger.warning(f"[OpenAI] API status error ({e.status_code}): {e!s}")
             # Map based on status code potentially
             if e.status_code >= 500:
                 error_cls = LLMServerError
@@ -400,7 +412,7 @@ class OpenAIClient(LLMClientBase):
                 error_code = ErrorCode.INVALID_ARGUMENT
 
             return error_cls(
-                message=f"OpenAI API error: {str(e)}",
+                message=f"OpenAI API error: {e!s}",
                 code=error_code,
                 details={
                     "status_code": e.status_code,
@@ -413,7 +425,7 @@ class OpenAIClient(LLMClientBase):
         return super().handle_llm_error(e)
 
 
-def fill_image_content_in_messages(openai_message_list: List[dict], pydantic_message_list: List[PydanticMessage]) -> List[dict]:
+def fill_image_content_in_messages(openai_message_list: list[dict], pydantic_message_list: list[PydanticMessage]) -> list[dict]:
     """
     Converts image content to openai format.
     """

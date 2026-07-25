@@ -4,7 +4,7 @@ import os
 import struct
 import sys
 import tempfile
-from typing import Any, Dict, Optional
+from typing import Any
 
 from pydantic.config import JsonDict
 
@@ -34,17 +34,17 @@ class AsyncToolSandboxLocal(AsyncToolSandboxBase):
         args: JsonDict,
         user,
         force_recreate_venv=False,
-        tool_object: Optional[Tool] = None,
-        sandbox_config: Optional[SandboxConfig] = None,
-        sandbox_env_vars: Optional[Dict[str, Any]] = None,
+        tool_object: Tool | None = None,
+        sandbox_config: SandboxConfig | None = None,
+        sandbox_env_vars: dict[str, Any] | None = None,
     ):
         super().__init__(tool_name, args, user, tool_object, sandbox_config=sandbox_config, sandbox_env_vars=sandbox_env_vars)
         self.force_recreate_venv = force_recreate_venv
 
     async def run(
         self,
-        agent_state: Optional[AgentState] = None,
-        additional_env_vars: Optional[Dict] = None,
+        agent_state: AgentState | None = None,
+        additional_env_vars: dict | None = None,
     ) -> ToolExecutionResult:
         """
         Run the tool in a sandbox environment asynchronously,
@@ -61,8 +61,8 @@ class AsyncToolSandboxLocal(AsyncToolSandboxBase):
     @trace_method
     async def run_local_dir_sandbox(
         self,
-        agent_state: Optional[AgentState],
-        additional_env_vars: Optional[Dict],
+        agent_state: AgentState | None,
+        additional_env_vars: dict | None,
     ) -> ToolExecutionResult:
         """
         Unified asynchronous method to run the tool in a local sandbox environment,
@@ -158,7 +158,7 @@ class AsyncToolSandboxLocal(AsyncToolSandboxBase):
             if not settings.debug:
                 os.remove(temp_file_path)
 
-    async def _prepare_venv(self, local_configs, venv_path: str, env: Dict[str, str]):
+    async def _prepare_venv(self, local_configs, venv_path: str, env: dict[str, str]):
         """
         Prepare virtual environment asynchronously (in a background thread).
         """
@@ -182,7 +182,7 @@ class AsyncToolSandboxLocal(AsyncToolSandboxBase):
 
     @trace_method
     async def _execute_tool_subprocess(
-        self, sbx_config, python_executable: str, temp_file_path: str, env: Dict[str, str], cwd: str
+        self, sbx_config, python_executable: str, temp_file_path: str, env: dict[str, str], cwd: str
     ) -> ToolExecutionResult:
         """
         Execute user code in a subprocess, always capturing stdout and stderr.

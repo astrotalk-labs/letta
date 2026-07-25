@@ -1,6 +1,6 @@
 import asyncio
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from letta.log import get_logger
 from letta.schemas.agent import AgentState
@@ -61,9 +61,9 @@ class LettaFileToolExecutor(ToolExecutor):
         function_args: dict,
         tool: Tool,
         actor: User,
-        agent_state: Optional[AgentState] = None,
-        sandbox_config: Optional[SandboxConfig] = None,
-        sandbox_env_vars: Optional[Dict[str, Any]] = None,
+        agent_state: AgentState | None = None,
+        sandbox_config: SandboxConfig | None = None,
+        sandbox_env_vars: dict[str, Any] | None = None,
     ) -> ToolExecutionResult:
         if agent_state is None:
             raise ValueError("Agent state is required for file tools")
@@ -94,7 +94,7 @@ class LettaFileToolExecutor(ToolExecutor):
                 stderr=[get_friendly_error_msg(function_name=function_name, exception_name=type(e).__name__, exception_message=str(e))],
             )
 
-    async def open_file(self, agent_state: AgentState, file_name: str, view_range: Optional[Tuple[int, int]] = None) -> str:
+    async def open_file(self, agent_state: AgentState, file_name: str, view_range: tuple[int, int] | None = None) -> str:
         """Stub for open_file tool."""
         start, end = None, None
         if view_range:
@@ -146,7 +146,7 @@ class LettaFileToolExecutor(ToolExecutor):
         except re.error as e:
             raise ValueError(f"Invalid regex pattern: {e}")
 
-    def _get_context_lines(self, text: str, file_metadata: FileMetadata, match_line_idx: int, total_lines: int) -> List[str]:
+    def _get_context_lines(self, text: str, file_metadata: FileMetadata, match_line_idx: int, total_lines: int) -> list[str]:
         """Get context lines around a match using LineChunker."""
         start_idx = max(0, match_line_idx - self.MAX_CONTEXT_LINES)
         end_idx = min(total_lines, match_line_idx + self.MAX_CONTEXT_LINES + 1)
@@ -171,7 +171,7 @@ class LettaFileToolExecutor(ToolExecutor):
 
         return formatted_lines
 
-    async def grep(self, agent_state: AgentState, pattern: str, include: Optional[str] = None) -> str:
+    async def grep(self, agent_state: AgentState, pattern: str, include: str | None = None) -> str:
         """
         Search for pattern in all attached files and return matches with context.
 

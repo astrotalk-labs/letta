@@ -1,6 +1,5 @@
 import uuid
 from datetime import datetime
-from typing import List, Optional, Union
 
 from anthropic.types.beta.messages import BetaMessageBatch
 from sqlalchemy import DateTime, ForeignKey, Index, String
@@ -32,14 +31,14 @@ class LLMBatchJob(SqlalchemyBase, OrganizationMixin):
 
     llm_provider: Mapped[ProviderType] = mapped_column(String, doc="LLM provider used (e.g., 'Anthropic')")
 
-    create_batch_response: Mapped[Union[BetaMessageBatch]] = mapped_column(
+    create_batch_response: Mapped[BetaMessageBatch] = mapped_column(
         CreateBatchResponseColumn, doc="Full JSON response from initial batch creation"
     )
-    latest_polling_response: Mapped[Union[BetaMessageBatch]] = mapped_column(
+    latest_polling_response: Mapped[BetaMessageBatch] = mapped_column(
         PollBatchResponseColumn, nullable=True, doc="Last known polling result from LLM provider"
     )
 
-    last_polled_at: Mapped[Optional[datetime]] = mapped_column(
+    last_polled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, doc="Last time we polled the provider for status"
     )
 
@@ -48,4 +47,4 @@ class LLMBatchJob(SqlalchemyBase, OrganizationMixin):
     )
 
     organization: Mapped["Organization"] = relationship("Organization", back_populates="llm_batch_jobs")
-    items: Mapped[List["LLMBatchItem"]] = relationship("LLMBatchItem", back_populates="batch", lazy="selectin")
+    items: Mapped[list["LLMBatchItem"]] = relationship("LLMBatchItem", back_populates="batch", lazy="selectin")

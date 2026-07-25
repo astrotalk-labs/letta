@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, List, Optional
+from typing import Any
 
 import openai
 
@@ -34,7 +34,7 @@ class BaseAgent(ABC):
         self,
         agent_id: str,
         # TODO: Make required once client refactor hits
-        openai_client: Optional[openai.AsyncClient],
+        openai_client: openai.AsyncClient | None,
         message_manager: MessageManager,
         agent_manager: AgentManager,
         actor: User,
@@ -47,16 +47,16 @@ class BaseAgent(ABC):
         self.passage_manager = PassageManager()
         self.actor = actor
         self.logger = get_logger(agent_id)
-        self._task_id: Optional[str] = None  # set per-request by step(); used to gate latency logs
+        self._task_id: str | None = None  # set per-request by step(); used to gate latency logs
 
     @abstractmethod
-    async def step(self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS) -> LettaResponse:
+    async def step(self, input_messages: list[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS) -> LettaResponse:
         """
         Main execution loop for the agent.
         """
         raise NotImplementedError
 
-    def pre_process_input_message(self, input_messages: List[MessageCreate]) -> Any:
+    def pre_process_input_message(self, input_messages: list[MessageCreate]) -> Any:
         """
         Pre-process function to run on the input_message.
         """
@@ -73,12 +73,12 @@ class BaseAgent(ABC):
 
     async def _rebuild_memory_async(
         self,
-        in_context_messages: List[Message],
+        in_context_messages: list[Message],
         agent_state: AgentState,
-        tool_rules_solver: Optional[ToolRulesSolver] = None,
-        num_messages: Optional[int] = None,  # storing these calculations is specific to the voice agent
-        num_archival_memories: Optional[int] = None,
-    ) -> List[Message]:
+        tool_rules_solver: ToolRulesSolver | None = None,
+        num_messages: int | None = None,  # storing these calculations is specific to the voice agent
+        num_archival_memories: int | None = None,
+    ) -> list[Message]:
         """
         Async version of function above. For now before breaking up components, changes should be made in both places.
         """
@@ -132,7 +132,9 @@ class BaseAgent(ABC):
                 _mr_at_user_id = getattr(self, "at_user_id", None)
                 if _mr_at_user_id:
                     try:
-                        from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
+                        from letta.llm_api.anthropic_client import (
+                            _is_user_in_cache_obs_sample,
+                        )
 
                         if _is_user_in_cache_obs_sample(_mr_at_user_id):
                             import json as _json
@@ -235,7 +237,7 @@ class BaseAgent(ABC):
             logger.exception(f"Failed to rebuild memory for agent id={agent_state.id} and actor=({self.actor.id}, {self.actor.name})")
             raise
 
-    def get_finish_chunks_for_stream(self, usage: LettaUsageStatistics, stop_reason: Optional[LettaStopReason] = None):
+    def get_finish_chunks_for_stream(self, usage: LettaUsageStatistics, stop_reason: LettaStopReason | None = None):
         if stop_reason is None:
             stop_reason = LettaStopReason(stop_reason=StopReasonType.end_turn.value)
         return [

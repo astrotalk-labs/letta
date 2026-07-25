@@ -43,7 +43,7 @@ class ZephyrMistralWrapper(LLMChatCompletionWrapper):
 
         # System instructions go first
         assert messages[0]["role"] == "system"
-        prompt += f"<|system|>"
+        prompt += "<|system|>"
         prompt += f"\n{messages[0]['content']}"
 
         # Next is the functions preamble
@@ -52,7 +52,7 @@ class ZephyrMistralWrapper(LLMChatCompletionWrapper):
             func_str = ""
             func_str += f"{schema['name']}:"
             func_str += f"\n  description: {schema['description']}"
-            func_str += f"\n  params:"
+            func_str += "\n  params:"
             for param_k, param_v in schema["parameters"]["properties"].items():
                 # TODO we're ignoring type
                 func_str += f"\n    {param_k}: {param_v['description']}"
@@ -60,8 +60,8 @@ class ZephyrMistralWrapper(LLMChatCompletionWrapper):
             return func_str
 
         # prompt += f"\nPlease select the most suitable function and parameters from the list of available functions below, based on the user's input. Provide your response in JSON format."
-        prompt += f"\nPlease select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
-        prompt += f"\nAvailable functions:"
+        prompt += "\nPlease select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
+        prompt += "\nAvailable functions:"
         if function_documentation is not None:
             prompt += f"\n{function_documentation}"
         else:
@@ -92,18 +92,18 @@ class ZephyrMistralWrapper(LLMChatCompletionWrapper):
                         prompt += f"\n<|user|>\n{message['content']}{IM_END_TOKEN}"
                         # prompt += f"\nUSER: {message['content']}"
             elif message["role"] == "assistant":
-                prompt += f"\n<|assistant|>"
+                prompt += "\n<|assistant|>"
                 if message["content"] is not None:
                     prompt += f"\n{message['content']}"
                 # prompt += f"\nASSISTANT: {message['content']}"
                 # need to add the function call if there was one
-                if "function_call" in message and message["function_call"]:
+                if message.get("function_call"):
                     prompt += f"\n{create_function_call(message['function_call'])}"
                 prompt += f"{IM_END_TOKEN}"
             elif message["role"] in ["function", "tool"]:
                 # TODO find a good way to add this
                 # prompt += f"\nASSISTANT: (function return) {message['content']}"
-                prompt += f"\n<|assistant|>"
+                prompt += "\n<|assistant|>"
                 prompt += f"\nFUNCTION RETURN: {message['content']}"
                 # prompt += f"\nFUNCTION RETURN: {message['content']}"
                 continue
@@ -116,7 +116,7 @@ class ZephyrMistralWrapper(LLMChatCompletionWrapper):
 
         if self.include_assistant_prefix:
             # prompt += f"\nASSISTANT:"
-            prompt += f"\n<|assistant|>"
+            prompt += "\n<|assistant|>"
             if self.include_opening_brance_in_prefix:
                 prompt += "\n{"
 
@@ -154,12 +154,12 @@ class ZephyrMistralWrapper(LLMChatCompletionWrapper):
         try:
             function_json_output = clean_json(raw_llm_output)
         except Exception as e:
-            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{str(e)}")
+            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{e!s}")
         try:
             function_name = function_json_output["function"]
             function_parameters = function_json_output["params"]
         except KeyError as e:
-            raise LLMJSONParsingError(f"Received valid JSON from LLM, but JSON was missing fields: {str(e)}")
+            raise LLMJSONParsingError(f"Received valid JSON from LLM, but JSON was missing fields: {e!s}")
 
         if self.clean_func_args:
             function_name, function_parameters = self.clean_function_args(function_name, function_parameters)
@@ -214,9 +214,9 @@ class ZephyrMistralInnerMonologueWrapper(ZephyrMistralWrapper):
             func_str = ""
             func_str += f"{schema['name']}:"
             func_str += f"\n  description: {schema['description']}"
-            func_str += f"\n  params:"
+            func_str += "\n  params:"
             if add_inner_thoughts:
-                func_str += f"\n    inner_thoughts: Deep inner monologue private to you only."
+                func_str += "\n    inner_thoughts: Deep inner monologue private to you only."
             for param_k, param_v in schema["parameters"]["properties"].items():
                 # TODO we're ignoring type
                 func_str += f"\n    {param_k}: {param_v['description']}"
@@ -224,8 +224,8 @@ class ZephyrMistralInnerMonologueWrapper(ZephyrMistralWrapper):
             return func_str
 
         # prompt += f"\nPlease select the most suitable function and parameters from the list of available functions below, based on the user's input. Provide your response in JSON format."
-        prompt += f"\nPlease select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
-        prompt += f"\nAvailable functions:"
+        prompt += "\nPlease select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
+        prompt += "\nAvailable functions:"
         if function_documentation is not None:
             prompt += f"\n{function_documentation}"
         else:
@@ -259,10 +259,10 @@ class ZephyrMistralInnerMonologueWrapper(ZephyrMistralWrapper):
                     except:
                         prompt += f"\n<|user|>\n{message['content']}{IM_END_TOKEN}"
             elif message["role"] == "assistant":
-                prompt += f"\n<|assistant|>"
+                prompt += "\n<|assistant|>"
                 # need to add the function call if there was one
                 inner_thoughts = message["content"]
-                if "function_call" in message and message["function_call"]:
+                if message.get("function_call"):
                     prompt += f"\n{create_function_call(message['function_call'], inner_thoughts=inner_thoughts)}"
             elif message["role"] in ["function", "tool"]:
                 # TODO find a good way to add this
@@ -277,7 +277,7 @@ class ZephyrMistralInnerMonologueWrapper(ZephyrMistralWrapper):
         #    prompt += "\n### RESPONSE"
 
         if self.include_assistant_prefix:
-            prompt += f"\n<|assistant|>"
+            prompt += "\n<|assistant|>"
             if self.include_opening_brance_in_prefix:
                 prompt += "\n{"
 
@@ -319,12 +319,12 @@ class ZephyrMistralInnerMonologueWrapper(ZephyrMistralWrapper):
         try:
             function_json_output = clean_json(raw_llm_output)
         except Exception as e:
-            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{str(e)}")
+            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{e!s}")
         try:
             function_name = function_json_output["function"]
             function_parameters = function_json_output["params"]
         except KeyError as e:
-            raise LLMJSONParsingError(f"Received valid JSON from LLM, but JSON was missing fields: {str(e)}")
+            raise LLMJSONParsingError(f"Received valid JSON from LLM, but JSON was missing fields: {e!s}")
 
         if self.clean_func_args:
             (

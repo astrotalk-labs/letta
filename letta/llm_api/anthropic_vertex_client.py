@@ -1,13 +1,14 @@
-from typing import Optional
-from anthropic import AnthropicVertex
-from letta.settings import model_settings
 import os
+
+from anthropic import AnthropicVertex
+
+from letta.settings import model_settings
 
 
 class AnthropicVertexClient:
     """Client for Claude models on Vertex AI using Anthropic's official SDK"""
 
-    def __init__(self, project_id: Optional[str] = None, region: Optional[str] = None):
+    def __init__(self, project_id: str | None = None, region: str | None = None):
         self.project_id = project_id or model_settings.google_cloud_project
 
         # Use provided region, env var, or default to global

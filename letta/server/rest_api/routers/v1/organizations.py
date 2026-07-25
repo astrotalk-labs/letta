@@ -1,8 +1,12 @@
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
-from letta.schemas.organization import Organization, OrganizationCreate, OrganizationUpdate
+from letta.schemas.organization import (
+    Organization,
+    OrganizationCreate,
+    OrganizationUpdate,
+)
 from letta.server.rest_api.utils import get_letta_server
 
 if TYPE_CHECKING:
@@ -12,10 +16,10 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/orgs", tags=["organization", "admin"])
 
 
-@router.get("/", tags=["admin"], response_model=List[Organization], operation_id="list_orgs")
+@router.get("/", tags=["admin"], response_model=list[Organization], operation_id="list_orgs")
 async def get_all_orgs(
-    after: Optional[str] = Query(None),
-    limit: Optional[int] = Query(50),
+    after: str | None = Query(None),
+    limit: int | None = Query(50),
     server: "SyncServer" = Depends(get_letta_server),
 ):
     """
@@ -52,7 +56,7 @@ async def delete_org(
     try:
         org = await server.organization_manager.get_organization_by_id_async(org_id=org_id)
         if org is None:
-            raise HTTPException(status_code=404, detail=f"Organization does not exist")
+            raise HTTPException(status_code=404, detail="Organization does not exist")
         await server.organization_manager.delete_organization_by_id_async(org_id=org_id)
     except HTTPException:
         raise
@@ -70,7 +74,7 @@ async def update_org(
     try:
         org = await server.organization_manager.get_organization_by_id_async(org_id=org_id)
         if org is None:
-            raise HTTPException(status_code=404, detail=f"Organization does not exist")
+            raise HTTPException(status_code=404, detail="Organization does not exist")
         org = await server.organization_manager.update_organization_async(org_id=org_id, name=request.name)
     except HTTPException:
         raise

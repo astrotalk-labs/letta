@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any
 
 from e2b.sandbox.commands.command_handle import CommandExitException
 from e2b_code_interpreter import AsyncSandbox
@@ -29,9 +29,9 @@ class AsyncToolSandboxE2B(AsyncToolSandboxBase):
         args: JsonDict,
         user,
         force_recreate: bool = True,
-        tool_object: Optional[Tool] = None,
-        sandbox_config: Optional[SandboxConfig] = None,
-        sandbox_env_vars: Optional[Dict[str, Any]] = None,
+        tool_object: Tool | None = None,
+        sandbox_config: SandboxConfig | None = None,
+        sandbox_env_vars: dict[str, Any] | None = None,
     ):
         super().__init__(tool_name, args, user, tool_object, sandbox_config=sandbox_config, sandbox_env_vars=sandbox_env_vars)
         self.force_recreate = force_recreate
@@ -39,8 +39,8 @@ class AsyncToolSandboxE2B(AsyncToolSandboxBase):
     @trace_method
     async def run(
         self,
-        agent_state: Optional[AgentState] = None,
-        additional_env_vars: Optional[Dict] = None,
+        agent_state: AgentState | None = None,
+        additional_env_vars: dict | None = None,
     ) -> ToolExecutionResult:
         """
         Run the tool in a sandbox environment asynchronously,
@@ -56,7 +56,7 @@ class AsyncToolSandboxE2B(AsyncToolSandboxBase):
 
     @trace_method
     async def run_e2b_sandbox(
-        self, agent_state: Optional[AgentState] = None, additional_env_vars: Optional[Dict] = None
+        self, agent_state: AgentState | None = None, additional_env_vars: dict | None = None
     ) -> ToolExecutionResult:
         if self.provided_sandbox_config:
             sbx_config = self.provided_sandbox_config

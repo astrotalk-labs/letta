@@ -5,9 +5,9 @@ import traceback
 
 import websockets
 
-import letta.server.ws_api.protocol as protocol
 from letta.server.constants import WS_DEFAULT_PORT
 from letta.server.server import SyncServer
+from letta.server.ws_api import protocol
 from letta.server.ws_api.interface import SyncWebSocketInterface
 
 
@@ -21,7 +21,7 @@ class WebSocketServer:
     def shutdown_server(self):
         try:
             self.interface.close()
-            print(f"Closed the WS interface")
+            print("Closed the WS interface")
         except Exception as e:
             print(f"Closing the WS interface failed with: {e}")
 
@@ -52,12 +52,12 @@ class WebSocketServer:
                     data = json_loads(message)
                 except:
                     print(f"[server] bad data from client:\n{data}")
-                    await websocket.send(protocol.server_command_response(f"Error: bad data from client - {str(data)}"))
+                    await websocket.send(protocol.server_command_response(f"Error: bad data from client - {data!s}"))
                     continue
 
                 if "type" not in data:
                     print(f"[server] bad data from client (JSON but no type):\n{data}")
-                    await websocket.send(protocol.server_command_response(f"Error: bad data from client - {str(data)}"))
+                    await websocket.send(protocol.server_command_response(f"Error: bad data from client - {data!s}"))
 
                 elif data["type"] == "command":
                     # Create a new agent
@@ -70,7 +70,7 @@ class WebSocketServer:
                             self.agent = None
                             print(f"[server] self.create_new_agent failed with:\n{e}")
                             print(f"{traceback.format_exc()}")
-                            await websocket.send(protocol.server_command_response(f"Error: Failed to init agent - {str(e)}"))
+                            await websocket.send(protocol.server_command_response(f"Error: Failed to init agent - {e!s}"))
 
                     else:
                         print(f"[server] unrecognized client command type: {data}")
@@ -100,7 +100,7 @@ class WebSocketServer:
                     await websocket.send(protocol.server_error(f"unrecognized client package data type: {data}"))
 
         except websockets.exceptions.ConnectionClosed:
-            print(f"[server] connection with client was closed")
+            print("[server] connection with client was closed")
         finally:
             self.interface.unregister_client(websocket)
 

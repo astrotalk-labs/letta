@@ -1,5 +1,7 @@
 # import letta.local_llm.llm_chat_completion_wrappers.airoboros as airoboros
-from letta.local_llm.llm_chat_completion_wrappers.chatml import ChatMLInnerMonologueWrapper
+from letta.local_llm.llm_chat_completion_wrappers.chatml import (
+    ChatMLInnerMonologueWrapper,
+)
 
 DEFAULT_ENDPOINTS = {
     # Local

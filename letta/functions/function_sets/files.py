@@ -1,11 +1,11 @@
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from letta.schemas.agent import AgentState
     from letta.schemas.file import FileMetadata
 
 
-async def open_file(agent_state: "AgentState", file_name: str, view_range: Optional[Tuple[int, int]]) -> str:
+async def open_file(agent_state: "AgentState", file_name: str, view_range: tuple[int, int] | None) -> str:
     """
     Open the file with name `file_name` and load the contents into files section in core memory.
 
@@ -32,7 +32,7 @@ async def close_file(agent_state: "AgentState", file_name: str) -> str:
     raise NotImplementedError("Tool not implemented. Please contact the Letta team.")
 
 
-async def grep(agent_state: "AgentState", pattern: str, include: Optional[str] = None) -> str:
+async def grep(agent_state: "AgentState", pattern: str, include: str | None = None) -> str:
     """
     Grep tool to search files across data sources with a keyword or regex pattern.
 
@@ -46,7 +46,7 @@ async def grep(agent_state: "AgentState", pattern: str, include: Optional[str] =
     raise NotImplementedError("Tool not implemented. Please contact the Letta team.")
 
 
-async def search_files(agent_state: "AgentState", query: str) -> List["FileMetadata"]:
+async def search_files(agent_state: "AgentState", query: str) -> list["FileMetadata"]:
     """
     Get list of most relevant files across all data sources using embedding search.
 

@@ -1,5 +1,6 @@
+from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
-from typing import AsyncGenerator, List, Optional
+from typing import Optional
 
 from openai import AsyncStream
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
@@ -9,7 +10,13 @@ from letta.helpers.datetime_helpers import get_utc_timestamp_ns, ns_to_ms
 from letta.log import get_logger
 from letta.otel.context import get_ctx_attributes
 from letta.otel.metric_registry import MetricRegistry
-from letta.schemas.letta_message import AssistantMessage, LettaMessage, ReasoningMessage, ToolCallDelta, ToolCallMessage
+from letta.schemas.letta_message import (
+    AssistantMessage,
+    LettaMessage,
+    ReasoningMessage,
+    ToolCallDelta,
+    ToolCallMessage,
+)
 from letta.schemas.letta_message_content import TextContent
 from letta.schemas.letta_stop_reason import LettaStopReason, StopReasonType
 from letta.schemas.message import Message
@@ -54,12 +61,12 @@ class OpenAIStreamingInterface:
         self.input_tokens = 0
         self.output_tokens = 0
 
-        self.content_buffer: List[str] = []
-        self.tool_call_name: Optional[str] = None
-        self.tool_call_id: Optional[str] = None
+        self.content_buffer: list[str] = []
+        self.tool_call_name: str | None = None
+        self.tool_call_id: str | None = None
         self.reasoning_messages = []
 
-    def get_reasoning_content(self) -> List[TextContent]:
+    def get_reasoning_content(self) -> list[TextContent]:
         content = "".join(self.reasoning_messages).strip()
         return [TextContent(text=content)]
 
@@ -80,7 +87,7 @@ class OpenAIStreamingInterface:
         self,
         stream: AsyncStream[ChatCompletionChunk],
         ttft_span: Optional["Span"] = None,
-        provider_request_start_timestamp_ns: Optional[int] = None,
+        provider_request_start_timestamp_ns: int | None = None,
     ) -> AsyncGenerator[LettaMessage, None]:
         """
         Iterates over the OpenAI stream, yielding SSE events.

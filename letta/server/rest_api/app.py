@@ -4,7 +4,6 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Optional
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -15,9 +14,19 @@ from starlette.middleware.cors import CORSMiddleware
 from letta.__init__ import __version__
 from letta.agents.exceptions import IncompatibleAgentType
 from letta.constants import ADMIN_PREFIX, API_PREFIX, OPENAI_API_PREFIX
-from letta.errors import BedrockPermissionError, LettaAgentNotFoundError, LettaUserNotFoundError
+from letta.errors import (
+    BedrockPermissionError,
+    LettaAgentNotFoundError,
+    LettaUserNotFoundError,
+)
+from letta.growthbook.setup import init_growthbook, shutdown_growthbook
 from letta.log import get_logger
-from letta.orm.errors import DatabaseTimeoutError, ForeignKeyConstraintViolationError, NoResultFound, UniqueConstraintViolationError
+from letta.orm.errors import (
+    DatabaseTimeoutError,
+    ForeignKeyConstraintViolationError,
+    NoResultFound,
+    UniqueConstraintViolationError,
+)
 from letta.schemas.letta_message import create_letta_message_union_schema
 from letta.schemas.letta_message_content import (
     create_letta_assistant_message_content_union_schema,
@@ -27,17 +36,24 @@ from letta.schemas.letta_message_content import (
 from letta.server.constants import REST_DEFAULT_PORT
 
 # NOTE(charles): these are extra routes that are not part of v1 but we still need to mount to pass tests
-from letta.server.rest_api.auth.index import setup_auth_router  # TODO: probably remove right?
+from letta.server.rest_api.auth.index import (
+    setup_auth_router,  # TODO: probably remove right?
+)
 from letta.server.rest_api.interface import StreamingServerInterface
-from letta.server.rest_api.routers.openai.chat_completions.chat_completions import router as openai_chat_completions_router
+from letta.server.rest_api.routers.openai.chat_completions.chat_completions import (
+    router as openai_chat_completions_router,
+)
 
 # from letta.orm.utilities import get_db_session  # TODO(ethan) reenable once we merge ORM
 from letta.server.rest_api.routers.v1 import ROUTERS as v1_routes
-from letta.server.rest_api.routers.v1.organizations import router as organizations_router
-from letta.server.rest_api.routers.v1.users import router as users_router  # TODO: decide on admin
+from letta.server.rest_api.routers.v1.organizations import (
+    router as organizations_router,
+)
+from letta.server.rest_api.routers.v1.users import (
+    router as users_router,  # TODO: decide on admin
+)
 from letta.server.rest_api.static_files import mount_static_files
 from letta.server.server import SyncServer
-from letta.growthbook.setup import init_growthbook, shutdown_growthbook
 from letta.settings import settings
 
 # TODO(ethan)
@@ -47,10 +63,7 @@ server = SyncServer(default_interface_factory=lambda: interface())
 logger = get_logger(__name__)
 
 
-import logging
 import platform
-
-from fastapi import FastAPI
 
 is_windows = platform.system() == "Windows"
 
@@ -155,8 +168,8 @@ def create_application() -> "FastAPI":
     @app.exception_handler(Exception)
     async def generic_error_handler(request: Request, exc: Exception):
         # Log the actual error for debugging
-        log.error(f"Unhandled error: {str(exc)}", exc_info=True)
-        print(f"Unhandled error: {str(exc)}")
+        log.error(f"Unhandled error: {exc!s}", exc_info=True)
+        print(f"Unhandled error: {exc!s}")
 
         import traceback
 
@@ -325,8 +338,8 @@ app = create_application()
 
 
 def start_server(
-    port: Optional[int] = None,
-    host: Optional[str] = None,
+    port: int | None = None,
+    host: str | None = None,
     debug: bool = False,
     reload: bool = False,
 ):
@@ -358,7 +371,7 @@ def start_server(
 
     if (os.getenv("LOCAL_HTTPS") == "true") or "--localhttps" in sys.argv:
         print(f"▶ Server running at: https://{host or 'localhost'}:{port or REST_DEFAULT_PORT}")
-        print(f"▶ View using ADE at: https://app.letta.com/development-servers/local/dashboard\n")
+        print("▶ View using ADE at: https://app.letta.com/development-servers/local/dashboard\n")
         if importlib.util.find_spec("granian") is not None and settings.use_granian:
             from granian import Granian
 
@@ -395,10 +408,10 @@ def start_server(
         if is_windows:
             # Windows doesn't those the fancy unicode characters
             print(f"Server running at: http://{host or 'localhost'}:{port or REST_DEFAULT_PORT}")
-            print(f"View using ADE at: https://app.letta.com/development-servers/local/dashboard\n")
+            print("View using ADE at: https://app.letta.com/development-servers/local/dashboard\n")
         else:
             print(f"▶ Server running at: http://{host or 'localhost'}:{port or REST_DEFAULT_PORT}")
-            print(f"▶ View using ADE at: https://app.letta.com/development-servers/local/dashboard\n")
+            print("▶ View using ADE at: https://app.letta.com/development-servers/local/dashboard\n")
 
         if importlib.util.find_spec("granian") is not None and settings.use_granian:
             # Experimental Granian engine

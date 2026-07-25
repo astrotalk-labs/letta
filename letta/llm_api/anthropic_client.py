@@ -2,7 +2,6 @@ import hashlib
 import json
 import logging
 import re
-from typing import Dict, List, Optional, Union
 
 import anthropic
 from anthropic import AsyncStream
@@ -12,6 +11,7 @@ from anthropic.types.beta.message_create_params import MessageCreateParamsNonStr
 from anthropic.types.beta.messages import BetaMessageBatch
 from anthropic.types.beta.messages.batch_create_params import Request
 
+from letta.debug_util import _DEBUG_USER_ID, debug_log
 from letta.errors import (
     ContextWindowExceededError,
     ErrorCode,
@@ -25,20 +25,33 @@ from letta.errors import (
     LLMUnprocessableEntityError,
 )
 from letta.helpers.datetime_helpers import get_utc_time_int
-from letta.llm_api.bedrock_inference_profiles import COHORT_INFERENCE_PROFILES, MODEL_INFERENCE_PROFILES
-from letta.llm_api.helpers import add_inner_thoughts_to_functions, unpack_all_inner_thoughts_from_kwargs
-from letta.debug_util import _DEBUG_USER_ID, debug_log
+from letta.llm_api.bedrock_inference_profiles import (
+    COHORT_INFERENCE_PROFILES,
+    MODEL_INFERENCE_PROFILES,
+)
+from letta.llm_api.helpers import (
+    add_inner_thoughts_to_functions,
+    unpack_all_inner_thoughts_from_kwargs,
+)
 from letta.llm_api.llm_client_base import LLMClientBase
-from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION
+from letta.local_llm.constants import (
+    INNER_THOUGHTS_KWARG,
+    INNER_THOUGHTS_KWARG_DESCRIPTION,
+)
 from letta.log import get_logger
 from letta.otel.tracing import trace_method
 from letta.schemas.enums import ProviderCategory
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.message import Message as PydanticMessage
 from letta.schemas.openai.chat_completion_request import Tool as OpenAITool
-from letta.schemas.openai.chat_completion_response import ChatCompletionResponse, Choice, FunctionCall
+from letta.schemas.openai.chat_completion_response import (
+    ChatCompletionResponse,
+    Choice,
+    FunctionCall,
+    ToolCall,
+    UsageStatistics,
+)
 from letta.schemas.openai.chat_completion_response import Message as ChoiceMessage
-from letta.schemas.openai.chat_completion_response import ToolCall, UsageStatistics
 from letta.services.provider_manager import ProviderManager
 from letta.settings import model_settings
 
@@ -141,7 +154,7 @@ def _build_bedrock_arn(profile_id: str) -> str:
     return profile_id
 
 
-def _resolve_bedrock_arn_from_cohort(at_user_id: Optional[str], user_cohort: Optional[str]) -> Optional[str]:
+def _resolve_bedrock_arn_from_cohort(at_user_id: str | None, user_cohort: str | None) -> str | None:
     """Return the Bedrock inference profile ARN for the given cohort, or None to fall back
     to the existing BEDROCK_*_INFERENCE_PROFILE_ARN env vars."""
     if not user_cohort or user_cohort == "UNKNOWN":
@@ -156,7 +169,7 @@ def _resolve_bedrock_arn_from_cohort(at_user_id: Optional[str], user_cohort: Opt
     return arn
 
 
-def _resolve_key_from_cohort(at_user_id: Optional[str], user_cohort: Optional[str]) -> Optional[str]:
+def _resolve_key_from_cohort(at_user_id: str | None, user_cohort: str | None) -> str | None:
     """Return the Anthropic API key value for the given cohort, or None to use the default.
     UNKNOWN cohort and unrecognised values fall back to default."""
     import os
@@ -200,9 +213,11 @@ class AnthropicClient(LLMClientBase):
         )
         if llm_config.model_endpoint_type == "anthropic_vertex":
             debug_log(_at_uid, f"request_async: VERTEX branch project={model_settings.google_cloud_project}")
-            from anthropic import AsyncAnthropicVertex
-            from letta.settings import model_settings
             import os
+
+            from anthropic import AsyncAnthropicVertex
+
+            from letta.settings import model_settings
 
             # Create async Vertex client with proper configuration
             project_id = model_settings.google_cloud_project
@@ -239,10 +254,12 @@ class AnthropicClient(LLMClientBase):
             )
         elif llm_config.model_endpoint_type == "anthropic_bedrock":
             debug_log(_at_uid, f"request_async: BEDROCK branch model={llm_config.model}")
-            import os
-            import json
             import asyncio
+            import json
+            import os
+
             import boto3
+
             from letta.settings import model_settings
 
             aws_region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or model_settings.aws_region or "ap-south-1"
@@ -467,9 +484,9 @@ class AnthropicClient(LLMClientBase):
     @trace_method
     async def send_llm_batch_request_async(
         self,
-        agent_messages_mapping: Dict[str, List[PydanticMessage]],
-        agent_tools_mapping: Dict[str, List[dict]],
-        agent_llm_config_mapping: Dict[str, LLMConfig],
+        agent_messages_mapping: dict[str, list[PydanticMessage]],
+        agent_tools_mapping: dict[str, list[dict]],
+        agent_llm_config_mapping: dict[str, LLMConfig],
     ) -> BetaMessageBatch:
         """
         Sends a batch request to the Anthropic API using the provided agent messages and tools mappings.
@@ -518,7 +535,7 @@ class AnthropicClient(LLMClientBase):
     @trace_method
     def _get_anthropic_client(
         self, llm_config: LLMConfig, async_client: bool = False
-    ) -> Union[anthropic.AsyncAnthropic, anthropic.Anthropic]:
+    ) -> anthropic.AsyncAnthropic | anthropic.Anthropic:
         override_key = None
         if llm_config.provider_category == ProviderCategory.byok:
             override_key = ProviderManager().get_override_key(llm_config.provider_name, actor=self.actor)
@@ -544,7 +561,7 @@ class AnthropicClient(LLMClientBase):
     @trace_method
     async def _get_anthropic_client_async(
         self, llm_config: LLMConfig, async_client: bool = False
-    ) -> Union[anthropic.AsyncAnthropic, anthropic.Anthropic]:
+    ) -> anthropic.AsyncAnthropic | anthropic.Anthropic:
         override_key = None
         if llm_config.provider_category == ProviderCategory.byok:
             override_key = await ProviderManager().get_override_key_async(llm_config.provider_name, actor=self.actor)
@@ -570,10 +587,10 @@ class AnthropicClient(LLMClientBase):
     @trace_method
     def build_request_data(
         self,
-        messages: List[PydanticMessage],
+        messages: list[PydanticMessage],
         llm_config: LLMConfig,
-        tools: Optional[List[dict]] = None,
-        force_tool_call: Optional[str] = None,
+        tools: list[dict] | None = None,
+        force_tool_call: str | None = None,
     ) -> dict:
         # TODO: This needs to get cleaned up. The logic here is pretty confusing.
         # TODO: I really want to get rid of prefixing, it's a recipe for disaster code maintenance wise
@@ -962,7 +979,7 @@ class AnthropicClient(LLMClientBase):
 
             messages = data.get("messages", []) or []
             msg_summary = []
-            role_counts: Dict[str, int] = {}
+            role_counts: dict[str, int] = {}
             total_msg_chars = 0
             messages_tail_cache_idx = None
             messages_tail_prefix_chars = 0
@@ -1035,7 +1052,7 @@ class AnthropicClient(LLMClientBase):
         except Exception as e:
             logger.warning("[CACHE_OBS_REQ] logging failed: %s", e)
 
-    def _log_cache_observation_usage(self, usage, endpoint_type: Optional[str], model: Optional[str]) -> None:
+    def _log_cache_observation_usage(self, usage, endpoint_type: str | None, model: str | None) -> None:
         # Emits Anthropic usage with cache_read / cache_creation tokens so we can
         # measure the effect of caching changes. Gated to the same sample as
         # _log_cache_observation_request. Also emits CACHE_MISS_DIAG on cold misses
@@ -1081,7 +1098,7 @@ class AnthropicClient(LLMClientBase):
         except Exception as e:
             logger.warning("[CACHE_OBS_USAGE] logging failed: %s", e)
 
-    async def count_tokens(self, messages: List[dict] = None, model: str = None, tools: List[OpenAITool] = None) -> int:
+    async def count_tokens(self, messages: list[dict] = None, model: str = None, tools: list[OpenAITool] = None) -> int:
         logging.getLogger("httpx").setLevel(logging.WARNING)
 
         client = anthropic.AsyncAnthropic()
@@ -1111,7 +1128,7 @@ class AnthropicClient(LLMClientBase):
         if isinstance(e, anthropic.APIConnectionError):
             logger.warning(f"[Anthropic] API connection error: {e.__cause__}")
             return LLMConnectionError(
-                message=f"Failed to connect to Anthropic: {str(e)}",
+                message=f"Failed to connect to Anthropic: {e!s}",
                 code=ErrorCode.INTERNAL_SERVER_ERROR,
                 details={"cause": str(e.__cause__) if e.__cause__ else None},
             )
@@ -1119,56 +1136,56 @@ class AnthropicClient(LLMClientBase):
         if isinstance(e, anthropic.RateLimitError):
             logger.warning("[Anthropic] Rate limited (429). Consider backoff.")
             return LLMRateLimitError(
-                message=f"Rate limited by Anthropic: {str(e)}",
+                message=f"Rate limited by Anthropic: {e!s}",
                 code=ErrorCode.RATE_LIMIT_EXCEEDED,
             )
 
         if isinstance(e, anthropic.BadRequestError):
-            logger.warning(f"[Anthropic] Bad request: {str(e)}")
+            logger.warning(f"[Anthropic] Bad request: {e!s}")
             if "prompt is too long" in str(e).lower():
                 # If the context window is too large, we expect to receive:
                 # 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'prompt is too long: 200758 tokens > 200000 maximum'}}
                 return ContextWindowExceededError(
-                    message=f"Bad request to Anthropic (context window exceeded): {str(e)}",
+                    message=f"Bad request to Anthropic (context window exceeded): {e!s}",
                 )
             else:
                 return LLMBadRequestError(
-                    message=f"Bad request to Anthropic: {str(e)}",
+                    message=f"Bad request to Anthropic: {e!s}",
                     code=ErrorCode.INTERNAL_SERVER_ERROR,
                 )
 
         if isinstance(e, anthropic.AuthenticationError):
-            logger.warning(f"[Anthropic] Authentication error: {str(e)}")
+            logger.warning(f"[Anthropic] Authentication error: {e!s}")
             return LLMAuthenticationError(
-                message=f"Authentication failed with Anthropic: {str(e)}",
+                message=f"Authentication failed with Anthropic: {e!s}",
                 code=ErrorCode.INTERNAL_SERVER_ERROR,
             )
 
         if isinstance(e, anthropic.PermissionDeniedError):
-            logger.warning(f"[Anthropic] Permission denied: {str(e)}")
+            logger.warning(f"[Anthropic] Permission denied: {e!s}")
             return LLMPermissionDeniedError(
-                message=f"Permission denied by Anthropic: {str(e)}",
+                message=f"Permission denied by Anthropic: {e!s}",
                 code=ErrorCode.INTERNAL_SERVER_ERROR,
             )
 
         if isinstance(e, anthropic.NotFoundError):
-            logger.warning(f"[Anthropic] Resource not found: {str(e)}")
+            logger.warning(f"[Anthropic] Resource not found: {e!s}")
             return LLMNotFoundError(
-                message=f"Resource not found in Anthropic: {str(e)}",
+                message=f"Resource not found in Anthropic: {e!s}",
                 code=ErrorCode.INTERNAL_SERVER_ERROR,
             )
 
         if isinstance(e, anthropic.UnprocessableEntityError):
-            logger.warning(f"[Anthropic] Unprocessable entity: {str(e)}")
+            logger.warning(f"[Anthropic] Unprocessable entity: {e!s}")
             return LLMUnprocessableEntityError(
-                message=f"Invalid request content for Anthropic: {str(e)}",
+                message=f"Invalid request content for Anthropic: {e!s}",
                 code=ErrorCode.INTERNAL_SERVER_ERROR,
             )
 
         if isinstance(e, anthropic.APIStatusError):
-            logger.warning(f"[Anthropic] API status error: {str(e)}")
+            logger.warning(f"[Anthropic] API status error: {e!s}")
             return LLMServerError(
-                message=f"Anthropic API error: {str(e)}",
+                message=f"Anthropic API error: {e!s}",
                 code=ErrorCode.INTERNAL_SERVER_ERROR,
                 details={
                     "status_code": e.status_code if hasattr(e, "status_code") else None,
@@ -1184,7 +1201,7 @@ class AnthropicClient(LLMClientBase):
     def convert_response_to_chat_completion(
         self,
         response_data: dict,
-        input_messages: List[PydanticMessage],
+        input_messages: list[PydanticMessage],
         llm_config: LLMConfig,
     ) -> ChatCompletionResponse:
         """
@@ -1366,7 +1383,7 @@ class AnthropicClient(LLMClientBase):
         return chat_completion_response
 
 
-def convert_tools_to_anthropic_format(tools: List[OpenAITool]) -> List[dict]:
+def convert_tools_to_anthropic_format(tools: list[OpenAITool]) -> list[dict]:
     """See: https://docs.anthropic.com/claude/docs/tool-use
 
     OpenAI style:
@@ -1424,7 +1441,7 @@ def convert_tools_to_anthropic_format(tools: List[OpenAITool]) -> List[dict]:
     return formatted_tools
 
 
-def merge_tool_results_into_user_messages(messages: List[dict]):
+def merge_tool_results_into_user_messages(messages: list[dict]):
     """Anthropic API doesn't allow role 'tool'->'user' sequences
 
     Example HTTP error:
@@ -1490,9 +1507,7 @@ def remap_finish_reason(stop_reason: str) -> str:
         "max_tokens": (unchanged)
 
     """
-    if stop_reason == "end_turn":
-        return "stop"
-    elif stop_reason == "stop_sequence":
+    if stop_reason == "end_turn" or stop_reason == "stop_sequence":
         return "stop"
     elif stop_reason == "max_tokens":
         return "length"
@@ -1502,7 +1517,7 @@ def remap_finish_reason(stop_reason: str) -> str:
         raise ValueError(f"Unexpected stop_reason: {stop_reason}")
 
 
-def strip_xml_tags(string: str, tag: Optional[str]) -> str:
+def strip_xml_tags(string: str, tag: str | None) -> str:
     if tag is None:
         return string
     # Construct the regular expression pattern to find the start and end tags
@@ -1511,7 +1526,7 @@ def strip_xml_tags(string: str, tag: Optional[str]) -> str:
     return re.sub(tag_pattern, "", string)
 
 
-def strip_xml_tags_streaming(string: str, tag: Optional[str]) -> str:
+def strip_xml_tags_streaming(string: str, tag: str | None) -> str:
     if tag is None:
         return string
 

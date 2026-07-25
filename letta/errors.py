@@ -1,6 +1,6 @@
 import json
 from enum import Enum
-from typing import TYPE_CHECKING, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Union
 
 # Avoid circular imports
 if TYPE_CHECKING:
@@ -22,7 +22,7 @@ class ErrorCode(Enum):
 class LettaError(Exception):
     """Base class for all Letta related errors."""
 
-    def __init__(self, message: str, code: Optional[ErrorCode] = None, details: Optional[Union[Dict, str, object]] = None):
+    def __init__(self, message: str, code: ErrorCode | None = None, details: dict | str | object | None = None):
         if details is None:
             details = {}
         self.message = message
@@ -51,7 +51,7 @@ class LettaToolCreateError(LettaError):
 class LettaConfigurationError(LettaError):
     """Error raised when there are configuration-related issues."""
 
-    def __init__(self, message: str, missing_fields: Optional[List[str]] = None):
+    def __init__(self, message: str, missing_fields: list[str] | None = None):
         self.missing_fields = missing_fields or []
         super().__init__(message=message, details={"missing_fields": self.missing_fields})
 
@@ -163,16 +163,16 @@ class RateLimitExceededError(LettaError):
 class LettaMessageError(LettaError):
     """Base error class for handling message-related errors."""
 
-    messages: List[Union["Message", "LettaMessage"]]
+    messages: list[Union["Message", "LettaMessage"]]
     default_error_message: str = "An error occurred with the message."
 
-    def __init__(self, *, messages: List[Union["Message", "LettaMessage"]], explanation: Optional[str] = None) -> None:
+    def __init__(self, *, messages: list[Union["Message", "LettaMessage"]], explanation: str | None = None) -> None:
         error_msg = self.construct_error_message(messages, self.default_error_message, explanation)
         super().__init__(error_msg)
         self.messages = messages
 
     @staticmethod
-    def construct_error_message(messages: List[Union["Message", "LettaMessage"]], error_msg: str, explanation: Optional[str] = None) -> str:
+    def construct_error_message(messages: list[Union["Message", "LettaMessage"]], error_msg: str, explanation: str | None = None) -> str:
         """Helper method to construct a clean and formatted error message."""
         if explanation:
             error_msg += f" (Explanation: {explanation})"
@@ -209,7 +209,7 @@ class InvalidInnerMonologueError(LettaMessageError):
 class HandleNotFoundError(LettaError):
     """Error raised when a handle is not found."""
 
-    def __init__(self, handle: str, available_handles: List[str]):
+    def __init__(self, handle: str, available_handles: list[str]):
         super().__init__(
             message=f"Handle {handle} not found, must be one of {available_handles}",
             code=ErrorCode.NOT_FOUND,

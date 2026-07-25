@@ -1,7 +1,9 @@
 from letta.errors import LLMJSONParsingError
 from letta.helpers.json_helpers import json_dumps, json_loads
 from letta.local_llm.json_parser import clean_json
-from letta.local_llm.llm_chat_completion_wrappers.wrapper_base import LLMChatCompletionWrapper
+from letta.local_llm.llm_chat_completion_wrappers.wrapper_base import (
+    LLMChatCompletionWrapper,
+)
 from letta.schemas.enums import MessageRole
 
 PREFIX_HINT = """# Reminders:
@@ -71,9 +73,12 @@ class ChatMLInnerMonologueWrapper(LLMChatCompletionWrapper):
         func_str = ""
         func_str += f"{schema['name']}:"
         func_str += f"\n  description: {schema['description']}"
-        func_str += f"\n  params:"
+        func_str += "\n  params:"
         if add_inner_thoughts:
-            from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION
+            from letta.local_llm.constants import (
+                INNER_THOUGHTS_KWARG,
+                INNER_THOUGHTS_KWARG_DESCRIPTION,
+            )
 
             func_str += f"\n    {INNER_THOUGHTS_KWARG}: {INNER_THOUGHTS_KWARG_DESCRIPTION}"
         for param_k, param_v in schema["parameters"]["properties"].items():
@@ -87,8 +92,8 @@ class ChatMLInnerMonologueWrapper(LLMChatCompletionWrapper):
         prompt = ""
 
         # prompt += f"\nPlease select the most suitable function and parameters from the list of available functions below, based on the user's input. Provide your response in JSON format."
-        prompt += f"Please select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
-        prompt += f"\nAvailable functions:"
+        prompt += "Please select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
+        prompt += "\nAvailable functions:"
         for function_dict in functions:
             prompt += f"\n{self._compile_function_description(function_dict)}"
 
@@ -101,8 +106,8 @@ class ChatMLInnerMonologueWrapper(LLMChatCompletionWrapper):
         prompt += system_message
         prompt += "\n"
         if function_documentation is not None:
-            prompt += f"Please select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
-            prompt += f"\nAvailable functions:\n"
+            prompt += "Please select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
+            prompt += "\nAvailable functions:\n"
             prompt += function_documentation
         else:
             prompt += self._compile_function_block(functions)
@@ -143,9 +148,9 @@ class ChatMLInnerMonologueWrapper(LLMChatCompletionWrapper):
 
         # need to add the function call if there was one
         inner_thoughts = message["content"]
-        if "function_call" in message and message["function_call"]:
+        if message.get("function_call"):
             prompt += f"\n{self._compile_function_call(message['function_call'], inner_thoughts=inner_thoughts)}"
-        elif "tool_calls" in message and message["tool_calls"]:
+        elif message.get("tool_calls"):
             for tool_call in message["tool_calls"]:
                 prompt += f"\n{self._compile_function_call(tool_call['function'], inner_thoughts=inner_thoughts)}"
         else:
@@ -255,7 +260,7 @@ class ChatMLInnerMonologueWrapper(LLMChatCompletionWrapper):
                 raise ValueError(message)
 
         if self.include_assistant_prefix:
-            prompt += f"\n<|im_start|>assistant"
+            prompt += "\n<|im_start|>assistant"
             if self.assistant_prefix_hint:
                 prompt += f"\n{FIRST_PREFIX_HINT if first_message else PREFIX_HINT}"
             if self.supports_first_message and first_message:
@@ -309,7 +314,7 @@ class ChatMLInnerMonologueWrapper(LLMChatCompletionWrapper):
         try:
             function_json_output = clean_json(raw_llm_output)
         except Exception as e:
-            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{str(e)}")
+            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{e!s}")
         try:
             # NOTE: weird bug can happen where 'function' gets nested if the prefix in the prompt isn't abided by
             if isinstance(function_json_output["function"], dict):
@@ -319,7 +324,7 @@ class ChatMLInnerMonologueWrapper(LLMChatCompletionWrapper):
             function_parameters = function_json_output["params"]
         except KeyError as e:
             raise LLMJSONParsingError(
-                f"Received valid JSON from LLM, but JSON was missing fields: {str(e)}. JSON result was:\n{function_json_output}"
+                f"Received valid JSON from LLM, but JSON was missing fields: {e!s}. JSON result was:\n{function_json_output}"
             )
 
         if self.clean_func_args:
@@ -386,7 +391,7 @@ class ChatMLOuterInnerMonologueWrapper(ChatMLInnerMonologueWrapper):
                 "You must always include inner thoughts, but you do not always have to call a function.",
             ]
         )
-        prompt += f"\nAvailable functions:"
+        prompt += "\nAvailable functions:"
         for function_dict in functions:
             prompt += f"\n{self._compile_function_description(function_dict, add_inner_thoughts=False)}"
 
@@ -420,7 +425,7 @@ class ChatMLOuterInnerMonologueWrapper(ChatMLInnerMonologueWrapper):
         try:
             function_json_output = clean_json(raw_llm_output)
         except Exception as e:
-            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{str(e)}")
+            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{e!s}")
         try:
             # NOTE: main diff
             inner_thoughts = function_json_output["inner_thoughts"]
@@ -437,7 +442,7 @@ class ChatMLOuterInnerMonologueWrapper(ChatMLInnerMonologueWrapper):
                 function_name = None
                 function_parameters = None
         except KeyError as e:
-            raise LLMJSONParsingError(f"Received valid JSON from LLM, but JSON was missing fields: {str(e)}")
+            raise LLMJSONParsingError(f"Received valid JSON from LLM, but JSON was missing fields: {e!s}")
 
         # TODO add some code to clean inner thoughts
         # e.g. fix this:

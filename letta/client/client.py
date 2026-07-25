@@ -1,10 +1,17 @@
 import sys
 import time
-from typing import Callable, Dict, List, Optional, Union
+from collections.abc import Callable
 
 import requests
 
-from letta.constants import ADMIN_PREFIX, BASE_MEMORY_TOOLS, BASE_TOOLS, DEFAULT_HUMAN, DEFAULT_PERSONA, FUNCTION_RETURN_CHAR_LIMIT
+from letta.constants import (
+    ADMIN_PREFIX,
+    BASE_MEMORY_TOOLS,
+    BASE_TOOLS,
+    DEFAULT_HUMAN,
+    DEFAULT_PERSONA,
+    FUNCTION_RETURN_CHAR_LIMIT,
+)
 from letta.data_sources.connectors import DataConnector
 from letta.functions.functions import parse_source_code
 from letta.schemas.agent import AgentState, AgentType, CreateAgent, UpdateAgent
@@ -20,14 +27,24 @@ from letta.schemas.letta_message import LettaMessage, LettaMessageUnion
 from letta.schemas.letta_request import LettaRequest, LettaStreamingRequest
 from letta.schemas.letta_response import LettaResponse
 from letta.schemas.llm_config import LLMConfig
-from letta.schemas.memory import ArchivalMemorySummary, ChatMemory, CreateArchivalMemory, Memory, RecallMemorySummary
+from letta.schemas.memory import (
+    ArchivalMemorySummary,
+    ChatMemory,
+    CreateArchivalMemory,
+    Memory,
+    RecallMemorySummary,
+)
 from letta.schemas.message import Message, MessageCreate
 from letta.schemas.openai.chat_completion_response import UsageStatistics
 from letta.schemas.organization import Organization
 from letta.schemas.passage import Passage
 from letta.schemas.response_format import ResponseFormatUnion
 from letta.schemas.run import Run
-from letta.schemas.sandbox_config import E2BSandboxConfig, LocalSandboxConfig, SandboxConfig
+from letta.schemas.sandbox_config import (
+    E2BSandboxConfig,
+    LocalSandboxConfig,
+    SandboxConfig,
+)
 from letta.schemas.source import Source, SourceCreate, SourceUpdate
 from letta.schemas.tool import Tool, ToolCreate, ToolUpdate
 from letta.schemas.tool_rule import BaseToolRule
@@ -44,54 +61,54 @@ print(
 )
 
 
-class AbstractClient(object):
+class AbstractClient:
     def __init__(
         self,
         debug: bool = False,
     ):
         self.debug = debug
 
-    def agent_exists(self, agent_id: Optional[str] = None, agent_name: Optional[str] = None) -> bool:
+    def agent_exists(self, agent_id: str | None = None, agent_name: str | None = None) -> bool:
         raise NotImplementedError
 
     def create_agent(
         self,
-        name: Optional[str] = None,
-        agent_type: Optional[AgentType] = AgentType.memgpt_agent,
-        embedding_config: Optional[EmbeddingConfig] = None,
-        llm_config: Optional[LLMConfig] = None,
+        name: str | None = None,
+        agent_type: AgentType | None = AgentType.memgpt_agent,
+        embedding_config: EmbeddingConfig | None = None,
+        llm_config: LLMConfig | None = None,
         memory=None,
-        block_ids: Optional[List[str]] = None,
-        system: Optional[str] = None,
-        tool_ids: Optional[List[str]] = None,
-        tool_rules: Optional[List[BaseToolRule]] = None,
-        include_base_tools: Optional[bool] = True,
-        metadata: Optional[Dict] = {"human:": DEFAULT_HUMAN, "persona": DEFAULT_PERSONA},
-        description: Optional[str] = None,
-        tags: Optional[List[str]] = None,
+        block_ids: list[str] | None = None,
+        system: str | None = None,
+        tool_ids: list[str] | None = None,
+        tool_rules: list[BaseToolRule] | None = None,
+        include_base_tools: bool | None = True,
+        metadata: dict | None = {"human:": DEFAULT_HUMAN, "persona": DEFAULT_PERSONA},
+        description: str | None = None,
+        tags: list[str] | None = None,
         message_buffer_autoclear: bool = False,
-        response_format: Optional[ResponseFormatUnion] = None,
+        response_format: ResponseFormatUnion | None = None,
     ) -> AgentState:
         raise NotImplementedError
 
     def update_agent(
         self,
         agent_id: str,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        system: Optional[str] = None,
-        tool_ids: Optional[List[str]] = None,
-        metadata: Optional[Dict] = None,
-        llm_config: Optional[LLMConfig] = None,
-        embedding_config: Optional[EmbeddingConfig] = None,
-        message_ids: Optional[List[str]] = None,
-        memory: Optional[Memory] = None,
-        tags: Optional[List[str]] = None,
-        response_format: Optional[ResponseFormatUnion] = None,
+        name: str | None = None,
+        description: str | None = None,
+        system: str | None = None,
+        tool_ids: list[str] | None = None,
+        metadata: dict | None = None,
+        llm_config: LLMConfig | None = None,
+        embedding_config: EmbeddingConfig | None = None,
+        message_ids: list[str] | None = None,
+        memory: Memory | None = None,
+        tags: list[str] | None = None,
+        response_format: ResponseFormatUnion | None = None,
     ):
         raise NotImplementedError
 
-    def get_tools_from_agent(self, agent_id: str) -> List[Tool]:
+    def get_tools_from_agent(self, agent_id: str) -> list[Tool]:
         raise NotImplementedError
 
     def attach_tool(self, agent_id: str, tool_id: str) -> AgentState:
@@ -115,7 +132,7 @@ class AbstractClient(object):
     def get_in_context_memory(self, agent_id: str) -> Memory:
         raise NotImplementedError
 
-    def update_in_context_memory(self, agent_id: str, section: str, value: Union[List[str], str]) -> Memory:
+    def update_in_context_memory(self, agent_id: str, section: str, value: list[str] | str) -> Memory:
         raise NotImplementedError
 
     def get_archival_memory_summary(self, agent_id: str) -> ArchivalMemorySummary:
@@ -124,19 +141,19 @@ class AbstractClient(object):
     def get_recall_memory_summary(self, agent_id: str) -> RecallMemorySummary:
         raise NotImplementedError
 
-    def get_in_context_messages(self, agent_id: str) -> List[Message]:
+    def get_in_context_messages(self, agent_id: str) -> list[Message]:
         raise NotImplementedError
 
     def send_message(
         self,
         message: str,
         role: str,
-        agent_id: Optional[str] = None,
-        name: Optional[str] = None,
-        stream: Optional[bool] = False,
+        agent_id: str | None = None,
+        name: str | None = None,
+        stream: bool | None = False,
         stream_steps: bool = False,
         stream_tokens: bool = False,
-        max_steps: Optional[int] = None,
+        max_steps: int | None = None,
     ) -> LettaResponse:
         raise NotImplementedError
 
@@ -149,10 +166,10 @@ class AbstractClient(object):
     def create_persona(self, name: str, text: str) -> Persona:
         raise NotImplementedError
 
-    def list_humans(self) -> List[Human]:
+    def list_humans(self) -> list[Human]:
         raise NotImplementedError
 
-    def list_personas(self) -> List[Persona]:
+    def list_personas(self) -> list[Persona]:
         raise NotImplementedError
 
     def update_human(self, human_id: str, text: str) -> Human:
@@ -185,23 +202,23 @@ class AbstractClient(object):
     def load_composio_tool(self, action: "ActionType") -> Tool:
         raise NotImplementedError
 
-    def create_tool(self, func, tags: Optional[List[str]] = None, return_char_limit: int = FUNCTION_RETURN_CHAR_LIMIT) -> Tool:
+    def create_tool(self, func, tags: list[str] | None = None, return_char_limit: int = FUNCTION_RETURN_CHAR_LIMIT) -> Tool:
         raise NotImplementedError
 
-    def create_or_update_tool(self, func, tags: Optional[List[str]] = None, return_char_limit: int = FUNCTION_RETURN_CHAR_LIMIT) -> Tool:
+    def create_or_update_tool(self, func, tags: list[str] | None = None, return_char_limit: int = FUNCTION_RETURN_CHAR_LIMIT) -> Tool:
         raise NotImplementedError
 
     def update_tool(
         self,
         id: str,
-        description: Optional[str] = None,
-        func: Optional[Callable] = None,
-        tags: Optional[List[str]] = None,
+        description: str | None = None,
+        func: Callable | None = None,
+        tags: list[str] | None = None,
         return_char_limit: int = FUNCTION_RETURN_CHAR_LIMIT,
     ) -> Tool:
         raise NotImplementedError
 
-    def list_tools(self, after: Optional[str] = None, limit: Optional[int] = 50) -> List[Tool]:
+    def list_tools(self, after: str | None = None, limit: int | None = 50) -> list[Tool]:
         raise NotImplementedError
 
     def get_tool(self, id: str) -> Tool:
@@ -210,10 +227,10 @@ class AbstractClient(object):
     def delete_tool(self, id: str):
         raise NotImplementedError
 
-    def get_tool_id(self, name: str) -> Optional[str]:
+    def get_tool_id(self, name: str) -> str | None:
         raise NotImplementedError
 
-    def list_attached_tools(self, agent_id: str) -> List[Tool]:
+    def list_attached_tools(self, agent_id: str) -> list[Tool]:
         """
         List all tools attached to an agent.
 
@@ -225,7 +242,7 @@ class AbstractClient(object):
         """
         raise NotImplementedError
 
-    def upsert_base_tools(self) -> List[Tool]:
+    def upsert_base_tools(self) -> list[Tool]:
         raise NotImplementedError
 
     def load_data(self, connector: DataConnector, source_name: str):
@@ -237,7 +254,7 @@ class AbstractClient(object):
     def delete_file_from_source(self, source_id: str, file_id: str) -> None:
         raise NotImplementedError
 
-    def create_source(self, name: str, embedding_config: Optional[EmbeddingConfig] = None) -> Source:
+    def create_source(self, name: str, embedding_config: EmbeddingConfig | None = None) -> Source:
         raise NotImplementedError
 
     def delete_source(self, source_id: str):
@@ -249,56 +266,56 @@ class AbstractClient(object):
     def get_source_id(self, source_name: str) -> str:
         raise NotImplementedError
 
-    def attach_source(self, agent_id: str, source_id: Optional[str] = None, source_name: Optional[str] = None) -> AgentState:
+    def attach_source(self, agent_id: str, source_id: str | None = None, source_name: str | None = None) -> AgentState:
         raise NotImplementedError
 
-    def detach_source(self, agent_id: str, source_id: Optional[str] = None, source_name: Optional[str] = None) -> AgentState:
+    def detach_source(self, agent_id: str, source_id: str | None = None, source_name: str | None = None) -> AgentState:
         raise NotImplementedError
 
-    def list_sources(self) -> List[Source]:
+    def list_sources(self) -> list[Source]:
         raise NotImplementedError
 
-    def list_attached_sources(self, agent_id: str) -> List[Source]:
+    def list_attached_sources(self, agent_id: str) -> list[Source]:
         raise NotImplementedError
 
-    def list_files_from_source(self, source_id: str, limit: int = 1000, after: Optional[str] = None) -> List[FileMetadata]:
+    def list_files_from_source(self, source_id: str, limit: int = 1000, after: str | None = None) -> list[FileMetadata]:
         raise NotImplementedError
 
-    def update_source(self, source_id: str, name: Optional[str] = None) -> Source:
+    def update_source(self, source_id: str, name: str | None = None) -> Source:
         raise NotImplementedError
 
-    def insert_archival_memory(self, agent_id: str, memory: str) -> List[Passage]:
+    def insert_archival_memory(self, agent_id: str, memory: str) -> list[Passage]:
         raise NotImplementedError
 
     def delete_archival_memory(self, agent_id: str, memory_id: str):
         raise NotImplementedError
 
     def get_archival_memory(
-        self, agent_id: str, after: Optional[str] = None, before: Optional[str] = None, limit: Optional[int] = 1000
-    ) -> List[Passage]:
+        self, agent_id: str, after: str | None = None, before: str | None = None, limit: int | None = 1000
+    ) -> list[Passage]:
         raise NotImplementedError
 
     def get_messages(
-        self, agent_id: str, after: Optional[str] = None, before: Optional[str] = None, limit: Optional[int] = 1000
-    ) -> List[LettaMessage]:
+        self, agent_id: str, after: str | None = None, before: str | None = None, limit: int | None = 1000
+    ) -> list[LettaMessage]:
         raise NotImplementedError
 
-    def list_model_configs(self) -> List[LLMConfig]:
+    def list_model_configs(self) -> list[LLMConfig]:
         raise NotImplementedError
 
-    def list_embedding_configs(self) -> List[EmbeddingConfig]:
+    def list_embedding_configs(self) -> list[EmbeddingConfig]:
         raise NotImplementedError
 
-    def create_org(self, name: Optional[str] = None) -> Organization:
+    def create_org(self, name: str | None = None) -> Organization:
         raise NotImplementedError
 
-    def list_orgs(self, after: Optional[str] = None, limit: Optional[int] = 50) -> List[Organization]:
+    def list_orgs(self, after: str | None = None, limit: int | None = 50) -> list[Organization]:
         raise NotImplementedError
 
     def delete_org(self, org_id: str) -> Organization:
         raise NotImplementedError
 
-    def create_sandbox_config(self, config: Union[LocalSandboxConfig, E2BSandboxConfig]) -> SandboxConfig:
+    def create_sandbox_config(self, config: LocalSandboxConfig | E2BSandboxConfig) -> SandboxConfig:
         """
         Create a new sandbox configuration.
 
@@ -310,7 +327,7 @@ class AbstractClient(object):
         """
         raise NotImplementedError
 
-    def update_sandbox_config(self, sandbox_config_id: str, config: Union[LocalSandboxConfig, E2BSandboxConfig]) -> SandboxConfig:
+    def update_sandbox_config(self, sandbox_config_id: str, config: LocalSandboxConfig | E2BSandboxConfig) -> SandboxConfig:
         """
         Update an existing sandbox configuration.
 
@@ -332,7 +349,7 @@ class AbstractClient(object):
         """
         raise NotImplementedError
 
-    def list_sandbox_configs(self, limit: int = 50, after: Optional[str] = None) -> List[SandboxConfig]:
+    def list_sandbox_configs(self, limit: int = 50, after: str | None = None) -> list[SandboxConfig]:
         """
         List all sandbox configurations.
 
@@ -346,7 +363,7 @@ class AbstractClient(object):
         raise NotImplementedError
 
     def create_sandbox_env_var(
-        self, sandbox_config_id: str, key: str, value: str, description: Optional[str] = None
+        self, sandbox_config_id: str, key: str, value: str, description: str | None = None
     ) -> SandboxEnvironmentVariable:
         """
         Create a new environment variable for a sandbox configuration.
@@ -363,7 +380,7 @@ class AbstractClient(object):
         raise NotImplementedError
 
     def update_sandbox_env_var(
-        self, env_var_id: str, key: Optional[str] = None, value: Optional[str] = None, description: Optional[str] = None
+        self, env_var_id: str, key: str | None = None, value: str | None = None, description: str | None = None
     ) -> SandboxEnvironmentVariable:
         """
         Update an existing environment variable.
@@ -389,8 +406,8 @@ class AbstractClient(object):
         raise NotImplementedError
 
     def list_sandbox_env_vars(
-        self, sandbox_config_id: str, limit: int = 50, after: Optional[str] = None
-    ) -> List[SandboxEnvironmentVariable]:
+        self, sandbox_config_id: str, limit: int = 50, after: str | None = None
+    ) -> list[SandboxEnvironmentVariable]:
         """
         List all environment variables associated with a sandbox configuration.
 
@@ -437,13 +454,13 @@ class RESTClient(AbstractClient):
     def __init__(
         self,
         base_url: str,
-        token: Optional[str] = None,
-        password: Optional[str] = None,
+        token: str | None = None,
+        password: str | None = None,
         api_prefix: str = "v1",
         debug: bool = False,
-        default_llm_config: Optional[LLMConfig] = None,
-        default_embedding_config: Optional[EmbeddingConfig] = None,
-        headers: Optional[Dict] = None,
+        default_llm_config: LLMConfig | None = None,
+        default_embedding_config: EmbeddingConfig | None = None,
+        headers: dict | None = None,
     ):
         """
         Initializes a new instance of Client class.
@@ -473,12 +490,12 @@ class RESTClient(AbstractClient):
 
     def list_agents(
         self,
-        tags: Optional[List[str]] = None,
-        query_text: Optional[str] = None,
+        tags: list[str] | None = None,
+        query_text: str | None = None,
         limit: int = 50,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-    ) -> List[AgentState]:
+        before: str | None = None,
+        after: str | None = None,
+    ) -> list[AgentState]:
         params = {"limit": limit}
         if tags:
             params["tags"] = tags
@@ -519,30 +536,30 @@ class RESTClient(AbstractClient):
 
     def create_agent(
         self,
-        name: Optional[str] = None,
+        name: str | None = None,
         # agent config
-        agent_type: Optional[AgentType] = AgentType.memgpt_agent,
+        agent_type: AgentType | None = AgentType.memgpt_agent,
         # model configs
         embedding_config: EmbeddingConfig = None,
         llm_config: LLMConfig = None,
         # memory
         memory: Memory = ChatMemory(human=get_human_text(DEFAULT_HUMAN), persona=get_persona_text(DEFAULT_PERSONA)),
         # Existing blocks
-        block_ids: Optional[List[str]] = None,
+        block_ids: list[str] | None = None,
         # system
-        system: Optional[str] = None,
+        system: str | None = None,
         # tools
-        tool_ids: Optional[List[str]] = None,
-        tool_rules: Optional[List[BaseToolRule]] = None,
-        include_base_tools: Optional[bool] = True,
-        include_multi_agent_tools: Optional[bool] = False,
+        tool_ids: list[str] | None = None,
+        tool_rules: list[BaseToolRule] | None = None,
+        include_base_tools: bool | None = True,
+        include_multi_agent_tools: bool | None = False,
         # metadata
-        metadata: Optional[Dict] = {"human:": DEFAULT_HUMAN, "persona": DEFAULT_PERSONA},
-        description: Optional[str] = None,
-        initial_message_sequence: Optional[List[Message]] = None,
-        tags: Optional[List[str]] = None,
+        metadata: dict | None = {"human:": DEFAULT_HUMAN, "persona": DEFAULT_PERSONA},
+        description: str | None = None,
+        initial_message_sequence: list[Message] | None = None,
+        tags: list[str] | None = None,
         message_buffer_autoclear: bool = False,
-        response_format: Optional[ResponseFormatUnion] = None,
+        response_format: ResponseFormatUnion | None = None,
     ) -> AgentState:
         """Create an agent
 
@@ -568,8 +585,8 @@ class RESTClient(AbstractClient):
             tool_names += BASE_MEMORY_TOOLS
         tool_ids += [self.get_tool_id(tool_name=name) for name in tool_names]
 
-        assert embedding_config or self._default_embedding_config, f"Embedding config must be provided"
-        assert llm_config or self._default_llm_config, f"LLM config must be provided"
+        assert embedding_config or self._default_embedding_config, "Embedding config must be provided"
+        assert llm_config or self._default_llm_config, "LLM config must be provided"
 
         # TODO: This should not happen here, we need to have clear separation between create/add blocks
         # TODO: This is insanely hacky and a result of allowing free-floating blocks
@@ -635,16 +652,16 @@ class RESTClient(AbstractClient):
     def update_agent(
         self,
         agent_id: str,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        system: Optional[str] = None,
-        tool_ids: Optional[List[str]] = None,
-        metadata: Optional[Dict] = None,
-        llm_config: Optional[LLMConfig] = None,
-        embedding_config: Optional[EmbeddingConfig] = None,
-        message_ids: Optional[List[str]] = None,
-        tags: Optional[List[str]] = None,
-        response_format: Optional[ResponseFormatUnion] = None,
+        name: str | None = None,
+        description: str | None = None,
+        system: str | None = None,
+        tool_ids: list[str] | None = None,
+        metadata: dict | None = None,
+        llm_config: LLMConfig | None = None,
+        embedding_config: EmbeddingConfig | None = None,
+        message_ids: list[str] | None = None,
+        tags: list[str] | None = None,
+        response_format: ResponseFormatUnion | None = None,
     ) -> AgentState:
         """
         Update an existing agent
@@ -681,7 +698,7 @@ class RESTClient(AbstractClient):
             raise ValueError(f"Failed to update agent: {response.text}")
         return AgentState(**response.json())
 
-    def get_tools_from_agent(self, agent_id: str) -> List[Tool]:
+    def get_tools_from_agent(self, agent_id: str) -> list[Tool]:
         """
         Get tools to an existing agent
 
@@ -749,10 +766,10 @@ class RESTClient(AbstractClient):
         Args:
             agent_id (str): ID of the agent to delete
         """
-        response = requests.delete(f"{self.base_url}/{self.api_prefix}/agents/{str(agent_id)}", headers=self.headers)
+        response = requests.delete(f"{self.base_url}/{self.api_prefix}/agents/{agent_id!s}", headers=self.headers)
         assert response.status_code == 200, f"Failed to delete agent: {response.text}"
 
-    def get_agent(self, agent_id: Optional[str] = None, agent_name: Optional[str] = None) -> AgentState:
+    def get_agent(self, agent_id: str | None = None, agent_name: str | None = None) -> AgentState:
         """
         Get an agent's state by it's ID.
 
@@ -804,7 +821,7 @@ class RESTClient(AbstractClient):
     def get_core_memory(self, agent_id: str) -> Memory:
         return self.get_in_context_memory(agent_id)
 
-    def update_in_context_memory(self, agent_id: str, section: str, value: Union[List[str], str]) -> Memory:
+    def update_in_context_memory(self, agent_id: str, section: str, value: list[str] | str) -> Memory:
         """
         Update the in-context memory of an agent
 
@@ -854,7 +871,7 @@ class RESTClient(AbstractClient):
             raise ValueError(f"Failed to get recall memory summary: {response.text}")
         return RecallMemorySummary(size=response.json().get("num_recall_memory", 0))
 
-    def get_in_context_messages(self, agent_id: str) -> List[Message]:
+    def get_in_context_messages(self, agent_id: str) -> list[Message]:
         """
         Get in-context messages of an agent
 
@@ -890,8 +907,8 @@ class RESTClient(AbstractClient):
     # archival memory
 
     def get_archival_memory(
-        self, agent_id: str, before: Optional[str] = None, after: Optional[str] = None, limit: Optional[int] = 1000
-    ) -> List[Passage]:
+        self, agent_id: str, before: str | None = None, after: str | None = None, limit: int | None = 1000
+    ) -> list[Passage]:
         """
         Get archival memory from an agent with pagination.
 
@@ -910,12 +927,12 @@ class RESTClient(AbstractClient):
         if after:
             params["after"] = str(after)
         response = requests.get(
-            f"{self.base_url}/{self.api_prefix}/agents/{str(agent_id)}/archival-memory", params=params, headers=self.headers
+            f"{self.base_url}/{self.api_prefix}/agents/{agent_id!s}/archival-memory", params=params, headers=self.headers
         )
         assert response.status_code == 200, f"Failed to get archival memory: {response.text}"
         return [Passage(**passage) for passage in response.json()]
 
-    def insert_archival_memory(self, agent_id: str, memory: str) -> List[Passage]:
+    def insert_archival_memory(self, agent_id: str, memory: str) -> list[Passage]:
         """
         Insert archival memory into an agent
 
@@ -948,8 +965,8 @@ class RESTClient(AbstractClient):
     # messages (recall memory)
 
     def get_messages(
-        self, agent_id: str, before: Optional[str] = None, after: Optional[str] = None, limit: Optional[int] = 1000
-    ) -> List[LettaMessage]:
+        self, agent_id: str, before: str | None = None, after: str | None = None, limit: int | None = 1000
+    ) -> list[LettaMessage]:
         """
         Get messages from an agent with pagination.
 
@@ -973,12 +990,12 @@ class RESTClient(AbstractClient):
         self,
         message: str,
         role: str,
-        agent_id: Optional[str] = None,
-        name: Optional[str] = None,
-        stream: Optional[bool] = False,
+        agent_id: str | None = None,
+        name: str | None = None,
+        stream: bool | None = False,
         stream_steps: bool = False,
         stream_tokens: bool = False,
-        max_steps: Optional[int] = 10,
+        max_steps: int | None = 10,
     ) -> LettaResponse:
         """
         Send a message to an agent
@@ -1028,8 +1045,8 @@ class RESTClient(AbstractClient):
         self,
         message: str,
         role: str,
-        agent_id: Optional[str] = None,
-        name: Optional[str] = None,
+        agent_id: str | None = None,
+        name: str | None = None,
     ) -> Run:
         """
         Send a message to an agent (async, returns a job)
@@ -1059,7 +1076,7 @@ class RESTClient(AbstractClient):
 
     # humans / personas
 
-    def list_blocks(self, label: Optional[str] = None, templates_only: Optional[bool] = True) -> List[Block]:
+    def list_blocks(self, label: str | None = None, templates_only: bool | None = True) -> list[Block]:
         params = {"label": label, "templates_only": templates_only}
         response = requests.get(f"{self.base_url}/{self.api_prefix}/blocks", params=params, headers=self.headers)
         if response.status_code != 200:
@@ -1073,8 +1090,8 @@ class RESTClient(AbstractClient):
             return [Block(**block) for block in response.json()]
 
     def create_block(
-        self, label: str, value: str, limit: Optional[int] = None, template_name: Optional[str] = None, is_template: bool = False
-    ) -> Block:  #
+        self, label: str, value: str, limit: int | None = None, template_name: str | None = None, is_template: bool = False
+    ) -> Block:
         request_kwargs = dict(label=label, value=value, template=is_template, template_name=template_name)
         if limit:
             request_kwargs["limit"] = limit
@@ -1089,14 +1106,14 @@ class RESTClient(AbstractClient):
         else:
             return Block(**response.json())
 
-    def update_block(self, block_id: str, name: Optional[str] = None, text: Optional[str] = None, limit: Optional[int] = None) -> Block:
+    def update_block(self, block_id: str, name: str | None = None, text: str | None = None, limit: int | None = None) -> Block:
         request = BlockUpdate(id=block_id, template_name=name, value=text, limit=limit if limit else self.get_block(block_id).limit)
         response = requests.post(f"{self.base_url}/{self.api_prefix}/blocks/{block_id}", json=request.model_dump(), headers=self.headers)
         if response.status_code != 200:
             raise ValueError(f"Failed to update block: {response.text}")
         return Block(**response.json())
 
-    def get_block(self, block_id: str) -> Optional[Block]:
+    def get_block(self, block_id: str) -> Block | None:
         response = requests.get(f"{self.base_url}/{self.api_prefix}/blocks/{block_id}", headers=self.headers)
         if response.status_code == 404:
             return None
@@ -1146,7 +1163,7 @@ class RESTClient(AbstractClient):
         """
         return self.create_block(label="human", template_name=name, value=text, is_template=True)
 
-    def update_human(self, human_id: str, name: Optional[str] = None, text: Optional[str] = None) -> Human:
+    def update_human(self, human_id: str, name: str | None = None, text: str | None = None) -> Human:
         """
         Update a human block template
 
@@ -1186,7 +1203,7 @@ class RESTClient(AbstractClient):
         """
         return self.create_block(label="persona", template_name=name, value=text, is_template=True)
 
-    def update_persona(self, persona_id: str, name: Optional[str] = None, text: Optional[str] = None) -> Persona:
+    def update_persona(self, persona_id: str, name: str | None = None, text: str | None = None) -> Persona:
         """
         Update a persona block template
 
@@ -1301,7 +1318,7 @@ class RESTClient(AbstractClient):
             raise ValueError(f"Failed to get source ID: {response.text}")
         return response.json()
 
-    def list_sources(self) -> List[Source]:
+    def list_sources(self) -> list[Source]:
         """
         List available sources
 
@@ -1320,7 +1337,7 @@ class RESTClient(AbstractClient):
         Args:
             source_id (str): ID of the source
         """
-        response = requests.delete(f"{self.base_url}/{self.api_prefix}/sources/{str(source_id)}", headers=self.headers)
+        response = requests.delete(f"{self.base_url}/{self.api_prefix}/sources/{source_id!s}", headers=self.headers)
         assert response.status_code == 200, f"Failed to delete source: {response.text}"
 
     def get_job(self, job_id: str) -> Job:
@@ -1382,7 +1399,7 @@ class RESTClient(AbstractClient):
         if response.status_code not in [200, 204]:
             raise ValueError(f"Failed to delete tool: {response.text}")
 
-    def create_source(self, name: str, embedding_config: Optional[EmbeddingConfig] = None) -> Source:
+    def create_source(self, name: str, embedding_config: EmbeddingConfig | None = None) -> Source:
         """
         Create a source
 
@@ -1392,14 +1409,14 @@ class RESTClient(AbstractClient):
         Returns:
             source (Source): Created source
         """
-        assert embedding_config or self._default_embedding_config, f"Must specify embedding_config for source"
+        assert embedding_config or self._default_embedding_config, "Must specify embedding_config for source"
         source_create = SourceCreate(name=name, embedding_config=embedding_config or self._default_embedding_config)
         payload = source_create.model_dump()
         response = requests.post(f"{self.base_url}/{self.api_prefix}/sources", json=payload, headers=self.headers)
         response_json = response.json()
         return Source(**response_json)
 
-    def list_attached_sources(self, agent_id: str) -> List[Source]:
+    def list_attached_sources(self, agent_id: str) -> list[Source]:
         """
         List sources attached to an agent
 
@@ -1414,7 +1431,7 @@ class RESTClient(AbstractClient):
             raise ValueError(f"Failed to list attached sources: {response.text}")
         return [Source(**source) for source in response.json()]
 
-    def list_files_from_source(self, source_id: str, limit: int = 1000, after: Optional[str] = None) -> List[FileMetadata]:
+    def list_files_from_source(self, source_id: str, limit: int = 1000, after: str | None = None) -> list[FileMetadata]:
         """
         List files from source with pagination support.
 
@@ -1438,7 +1455,7 @@ class RESTClient(AbstractClient):
         # Parse the JSON response
         return [FileMetadata(**metadata) for metadata in response.json()]
 
-    def update_source(self, source_id: str, name: Optional[str] = None) -> Source:
+    def update_source(self, source_id: str, name: str | None = None) -> Source:
         """
         Update a source
 
@@ -1501,7 +1518,7 @@ class RESTClient(AbstractClient):
             return None
         return tools[0].id
 
-    def list_attached_tools(self, agent_id: str) -> List[Tool]:
+    def list_attached_tools(self, agent_id: str) -> list[Tool]:
         """
         List all tools attached to an agent.
 
@@ -1516,7 +1533,7 @@ class RESTClient(AbstractClient):
             raise ValueError(f"Failed to list attached tools: {response.text}")
         return [Tool(**tool) for tool in response.json()]
 
-    def upsert_base_tools(self) -> List[Tool]:
+    def upsert_base_tools(self) -> list[Tool]:
         response = requests.post(f"{self.base_url}/{self.api_prefix}/tools/add-base-tools/", headers=self.headers)
         if response.status_code != 200:
             raise ValueError(f"Failed to add base tools: {response.text}")
@@ -1526,7 +1543,7 @@ class RESTClient(AbstractClient):
     def create_tool(
         self,
         func: Callable,
-        tags: Optional[List[str]] = None,
+        tags: list[str] | None = None,
         return_char_limit: int = FUNCTION_RETURN_CHAR_LIMIT,
     ) -> Tool:
         """
@@ -1556,7 +1573,7 @@ class RESTClient(AbstractClient):
     def create_or_update_tool(
         self,
         func: Callable,
-        tags: Optional[List[str]] = None,
+        tags: list[str] | None = None,
         return_char_limit: int = FUNCTION_RETURN_CHAR_LIMIT,
     ) -> Tool:
         """
@@ -1586,9 +1603,9 @@ class RESTClient(AbstractClient):
     def update_tool(
         self,
         id: str,
-        description: Optional[str] = None,
-        func: Optional[Callable] = None,
-        tags: Optional[List[str]] = None,
+        description: str | None = None,
+        func: Callable | None = None,
+        tags: list[str] | None = None,
         return_char_limit: int = FUNCTION_RETURN_CHAR_LIMIT,
     ) -> Tool:
         """
@@ -1623,7 +1640,7 @@ class RESTClient(AbstractClient):
             raise ValueError(f"Failed to update tool: {response.text}")
         return Tool(**response.json())
 
-    def list_tools(self, after: Optional[str] = None, limit: Optional[int] = 50) -> List[Tool]:
+    def list_tools(self, after: str | None = None, limit: int | None = 50) -> list[Tool]:
         """
         List available tools for the user.
 
@@ -1652,7 +1669,7 @@ class RESTClient(AbstractClient):
         if response.status_code != 200:
             raise ValueError(f"Failed to delete tool: {response.text}")
 
-    def get_tool(self, id: str) -> Optional[Tool]:
+    def get_tool(self, id: str) -> Tool | None:
         """
         Get a tool give its ID.
 
@@ -1687,7 +1704,7 @@ class RESTClient(AbstractClient):
         """
         self._default_embedding_config = embedding_config
 
-    def list_llm_configs(self) -> List[LLMConfig]:
+    def list_llm_configs(self) -> list[LLMConfig]:
         """
         List available LLM configurations
 
@@ -1699,7 +1716,7 @@ class RESTClient(AbstractClient):
             raise ValueError(f"Failed to list LLM configs: {response.text}")
         return [LLMConfig(**config) for config in response.json()]
 
-    def list_embedding_configs(self) -> List[EmbeddingConfig]:
+    def list_embedding_configs(self) -> list[EmbeddingConfig]:
         """
         List available embedding configurations
 
@@ -1711,7 +1728,7 @@ class RESTClient(AbstractClient):
             raise ValueError(f"Failed to list embedding configs: {response.text}")
         return [EmbeddingConfig(**config) for config in response.json()]
 
-    def list_orgs(self, after: Optional[str] = None, limit: Optional[int] = 50) -> List[Organization]:
+    def list_orgs(self, after: str | None = None, limit: int | None = 50) -> list[Organization]:
         """
         Retrieves a list of all organizations in the database, with optional pagination.
 
@@ -1725,7 +1742,7 @@ class RESTClient(AbstractClient):
             raise ValueError(f"Failed to retrieve organizations: {response.text}")
         return [Organization(**org_data) for org_data in response.json()]
 
-    def create_org(self, name: Optional[str] = None) -> Organization:
+    def create_org(self, name: str | None = None) -> Organization:
         """
         Creates an organization with the given name. If not provided, we generate a random one.
 
@@ -1759,7 +1776,7 @@ class RESTClient(AbstractClient):
         # Parse and return the deleted organization
         return Organization(**response.json())
 
-    def create_sandbox_config(self, config: Union[LocalSandboxConfig, E2BSandboxConfig]) -> SandboxConfig:
+    def create_sandbox_config(self, config: LocalSandboxConfig | E2BSandboxConfig) -> SandboxConfig:
         """
         Create a new sandbox configuration.
 
@@ -1777,7 +1794,7 @@ class RESTClient(AbstractClient):
             raise ValueError(f"Failed to create sandbox config: {response.text}")
         return SandboxConfig(**response.json())
 
-    def update_sandbox_config(self, sandbox_config_id: str, config: Union[LocalSandboxConfig, E2BSandboxConfig]) -> SandboxConfig:
+    def update_sandbox_config(self, sandbox_config_id: str, config: LocalSandboxConfig | E2BSandboxConfig) -> SandboxConfig:
         """
         Update an existing sandbox configuration.
 
@@ -1813,7 +1830,7 @@ class RESTClient(AbstractClient):
         elif response.status_code != 204:
             raise ValueError(f"Failed to delete sandbox config with ID '{sandbox_config_id}': {response.text}")
 
-    def list_sandbox_configs(self, limit: int = 50, after: Optional[str] = None) -> List[SandboxConfig]:
+    def list_sandbox_configs(self, limit: int = 50, after: str | None = None) -> list[SandboxConfig]:
         """
         List all sandbox configurations.
 
@@ -1831,7 +1848,7 @@ class RESTClient(AbstractClient):
         return [SandboxConfig(**config_data) for config_data in response.json()]
 
     def create_sandbox_env_var(
-        self, sandbox_config_id: str, key: str, value: str, description: Optional[str] = None
+        self, sandbox_config_id: str, key: str, value: str, description: str | None = None
     ) -> SandboxEnvironmentVariable:
         """
         Create a new environment variable for a sandbox configuration.
@@ -1856,7 +1873,7 @@ class RESTClient(AbstractClient):
         return SandboxEnvironmentVariable(**response.json())
 
     def update_sandbox_env_var(
-        self, env_var_id: str, key: Optional[str] = None, value: Optional[str] = None, description: Optional[str] = None
+        self, env_var_id: str, key: str | None = None, value: str | None = None, description: str | None = None
     ) -> SandboxEnvironmentVariable:
         """
         Update an existing environment variable.
@@ -1896,8 +1913,8 @@ class RESTClient(AbstractClient):
             raise ValueError(f"Failed to delete environment variable with ID '{env_var_id}': {response.text}")
 
     def list_sandbox_env_vars(
-        self, sandbox_config_id: str, limit: int = 50, after: Optional[str] = None
-    ) -> List[SandboxEnvironmentVariable]:
+        self, sandbox_config_id: str, limit: int = 50, after: str | None = None
+    ) -> list[SandboxEnvironmentVariable]:
         """
         List all environment variables associated with a sandbox configuration.
 
@@ -1964,7 +1981,7 @@ class RESTClient(AbstractClient):
             raise ValueError(f"Failed to detach block from agent: {response.text}")
         return AgentState(**response.json())
 
-    def list_agent_memory_blocks(self, agent_id: str) -> List[Block]:
+    def list_agent_memory_blocks(self, agent_id: str) -> list[Block]:
         """
         Get all the blocks in the agent's core memory
 
@@ -2002,8 +2019,8 @@ class RESTClient(AbstractClient):
         self,
         agent_id: str,
         label: str,
-        value: Optional[str] = None,
-        limit: Optional[int] = None,
+        value: str | None = None,
+        limit: int | None = None,
     ):
         """
         Update a block in the agent's core memory by specifying its label
@@ -2035,9 +2052,9 @@ class RESTClient(AbstractClient):
     def update_block(
         self,
         block_id: str,
-        label: Optional[str] = None,
-        value: Optional[str] = None,
-        limit: Optional[int] = None,
+        label: str | None = None,
+        value: str | None = None,
+        limit: int | None = None,
     ):
         """
         Update a block given the ID with the provided fields
@@ -2070,12 +2087,12 @@ class RESTClient(AbstractClient):
     def get_run_messages(
         self,
         run_id: str,
-        before: Optional[str] = None,
-        after: Optional[str] = None,
-        limit: Optional[int] = 100,
+        before: str | None = None,
+        after: str | None = None,
+        limit: int | None = 100,
         ascending: bool = True,
-        role: Optional[MessageRole] = None,
-    ) -> List[LettaMessageUnion]:
+        role: MessageRole | None = None,
+    ) -> list[LettaMessageUnion]:
         """
         Get messages associated with a job with filtering options.
 
@@ -2107,7 +2124,7 @@ class RESTClient(AbstractClient):
     def get_run_usage(
         self,
         run_id: str,
-    ) -> List[UsageStatistics]:
+    ) -> list[UsageStatistics]:
         """
         Get usage statistics associated with a job.
 
@@ -2157,7 +2174,7 @@ class RESTClient(AbstractClient):
         if response.status_code != 200:
             raise ValueError(f"Failed to delete run: {response.text}")
 
-    def list_runs(self) -> List[Run]:
+    def list_runs(self) -> list[Run]:
         """
         List all runs.
 
@@ -2172,7 +2189,7 @@ class RESTClient(AbstractClient):
             raise ValueError(f"Failed to list runs: {response.text}")
         return [Run(**run) for run in response.json()]
 
-    def list_active_runs(self) -> List[Run]:
+    def list_active_runs(self) -> list[Run]:
         """
         List all active runs.
 
@@ -2189,10 +2206,10 @@ class RESTClient(AbstractClient):
 
     def get_tags(
         self,
-        after: Optional[str] = None,
+        after: str | None = None,
         limit: int = 100,
-        query_text: Optional[str] = None,
-    ) -> List[str]:
+        query_text: str | None = None,
+    ) -> list[str]:
         """
         Get a list of all unique tags.
 

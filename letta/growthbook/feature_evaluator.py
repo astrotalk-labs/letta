@@ -4,7 +4,7 @@ Uses the GrowthBook Python SDK to evaluate feature flags with user/agent attribu
 """
 
 import json
-from typing import Any, Dict, Optional, Type, TypeVar
+from typing import Any, TypeVar
 
 from letta.log import get_logger
 
@@ -16,7 +16,6 @@ T = TypeVar("T")
 class FeatureEvaluatorException(Exception):
     """Raised when feature evaluation fails."""
 
-    pass
 
 
 class FeatureEvaluator:
@@ -38,9 +37,9 @@ class FeatureEvaluator:
     def get_feature_value(
         self,
         feature_key: str,
-        attributes: Dict[str, Any],
-        result_type: Type[T] = object,
-    ) -> Optional[T]:
+        attributes: dict[str, Any],
+        result_type: type[T] = object,
+    ) -> T | None:
         """Evaluate a feature flag and return its value.
 
         Args:
@@ -96,7 +95,7 @@ class FeatureEvaluator:
         finally:
             gb.destroy()
 
-    def is_feature_on(self, feature_key: str, attributes: Dict[str, Any]) -> bool:
+    def is_feature_on(self, feature_key: str, attributes: dict[str, Any]) -> bool:
         """Check if a feature flag is enabled (boolean shorthand).
 
         Args:

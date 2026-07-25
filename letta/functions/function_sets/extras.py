@@ -1,10 +1,12 @@
 import os
 import uuid
-from typing import Optional
 
 import requests
 
-from letta.constants import MESSAGE_CHATGPT_FUNCTION_MODEL, MESSAGE_CHATGPT_FUNCTION_SYSTEM_MESSAGE
+from letta.constants import (
+    MESSAGE_CHATGPT_FUNCTION_MODEL,
+    MESSAGE_CHATGPT_FUNCTION_SYSTEM_MESSAGE,
+)
 from letta.helpers.json_helpers import json_dumps, json_loads
 from letta.llm_api.llm_api_tools import create
 from letta.schemas.letta_message_content import TextContent
@@ -42,7 +44,7 @@ def message_chatgpt(self, message: str):
     return reply
 
 
-def read_from_text_file(self, filename: str, line_start: int, num_lines: Optional[int] = 1):
+def read_from_text_file(self, filename: str, line_start: int, num_lines: int | None = 1):
     """
     Read lines from a text file.
 
@@ -102,7 +104,7 @@ def append_to_text_file(self, filename: str, content: str):
         file.write(content + "\n")
 
 
-def http_request(self, method: str, url: str, payload_json: Optional[str] = None):
+def http_request(self, method: str, url: str, payload_json: str | None = None):
     """
     Generates an HTTP request and returns the response.
 

@@ -1,10 +1,9 @@
-from typing import Optional
 
 from letta.agent import Agent
 from letta.constants import CORE_MEMORY_LINE_NUMBER_WARNING
 
 
-def send_message(self: "Agent", message: str) -> Optional[str]:
+def send_message(self: "Agent", message: str) -> str | None:
     """
     Sends a message to the human user.
 
@@ -20,7 +19,7 @@ def send_message(self: "Agent", message: str) -> Optional[str]:
     return None
 
 
-def conversation_search(self: "Agent", query: str, page: Optional[int] = 0) -> Optional[str]:
+def conversation_search(self: "Agent", query: str, page: int | None = 0) -> str | None:
     """
     Search prior conversation history using case-insensitive string matching.
 
@@ -42,7 +41,7 @@ def conversation_search(self: "Agent", query: str, page: Optional[int] = 0) -> O
     try:
         page = int(page)
     except:
-        raise ValueError(f"'page' argument must be an integer")
+        raise ValueError("'page' argument must be an integer")
     count = RETRIEVAL_QUERY_DEFAULT_PAGE_SIZE
     # TODO: add paging by page number. currently cursor only works with strings.
     # original: start=page * count
@@ -55,7 +54,7 @@ def conversation_search(self: "Agent", query: str, page: Optional[int] = 0) -> O
     total = len(messages)
     num_pages = math.ceil(total / count) - 1  # 0 index
     if len(messages) == 0:
-        results_str = f"No results found."
+        results_str = "No results found."
     else:
         results_pref = f"Showing {len(messages)} of {total} results (page {page}/{num_pages}):"
         results_formatted = [message.content[0].text for message in messages]
@@ -63,7 +62,7 @@ def conversation_search(self: "Agent", query: str, page: Optional[int] = 0) -> O
     return results_str
 
 
-def archival_memory_insert(self: "Agent", content: str) -> Optional[str]:
+def archival_memory_insert(self: "Agent", content: str) -> str | None:
     """
     Add to archival memory. Make sure to phrase the memory contents such that it can be easily queried later.
 
@@ -83,7 +82,7 @@ def archival_memory_insert(self: "Agent", content: str) -> Optional[str]:
     return None
 
 
-def archival_memory_search(self: "Agent", query: str, page: Optional[int] = 0, start: Optional[int] = 0) -> Optional[str]:
+def archival_memory_search(self: "Agent", query: str, page: int | None = 0, start: int | None = 0) -> str | None:
     """
     Search archival memory using semantic (embedding-based) search.
 
@@ -103,7 +102,7 @@ def archival_memory_search(self: "Agent", query: str, page: Optional[int] = 0, s
     try:
         page = int(page)
     except:
-        raise ValueError(f"'page' argument must be an integer")
+        raise ValueError("'page' argument must be an integer")
     count = RETRIEVAL_QUERY_DEFAULT_PAGE_SIZE
 
     try:
@@ -130,7 +129,7 @@ def archival_memory_search(self: "Agent", query: str, page: Optional[int] = 0, s
         raise e
 
 
-def core_memory_append(agent_state: "AgentState", label: str, content: str) -> Optional[str]:  # type: ignore
+def core_memory_append(agent_state: "AgentState", label: str, content: str) -> str | None:  # type: ignore
     """
     Append to the contents of core memory.
 
@@ -147,7 +146,7 @@ def core_memory_append(agent_state: "AgentState", label: str, content: str) -> O
     return None
 
 
-def core_memory_replace(agent_state: "AgentState", label: str, old_content: str, new_content: str) -> Optional[str]:  # type: ignore
+def core_memory_replace(agent_state: "AgentState", label: str, old_content: str, new_content: str) -> str | None:  # type: ignore
     """
     Replace the contents of core memory. To delete memories, use an empty string for new_content.
 
@@ -183,7 +182,6 @@ def rethink_memory(agent_state: "AgentState", new_memory: str, target_block_labe
         agent_state.memory.create_block(label=target_block_label, value=new_memory)
 
     agent_state.memory.update_block_value(label=target_block_label, value=new_memory)
-    return None
 
 
 ## Attempted v2 of sleep-time function set, meant to work better across all types
@@ -192,7 +190,7 @@ SNIPPET_LINES: int = 4
 
 
 # Based off of: https://github.com/anthropics/anthropic-quickstarts/blob/main/computer-use-demo/computer_use_demo/tools/edit.py?ref=musings.yasyf.com#L154
-def memory_replace(agent_state: "AgentState", label: str, old_str: str, new_str: Optional[str] = None) -> str:  # type: ignore
+def memory_replace(agent_state: "AgentState", label: str, old_str: str, new_str: str | None = None) -> str:  # type: ignore
     """
     The memory_replace command allows you to replace a specific string in a memory block with a new string. This is used for making precise edits.
 
@@ -259,7 +257,7 @@ def memory_replace(agent_state: "AgentState", label: str, old_str: str, new_str:
     return success_msg
 
 
-def memory_insert(agent_state: "AgentState", label: str, new_str: str, insert_line: int = -1) -> Optional[str]:  # type: ignore
+def memory_insert(agent_state: "AgentState", label: str, new_str: str, insert_line: int = -1) -> str | None:  # type: ignore
     """
     The memory_insert command allows you to insert text at a specific location in a memory block.
 
@@ -370,4 +368,4 @@ def memory_finish_edits(agent_state: "AgentState") -> None:  # type: ignore
     Returns:
         Optional[str]: None is always returned as this function does not produce a response.
     """
-    return None
+    return

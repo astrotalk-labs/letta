@@ -1,5 +1,4 @@
 from contextlib import AsyncExitStack
-from typing import Optional, Tuple
 
 from mcp import ClientSession
 from mcp import Tool as MCPTool
@@ -16,7 +15,7 @@ class AsyncBaseMCPClient:
     def __init__(self, server_config: BaseServerConfig):
         self.server_config = server_config
         self.exit_stack = AsyncExitStack()
-        self.session: Optional[ClientSession] = None
+        self.session: ClientSession | None = None
         self.initialized = False
 
     async def connect_to_server(self):
@@ -25,11 +24,11 @@ class AsyncBaseMCPClient:
             await self.session.initialize()
             self.initialized = True
         except ConnectionError as e:
-            logger.error(f"MCP connection failed: {str(e)}")
+            logger.error(f"MCP connection failed: {e!s}")
             raise e
         except Exception as e:
             logger.error(
-                f"Connecting to MCP server failed. Please review your server config: {self.server_config.model_dump_json(indent=4)}. Error: {str(e)}"
+                f"Connecting to MCP server failed. Please review your server config: {self.server_config.model_dump_json(indent=4)}. Error: {e!s}"
             )
             if hasattr(self.server_config, "server_url") and self.server_config.server_url:
                 server_info = f"server URL '{self.server_config.server_url}'"
@@ -49,7 +48,7 @@ class AsyncBaseMCPClient:
         response = await self.session.list_tools()
         return response.tools
 
-    async def execute_tool(self, tool_name: str, tool_args: dict) -> Tuple[str, bool]:
+    async def execute_tool(self, tool_name: str, tool_args: dict) -> tuple[str, bool]:
         self._check_initialized()
         result = await self.session.call_tool(tool_name, tool_args)
         parsed_content = []

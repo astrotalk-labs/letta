@@ -1,5 +1,4 @@
 import uuid
-from typing import List, Optional
 
 from sqlalchemy import String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSON
@@ -30,27 +29,27 @@ class Identity(SqlalchemyBase, OrganizationMixin):
     identifier_key: Mapped[str] = mapped_column(nullable=False, doc="External, user-generated identifier key of the identity.")
     name: Mapped[str] = mapped_column(nullable=False, doc="The name of the identity.")
     identity_type: Mapped[str] = mapped_column(nullable=False, doc="The type of the identity.")
-    project_id: Mapped[Optional[str]] = mapped_column(nullable=True, doc="The project id of the identity.")
-    properties: Mapped[List["IdentityProperty"]] = mapped_column(
+    project_id: Mapped[str | None] = mapped_column(nullable=True, doc="The project id of the identity.")
+    properties: Mapped[list["IdentityProperty"]] = mapped_column(
         JSON, nullable=False, default=list, doc="List of properties associated with the identity"
     )
 
     # relationships
     organization: Mapped["Organization"] = relationship("Organization", back_populates="identities")
-    agents: Mapped[List["Agent"]] = relationship(
+    agents: Mapped[list["Agent"]] = relationship(
         "Agent", secondary="identities_agents", lazy="selectin", passive_deletes=True, back_populates="identities"
     )
-    blocks: Mapped[List["Block"]] = relationship(
+    blocks: Mapped[list["Block"]] = relationship(
         "Block", secondary="identities_blocks", lazy="selectin", passive_deletes=True, back_populates="identities"
     )
 
     @property
-    def agent_ids(self) -> List[str]:
+    def agent_ids(self) -> list[str]:
         """Get just the agent IDs without loading the full agent objects"""
         return [agent.id for agent in self.agents]
 
     @property
-    def block_ids(self) -> List[str]:
+    def block_ids(self) -> list[str]:
         """Get just the block IDs without loading the full agent objects"""
         return [block.id for block in self.blocks]
 

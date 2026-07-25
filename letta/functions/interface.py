@@ -1,5 +1,4 @@
 import json
-from typing import List, Optional
 
 from letta.constants import DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG
 from letta.interface import AgentInterface
@@ -15,16 +14,16 @@ class MultiAgentMessagingInterface(AgentInterface):
     """
 
     def __init__(self):
-        self._captured_messages: List[AssistantMessage] = []
+        self._captured_messages: list[AssistantMessage] = []
         self.metadata = {}
 
-    def internal_monologue(self, msg: str, msg_obj: Optional[Message] = None, chunk_index: Optional[int] = None):
+    def internal_monologue(self, msg: str, msg_obj: Message | None = None, chunk_index: int | None = None):
         """Ignore internal monologue."""
 
-    def assistant_message(self, msg: str, msg_obj: Optional[Message] = None):
+    def assistant_message(self, msg: str, msg_obj: Message | None = None):
         """Ignore normal assistant messages (only capturing send_message calls)."""
 
-    def function_message(self, msg: str, msg_obj: Optional[Message] = None, chunk_index: Optional[int] = None):
+    def function_message(self, msg: str, msg_obj: Message | None = None, chunk_index: int | None = None):
         """
         Called whenever the agent logs a function call. We'll inspect msg_obj.tool_calls:
           - If tool_calls include a function named 'send_message', parse its arguments
@@ -59,7 +58,7 @@ class MultiAgentMessagingInterface(AgentInterface):
             )
             self._captured_messages.append(new_msg)
 
-    def user_message(self, msg: str, msg_obj: Optional[Message] = None):
+    def user_message(self, msg: str, msg_obj: Message | None = None):
         """Ignore user messages."""
 
     def step_complete(self):
@@ -68,7 +67,7 @@ class MultiAgentMessagingInterface(AgentInterface):
     def step_yield(self):
         """No streaming => no final yield needed."""
 
-    def get_captured_send_messages(self) -> List[LettaMessage]:
+    def get_captured_send_messages(self) -> list[LettaMessage]:
         """
         Returns only the messages extracted from 'send_message' calls.
         """

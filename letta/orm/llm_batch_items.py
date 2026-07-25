@@ -1,11 +1,14 @@
 import uuid
-from typing import Optional, Union
 
 from anthropic.types.beta.messages import BetaMessageBatchIndividualResponse
 from sqlalchemy import ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from letta.orm.custom_columns import AgentStepStateColumn, BatchRequestResultColumn, LLMConfigColumn
+from letta.orm.custom_columns import (
+    AgentStepStateColumn,
+    BatchRequestResultColumn,
+    LLMConfigColumn,
+)
 from letta.orm.mixins import AgentMixin, OrganizationMixin
 from letta.orm.sqlalchemy_base import SqlalchemyBase
 from letta.schemas.agent import AgentStepState
@@ -45,7 +48,7 @@ class LLMBatchItem(SqlalchemyBase, OrganizationMixin, AgentMixin):
         AgentStepStateColumn, doc="Execution metadata for resuming the agent step (e.g., tool call ID, timestamps)"
     )
 
-    batch_request_result: Mapped[Optional[Union[BetaMessageBatchIndividualResponse]]] = mapped_column(
+    batch_request_result: Mapped[BetaMessageBatchIndividualResponse | None] = mapped_column(
         BatchRequestResultColumn, nullable=True, doc="Raw JSON response from the LLM for this item"
     )
 

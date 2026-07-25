@@ -1,5 +1,4 @@
 import uuid
-from typing import Optional
 
 from sqlalchemy import JSON, BigInteger, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -25,16 +24,16 @@ class BlockHistory(OrganizationMixin, SqlalchemyBase):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: f"block_hist-{uuid.uuid4()}")
 
     # Snapshot State Fields (Copied from Block)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     label: Mapped[str] = mapped_column(String, nullable=False)
     value: Mapped[str] = mapped_column(Text, nullable=False)
     limit: Mapped[BigInteger] = mapped_column(BigInteger, nullable=False)
-    metadata_: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    metadata_: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # Editor info
     # These are not made to be FKs because these may not always exist (e.g. a User be deleted after they made a checkpoint)
-    actor_type: Mapped[Optional[ActorType]] = mapped_column(String, nullable=True)
-    actor_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    actor_type: Mapped[ActorType | None] = mapped_column(String, nullable=True)
+    actor_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Relationships
     block_id: Mapped[str] = mapped_column(

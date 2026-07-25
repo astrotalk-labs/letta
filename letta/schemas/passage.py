@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Dict, List, Optional
 
 from pydantic import Field, field_validator
 
@@ -15,16 +14,16 @@ class PassageBase(OrmMetadataBase):
     is_deleted: bool = Field(False, description="Whether this passage is deleted or not.")
 
     # associated user/agent
-    organization_id: Optional[str] = Field(None, description="The unique identifier of the user associated with the passage.")
-    agent_id: Optional[str] = Field(None, description="The unique identifier of the agent associated with the passage.")
+    organization_id: str | None = Field(None, description="The unique identifier of the user associated with the passage.")
+    agent_id: str | None = Field(None, description="The unique identifier of the agent associated with the passage.")
 
     # origin data source
-    source_id: Optional[str] = Field(None, description="The data source of the passage.")
+    source_id: str | None = Field(None, description="The data source of the passage.")
 
     # file association
-    file_id: Optional[str] = Field(None, description="The unique identifier of the file associated with the passage.")
-    file_name: Optional[str] = Field(None, description="The name of the file (only for source passages).")
-    metadata: Optional[Dict] = Field({}, validation_alias="metadata_", description="The metadata of the passage.")
+    file_id: str | None = Field(None, description="The unique identifier of the file associated with the passage.")
+    file_name: str | None = Field(None, description="The name of the file (only for source passages).")
+    metadata: dict | None = Field({}, validation_alias="metadata_", description="The metadata of the passage.")
 
 
 class Passage(PassageBase):
@@ -48,14 +47,14 @@ class Passage(PassageBase):
     text: str = Field(..., description="The text of the passage.")
 
     # embeddings
-    embedding: Optional[List[float]] = Field(..., description="The embedding of the passage.")
-    embedding_config: Optional[EmbeddingConfig] = Field(..., description="The embedding configuration used by the passage.")
+    embedding: list[float] | None = Field(..., description="The embedding of the passage.")
+    embedding_config: EmbeddingConfig | None = Field(..., description="The embedding configuration used by the passage.")
 
     created_at: datetime = Field(default_factory=get_utc_time, description="The creation date of the passage.")
 
     @field_validator("embedding")
     @classmethod
-    def pad_embeddings(cls, embedding: List[float]) -> List[float]:
+    def pad_embeddings(cls, embedding: list[float]) -> list[float]:
         """Pad embeddings to `MAX_EMBEDDING_SIZE`. This is necessary to ensure all stored embeddings are the same size."""
         import numpy as np
 
@@ -70,14 +69,14 @@ class PassageCreate(PassageBase):
     text: str = Field(..., description="The text of the passage.")
 
     # optionally provide embeddings
-    embedding: Optional[List[float]] = Field(None, description="The embedding of the passage.")
-    embedding_config: Optional[EmbeddingConfig] = Field(None, description="The embedding configuration used by the passage.")
+    embedding: list[float] | None = Field(None, description="The embedding of the passage.")
+    embedding_config: EmbeddingConfig | None = Field(None, description="The embedding configuration used by the passage.")
 
 
 class PassageUpdate(PassageCreate):
     id: str = Field(..., description="The unique identifier of the passage.")
-    text: Optional[str] = Field(None, description="The text of the passage.")
+    text: str | None = Field(None, description="The text of the passage.")
 
     # optionally provide embeddings
-    embedding: Optional[List[float]] = Field(None, description="The embedding of the passage.")
-    embedding_config: Optional[EmbeddingConfig] = Field(None, description="The embedding configuration used by the passage.")
+    embedding: list[float] | None = Field(None, description="The embedding of the passage.")
+    embedding_config: EmbeddingConfig | None = Field(None, description="The embedding configuration used by the passage.")

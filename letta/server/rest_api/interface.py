@@ -3,8 +3,9 @@ import json
 import queue
 import warnings
 from collections import deque
+from collections.abc import AsyncGenerator
 from datetime import datetime
-from typing import AsyncGenerator, Literal, Optional, Union
+from typing import Literal, Union
 
 import demjson3 as demjson
 
@@ -25,12 +26,19 @@ from letta.schemas.letta_message import (
     ToolCallMessage,
     ToolReturnMessage,
 )
-from letta.schemas.letta_message_content import ReasoningContent, RedactedReasoningContent, TextContent
+from letta.schemas.letta_message_content import (
+    ReasoningContent,
+    RedactedReasoningContent,
+    TextContent,
+)
 from letta.schemas.message import Message
 from letta.schemas.openai.chat_completion_response import ChatCompletionChunkResponse
 from letta.server.rest_api.json_parser import OptimisticJSONParser
 from letta.streaming_interface import AgentChunkStreamingInterface
-from letta.streaming_utils import FunctionArgumentsStreamHandler, JSONInnerThoughtsExtractor
+from letta.streaming_utils import (
+    FunctionArgumentsStreamHandler,
+    JSONInnerThoughtsExtractor,
+)
 from letta.utils import parse_json
 
 
@@ -42,7 +50,7 @@ class QueuingInterface(AgentInterface):
         self.buffer = queue.Queue()
         self.debug = debug
 
-    def _queue_push(self, message_api: Union[str, dict], message_obj: Union[Message, None]):
+    def _queue_push(self, message_api: str | dict, message_obj: Message | None):
         """Wrapper around self.buffer.queue.put() that ensures the types are safe
 
         Data will be in the format: {
@@ -160,7 +168,7 @@ class QueuingInterface(AgentInterface):
         self._queue_push(message_api={"internal_error": error}, message_obj=None)
         self._queue_push(message_api="STOP", message_obj=None)
 
-    def user_message(self, msg: str, msg_obj: Optional[Message] = None):
+    def user_message(self, msg: str, msg_obj: Message | None = None):
         """Handle reception of a user message"""
         assert msg_obj is not None, "QueuingInterface requires msg_obj references for metadata"
         if self.debug:
@@ -168,7 +176,7 @@ class QueuingInterface(AgentInterface):
             print(vars(msg_obj))
             print(msg_obj.created_at.isoformat())
 
-    def internal_monologue(self, msg: str, msg_obj: Optional[Message] = None, chunk_index: Optional[int] = None) -> None:
+    def internal_monologue(self, msg: str, msg_obj: Message | None = None, chunk_index: int | None = None) -> None:
         """Handle the agent's internal monologue"""
         assert msg_obj is not None, "QueuingInterface requires msg_obj references for metadata"
         if self.debug:
@@ -186,7 +194,7 @@ class QueuingInterface(AgentInterface):
 
         self._queue_push(message_api=new_message, message_obj=msg_obj)
 
-    def assistant_message(self, msg: str, msg_obj: Optional[Message] = None) -> None:
+    def assistant_message(self, msg: str, msg_obj: Message | None = None) -> None:
         """Handle the agent sending a message"""
         # assert msg_obj is not None, "QueuingInterface requires msg_obj references for metadata"
 
@@ -213,7 +221,7 @@ class QueuingInterface(AgentInterface):
         self._queue_push(message_api=new_message, message_obj=msg_obj)
 
     def function_message(
-        self, msg: str, msg_obj: Optional[Message] = None, include_ran_messages: bool = False, chunk_index: Optional[int] = None
+        self, msg: str, msg_obj: Message | None = None, include_ran_messages: bool = False, chunk_index: int | None = None
     ) -> None:
         """Handle the agent calling a function"""
         # TODO handle 'function' messages that indicate the start of a function call
@@ -341,7 +349,7 @@ class StreamingServerInterface(AgentChunkStreamingInterface):
         self.function_args_buffer = None
         self.function_id_buffer = None
 
-    async def _create_generator(self) -> AsyncGenerator[Union[LettaMessage, LegacyLettaMessage, MessageStreamStatus], None]:
+    async def _create_generator(self) -> AsyncGenerator[LettaMessage | LegacyLettaMessage | MessageStreamStatus, None]:
         """An asynchronous generator that yields chunks as they become available."""
         while self._active:
             try:
@@ -470,10 +478,10 @@ class StreamingServerInterface(AgentChunkStreamingInterface):
         # if we expect `reasoning_content``, then that's what gets mapped to ReasoningMessage
         # and `content` needs to be handled outside the interface
         expect_reasoning_content: bool = False,
-        name: Optional[str] = None,
+        name: str | None = None,
         message_index: int = 0,
-        prev_message_type: Optional[str] = None,
-    ) -> Optional[Union[ReasoningMessage, ToolCallMessage, AssistantMessage]]:
+        prev_message_type: str | None = None,
+    ) -> ReasoningMessage | ToolCallMessage | AssistantMessage | None:
         """
         Example data from non-streaming response looks like:
 
@@ -1047,7 +1055,7 @@ class StreamingServerInterface(AgentChunkStreamingInterface):
 
         return processed_chunk
 
-    def _process_chunk_to_openai_style(self, chunk: ChatCompletionChunkResponse) -> Optional[dict]:
+    def _process_chunk_to_openai_style(self, chunk: ChatCompletionChunkResponse) -> dict | None:
         """Chunks should look like OpenAI, but be remapped from letta-style concepts.
 
         inner_thoughts are silenced:
@@ -1108,9 +1116,9 @@ class StreamingServerInterface(AgentChunkStreamingInterface):
         message_id: str,
         message_date: datetime,
         expect_reasoning_content: bool = False,
-        name: Optional[str] = None,
+        name: str | None = None,
         message_index: int = 0,
-        prev_message_type: Optional[str] = None,
+        prev_message_type: str | None = None,
     ):
         """Process a streaming chunk from an OpenAI-compatible server.
 
@@ -1147,11 +1155,11 @@ class StreamingServerInterface(AgentChunkStreamingInterface):
 
         return processed_chunk.message_type
 
-    def user_message(self, msg: str, msg_obj: Optional[Message] = None):
+    def user_message(self, msg: str, msg_obj: Message | None = None):
         """Letta receives a user message"""
         return
 
-    def internal_monologue(self, msg: str, msg_obj: Optional[Message] = None, chunk_index: Optional[int] = None):
+    def internal_monologue(self, msg: str, msg_obj: Message | None = None, chunk_index: int | None = None):
         """Letta generates some internal monologue"""
         if not self.streaming_mode:
 
@@ -1204,15 +1212,14 @@ class StreamingServerInterface(AgentChunkStreamingInterface):
 
                     self._push_to_buffer(processed_chunk)
 
-        return
 
-    def assistant_message(self, msg: str, msg_obj: Optional[Message] = None):
+    def assistant_message(self, msg: str, msg_obj: Message | None = None):
         """Letta uses send_message"""
 
         # NOTE: this is a no-op, we handle this special case in function_message instead
         return
 
-    def function_message(self, msg: str, msg_obj: Optional[Message] = None, chunk_index: Optional[int] = None):
+    def function_message(self, msg: str, msg_obj: Message | None = None, chunk_index: int | None = None):
         """Letta calls a function"""
 
         # TODO handle 'function' messages that indicate the start of a function call

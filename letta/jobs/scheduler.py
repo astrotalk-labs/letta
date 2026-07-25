@@ -1,6 +1,5 @@
 import asyncio
 import datetime
-from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -18,7 +17,7 @@ ADVISORY_LOCK_KEY = 0x12345678ABCDEF00
 
 _advisory_lock_conn = None  # Holds the raw DB connection if leader
 _advisory_lock_cur = None  # Holds the cursor for the lock connection if leader
-_lock_retry_task: Optional[asyncio.Task] = None  # Background task handle for non-leaders
+_lock_retry_task: asyncio.Task | None = None  # Background task handle for non-leaders
 _is_scheduler_leader = False  # Flag indicating if this instance runs the scheduler
 
 

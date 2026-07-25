@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import Optional
 
 from letta.agents.helpers import _create_letta_response, serialize_message_history
 from letta.agents.letta_agent import LettaAgent
@@ -10,7 +10,12 @@ from letta.schemas.block import BlockUpdate
 from letta.schemas.letta_message import MessageType
 from letta.schemas.letta_response import LettaResponse
 from letta.schemas.message import MessageCreate
-from letta.schemas.tool_rule import ChildToolRule, ContinueToolRule, InitToolRule, TerminalToolRule
+from letta.schemas.tool_rule import (
+    ChildToolRule,
+    ContinueToolRule,
+    InitToolRule,
+    TerminalToolRule,
+)
 from letta.schemas.user import User
 from letta.services.agent_manager import AgentManager
 from letta.services.block_manager import BlockManager
@@ -56,15 +61,15 @@ class VoiceSleeptimeAgent(LettaAgent):
             message_buffer_min=10,
         )
 
-    def update_message_transcript(self, message_transcripts: List[str]):
+    def update_message_transcript(self, message_transcripts: list[str]):
         self.message_transcripts = message_transcripts
 
     async def step(
         self,
-        input_messages: List[MessageCreate],
+        input_messages: list[MessageCreate],
         max_steps: int = DEFAULT_MAX_STEPS,
         use_assistant_message: bool = True,
-        include_return_message_types: Optional[List[MessageType]] = None,
+        include_return_message_types: list[MessageType] | None = None,
     ) -> LettaResponse:
         """
         Process the user's input message, allowing the model to call memory-related tools
@@ -140,7 +145,7 @@ class VoiceSleeptimeAgent(LettaAgent):
         except Exception as e:
             return ToolExecutionResult(func_return=f"Failed to call tool. Error: {e}", status="error")
 
-    def rethink_user_memory(self, new_memory: str, agent_state: AgentState) -> Tuple[str, bool]:
+    def rethink_user_memory(self, new_memory: str, agent_state: AgentState) -> tuple[str, bool]:
         if agent_state.memory.get_block(self.target_block_label) is None:
             agent_state.memory.create_block(label=self.target_block_label, value=new_memory)
 
@@ -151,7 +156,7 @@ class VoiceSleeptimeAgent(LettaAgent):
 
         return "", True
 
-    def store_memory(self, start_index: int, end_index: int, context: str, agent_state: AgentState) -> Tuple[str, bool]:
+    def store_memory(self, start_index: int, end_index: int, context: str, agent_state: AgentState) -> tuple[str, bool]:
         """
         Store a memory.
         """

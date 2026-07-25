@@ -1,7 +1,10 @@
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
-from letta.functions.mcp_client.types import BaseServerConfig, StreamableHTTPServerConfig
+from letta.functions.mcp_client.types import (
+    BaseServerConfig,
+    StreamableHTTPServerConfig,
+)
 from letta.log import get_logger
 from letta.services.mcp.base_client import AsyncBaseMCPClient
 
@@ -53,4 +56,4 @@ class AsyncStreamableHTTPMCPClient(AsyncBaseMCPClient):
                 ) from e
             else:
                 # Re-raise other exceptions with additional context
-                raise ConnectionError(f"Failed to initialize streamable HTTP connection to {server_config.server_url}: {str(e)}") from e
+                raise ConnectionError(f"Failed to initialize streamable HTTP connection to {server_config.server_url}: {e!s}") from e

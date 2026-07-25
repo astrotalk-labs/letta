@@ -1,7 +1,6 @@
 import json
 import uuid
 import warnings
-from typing import Optional
 
 from .constants import (
     INITIAL_BOOT_MESSAGE,
@@ -66,7 +65,7 @@ def get_initial_boot_messages(version="startup"):
                         "type": "function",
                         "function": {
                             "name": "send_message",
-                            "arguments": '{\n  "message": "' + f"Hi, is anyone there?" + '"\n}',
+                            "arguments": '{\n  "message": "' + "Hi, is anyone there?" + '"\n}',
                         },
                     }
                 ],
@@ -119,10 +118,10 @@ def get_login_event(last_login="Never (first login)", include_location=False, lo
 
 def package_user_message(
     user_message: str,
-    time: Optional[str] = None,
+    time: str | None = None,
     include_location: bool = False,
-    location_name: Optional[str] = "San Francisco, CA, USA",
-    name: Optional[str] = None,
+    location_name: str | None = "San Francisco, CA, USA",
+    name: str | None = None,
 ):
     # Package the message with time and location
     formatted_time = time if time else get_local_time()

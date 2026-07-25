@@ -1,7 +1,9 @@
 from letta.errors import LLMJSONParsingError
 from letta.helpers.json_helpers import json_dumps, json_loads
 from letta.local_llm.json_parser import clean_json
-from letta.local_llm.llm_chat_completion_wrappers.wrapper_base import LLMChatCompletionWrapper
+from letta.local_llm.llm_chat_completion_wrappers.wrapper_base import (
+    LLMChatCompletionWrapper,
+)
 
 PREFIX_HINT = """# Reminders:
 # Important information about yourself and the user is stored in (limited) core memory
@@ -72,7 +74,10 @@ class LLaMA3InnerMonologueWrapper(LLMChatCompletionWrapper):
         func_str += f"\n  description: {schema['description']}"
         func_str += "\n  params:"
         if add_inner_thoughts:
-            from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION
+            from letta.local_llm.constants import (
+                INNER_THOUGHTS_KWARG,
+                INNER_THOUGHTS_KWARG_DESCRIPTION,
+            )
 
             func_str += f"\n    {INNER_THOUGHTS_KWARG}: {INNER_THOUGHTS_KWARG_DESCRIPTION}"
         for param_k, param_v in schema["parameters"]["properties"].items():
@@ -142,9 +147,9 @@ class LLaMA3InnerMonologueWrapper(LLMChatCompletionWrapper):
 
         # need to add the function call if there was one
         inner_thoughts = message["content"]
-        if "function_call" in message and message["function_call"]:
+        if message.get("function_call"):
             prompt += f"\n{self._compile_function_call(message['function_call'], inner_thoughts=inner_thoughts)}"
-        elif "tool_calls" in message and message["tool_calls"]:
+        elif message.get("tool_calls"):
             for tool_call in message["tool_calls"]:
                 prompt += f"\n{self._compile_function_call(tool_call['function'], inner_thoughts=inner_thoughts)}"
         else:
@@ -305,11 +310,10 @@ class LLaMA3InnerMonologueWrapper(LLMChatCompletionWrapper):
         try:
             # cover llama.cpp server for now #TODO remove this when fixed
             raw_llm_output = raw_llm_output.rstrip()
-            if raw_llm_output.endswith("<|eot_id|>"):
-                raw_llm_output = raw_llm_output[: -len("<|eot_id|>")]
+            raw_llm_output = raw_llm_output.removesuffix("<|eot_id|>")
             function_json_output = clean_json(raw_llm_output)
         except Exception as e:
-            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{str(e)}")
+            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{e!s}")
         try:
             # NOTE: weird bug can happen where 'function' gets nested if the prefix in the prompt isn't abided by
             if isinstance(function_json_output["function"], dict):
@@ -319,7 +323,7 @@ class LLaMA3InnerMonologueWrapper(LLMChatCompletionWrapper):
             function_parameters = function_json_output["params"]
         except KeyError as e:
             raise LLMJSONParsingError(
-                f"Received valid JSON from LLM, but JSON was missing fields: {str(e)}. JSON result was:\n{function_json_output}"
+                f"Received valid JSON from LLM, but JSON was missing fields: {e!s}. JSON result was:\n{function_json_output}"
             )
 
         if self.clean_func_args:

@@ -1,13 +1,15 @@
 import re
 import time
-from typing import List
 
 from fastapi import FastAPI, Request
 from opentelemetry import metrics
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 from opentelemetry.metrics import Meter, NoOpMeter
 from opentelemetry.sdk.metrics import Counter, Histogram, MeterProvider
-from opentelemetry.sdk.metrics.export import AggregationTemporality, PeriodicExportingMetricReader
+from opentelemetry.sdk.metrics.export import (
+    AggregationTemporality,
+    PeriodicExportingMetricReader,
+)
 from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View
 
 from letta.helpers.datetime_helpers import ns_to_ms
@@ -22,7 +24,7 @@ _meter: Meter = NoOpMeter("noop")
 _is_metrics_initialized: bool = False
 
 # Endpoints to include in endpoint metrics tracking (opt-in) vs tracing.py opt-out
-_included_v1_endpoints_regex: List[str] = [
+_included_v1_endpoints_regex: list[str] = [
     "^POST /v1/agents/(?P<agent_id>[^/]+)/messages$",
     "^POST /v1/agents/(?P<agent_id>[^/]+)/messages/stream$",
     "^POST /v1/agents/(?P<agent_id>[^/]+)/messages/async$",

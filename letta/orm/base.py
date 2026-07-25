@@ -1,8 +1,13 @@
 from datetime import datetime, timezone
-from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, String, func, text
-from sqlalchemy.orm import DeclarativeBase, Mapped, declarative_mixin, declared_attr, mapped_column
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    declarative_mixin,
+    declared_attr,
+    mapped_column,
+)
 
 
 class Base(DeclarativeBase):
@@ -13,11 +18,11 @@ class Base(DeclarativeBase):
 class CommonSqlalchemyMetaMixins(Base):
     __abstract__ = True
 
-    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), server_default=func.now(), server_onupdate=func.now())
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now(), server_onupdate=func.now())
     is_deleted: Mapped[bool] = mapped_column(Boolean, server_default=text("FALSE"))
 
-    def set_updated_at(self, timestamp: Optional[datetime] = None) -> None:
+    def set_updated_at(self, timestamp: datetime | None = None) -> None:
         """
         Set the updated_at timestamp for the model instance.
 
@@ -50,7 +55,7 @@ class CommonSqlalchemyMetaMixins(Base):
         return mapped_column(String, nullable=True)
 
     @property
-    def last_updated_by_id(self) -> Optional[str]:
+    def last_updated_by_id(self) -> str | None:
         return self._user_id_getter("last_updated")
 
     @last_updated_by_id.setter
@@ -58,14 +63,14 @@ class CommonSqlalchemyMetaMixins(Base):
         self._user_id_setter("last_updated", value)
 
     @property
-    def created_by_id(self) -> Optional[str]:
+    def created_by_id(self) -> str | None:
         return self._user_id_getter("created")
 
     @created_by_id.setter
     def created_by_id(self, value: str) -> None:
         self._user_id_setter("created", value)
 
-    def _user_id_getter(self, prop: str) -> Optional[str]:
+    def _user_id_getter(self, prop: str) -> str | None:
         """returns the user id for the specified property"""
         full_prop = f"_{prop}_by_id"
         prop_value = getattr(self, full_prop, None)

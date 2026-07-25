@@ -1,6 +1,5 @@
 import os
 from pathlib import Path
-from typing import Optional
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -9,19 +8,19 @@ from letta.local_llm.constants import DEFAULT_WRAPPER_NAME
 
 
 class ToolSettings(BaseSettings):
-    composio_api_key: Optional[str] = None
+    composio_api_key: str | None = None
 
     # E2B Sandbox configurations
-    e2b_api_key: Optional[str] = None
-    e2b_sandbox_template_id: Optional[str] = None  # Updated manually
+    e2b_api_key: str | None = None
+    e2b_sandbox_template_id: str | None = None  # Updated manually
 
     # Tavily search
-    tavily_api_key: Optional[str] = None
+    tavily_api_key: str | None = None
 
     # Local Sandbox configurations
-    tool_exec_dir: Optional[str] = None
+    tool_exec_dir: str | None = None
     tool_sandbox_timeout: float = 180
-    tool_exec_venv_name: Optional[str] = None
+    tool_exec_venv_name: str | None = None
     tool_exec_autoreload_venv: bool = True
 
     # MCP settings
@@ -73,7 +72,7 @@ class ModelSettings(BaseSettings):
     default_prompt_formatter: str = DEFAULT_WRAPPER_NAME
 
     # openai
-    openai_api_key: Optional[str] = None
+    openai_api_key: str | None = None
     openai_api_base: str = Field(
         default="https://api.openai.com/v1",
         # NOTE: We previously used OPENAI_API_BASE, but this was deprecated in favor of OPENAI_BASE_URL
@@ -83,66 +82,66 @@ class ModelSettings(BaseSettings):
     )
 
     # deepseek
-    deepseek_api_key: Optional[str] = None
+    deepseek_api_key: str | None = None
 
     # xAI / Grok
-    xai_api_key: Optional[str] = None
+    xai_api_key: str | None = None
 
     # groq
-    groq_api_key: Optional[str] = None
+    groq_api_key: str | None = None
 
     # Bedrock
-    aws_access_key: Optional[str] = None
-    aws_secret_access_key: Optional[str] = None
-    aws_region: Optional[str] = None
-    bedrock_anthropic_version: Optional[str] = "bedrock-2023-05-31"
+    aws_access_key: str | None = None
+    aws_secret_access_key: str | None = None
+    aws_region: str | None = None
+    bedrock_anthropic_version: str | None = "bedrock-2023-05-31"
 
     # anthropic
-    anthropic_api_key: Optional[str] = None
+    anthropic_api_key: str | None = None
     anthropic_max_retries: int = 3
 
     # ollama
-    ollama_base_url: Optional[str] = None
+    ollama_base_url: str | None = None
 
     # azure
-    azure_api_key: Optional[str] = None
-    azure_base_url: Optional[str] = None
+    azure_api_key: str | None = None
+    azure_base_url: str | None = None
     # We provide a default here, since usually people will want to be on the latest API version.
-    azure_api_version: Optional[str] = (
+    azure_api_version: str | None = (
         "2024-09-01-preview"  # https://learn.microsoft.com/en-us/azure/ai-services/openai/api-version-deprecation
     )
 
     # azure embeddings (dedicated resource for text-embedding-3-small)
-    embeddings_3_small_api_key: Optional[str] = None
-    embeddings_3_small_base_url: Optional[str] = None
-    embeddings_3_small_api_version: Optional[str] = "2023-05-15"
+    embeddings_3_small_api_key: str | None = None
+    embeddings_3_small_base_url: str | None = None
+    embeddings_3_small_api_version: str | None = "2023-05-15"
 
     # azure summarizer (gpt-4o-mini via letta-embeddings-resource)
-    letta_embedding_5_4_mini_api_key: Optional[str] = None
-    letta_embedding_5_4_mini_base_url: Optional[str] = None
-    letta_embedding_5_4_mini_api_version: Optional[str] = "2025-04-01-preview"
-    letta_embedding_5_4_mini_deployment: Optional[str] = "gpt-4o-mini"
+    letta_embedding_5_4_mini_api_key: str | None = None
+    letta_embedding_5_4_mini_base_url: str | None = None
+    letta_embedding_5_4_mini_api_version: str | None = "2025-04-01-preview"
+    letta_embedding_5_4_mini_deployment: str | None = "gpt-4o-mini"
 
     # google ai
-    gemini_api_key: Optional[str] = None
+    gemini_api_key: str | None = None
     gemini_base_url: str = "https://generativelanguage.googleapis.com/"
 
     # google vertex
-    google_cloud_project: Optional[str] = None
-    google_cloud_location: Optional[str] = None
+    google_cloud_project: str | None = None
+    google_cloud_location: str | None = None
 
     # together
-    together_api_key: Optional[str] = None
+    together_api_key: str | None = None
 
     # vLLM
-    vllm_api_base: Optional[str] = None
+    vllm_api_base: str | None = None
 
     # lmstudio
-    lmstudio_base_url: Optional[str] = None
+    lmstudio_base_url: str | None = None
 
     # openllm
-    openllm_auth_type: Optional[str] = None
-    openllm_api_key: Optional[str] = None
+    openllm_auth_type: str | None = None
+    openllm_api_key: str | None = None
 
     # disable openapi schema generation
     disable_schema_generation: bool = False
@@ -180,21 +179,21 @@ if "--use-file-pg-uri" in sys.argv:
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="letta_", extra="ignore")
 
-    letta_dir: Optional[Path] = Field(Path.home() / ".letta", env="LETTA_DIR")
-    debug: Optional[bool] = False
-    cors_origins: Optional[list] = cors_origins
+    letta_dir: Path | None = Field(Path.home() / ".letta", env="LETTA_DIR")
+    debug: bool | None = False
+    cors_origins: list | None = cors_origins
 
     # default handles
-    default_llm_handle: Optional[str] = None
-    default_embedding_handle: Optional[str] = None
+    default_llm_handle: str | None = None
+    default_embedding_handle: str | None = None
 
     # database configuration
-    pg_db: Optional[str] = None
-    pg_user: Optional[str] = None
-    pg_password: Optional[str] = None
-    pg_host: Optional[str] = None
-    pg_port: Optional[int] = None
-    pg_uri: Optional[str] = default_pg_uri  # option to specify full uri
+    pg_db: str | None = None
+    pg_user: str | None = None
+    pg_password: str | None = None
+    pg_host: str | None = None
+    pg_port: int | None = None
+    pg_uri: str | None = default_pg_uri  # option to specify full uri
     pg_pool_size: int = 25  # Concurrent connections
     pg_max_overflow: int = 10  # Overflow limit
     pg_pool_timeout: int = 30  # Seconds to wait for a connection
@@ -204,12 +203,12 @@ class Settings(BaseSettings):
     pool_use_lifo: bool = True
     disable_sqlalchemy_pooling: bool = False
 
-    redis_host: Optional[str] = None
-    redis_port: Optional[int] = None
-    redis_username: Optional[str] = None
-    redis_password: Optional[str] = None
+    redis_host: str | None = None
+    redis_port: int | None = None
+    redis_username: str | None = None
+    redis_password: str | None = None
 
-    plugin_register: Optional[str] = None
+    plugin_register: str | None = None
 
     # multi agent settings
     multi_agent_send_message_max_retries: int = 3
@@ -217,8 +216,8 @@ class Settings(BaseSettings):
     multi_agent_concurrent_sends: int = 50
 
     # telemetry logging
-    otel_exporter_otlp_endpoint: Optional[str] = None  # otel default: "http://localhost:4317"
-    otel_preferred_temporality: Optional[int] = Field(
+    otel_exporter_otlp_endpoint: str | None = None  # otel default: "http://localhost:4317"
+    otel_preferred_temporality: int | None = Field(
         default=1, ge=0, le=2, description="Exported metric temporality. {0: UNSPECIFIED, 1: DELTA, 2: CUMULATIVE}"
     )
     # When True, starts a standalone Prometheus scrape server on its OWN port (not the API
@@ -250,7 +249,7 @@ class Settings(BaseSettings):
     # GrowthBook feature flags
     growthbook_client_key: str = "sdk-02dNuHwCGxZ6lzVG"
     growthbook_api_host: str = "https://cdn-exp-api.astrotalk.in"
-    growthbook_features_json_path: Optional[str] = None
+    growthbook_features_json_path: str | None = None
     growthbook_refresh_interval: int = 60  # seconds between feature definition refreshes
 
     # LLM provider client settings
@@ -268,10 +267,10 @@ class Settings(BaseSettings):
     poll_running_llm_batches_interval_seconds: int = 5 * 60
     poll_lock_retry_interval_seconds: int = 5 * 60
     batch_job_polling_lookback_weeks: int = 2
-    batch_job_polling_batch_size: Optional[int] = None
+    batch_job_polling_batch_size: int | None = None
 
     # for OCR
-    mistral_api_key: Optional[str] = None
+    mistral_api_key: str | None = None
 
     @property
     def letta_pg_uri(self) -> str:
@@ -280,7 +279,7 @@ class Settings(BaseSettings):
         elif self.pg_db and self.pg_user and self.pg_password and self.pg_host and self.pg_port:
             return f"postgresql+pg8000://{self.pg_user}:{self.pg_password}@{self.pg_host}:{self.pg_port}/{self.pg_db}"
         else:
-            return f"postgresql+pg8000://letta:letta@localhost:5432/letta"
+            return "postgresql+pg8000://letta:letta@localhost:5432/letta"
 
     # add this property to avoid being returned the default
     # reference: https://github.com/letta-ai/letta/issues/1362
@@ -306,7 +305,7 @@ class Settings(BaseSettings):
 class TestSettings(Settings):
     model_config = SettingsConfigDict(env_prefix="letta_test_", extra="ignore")
 
-    letta_dir: Optional[Path] = Field(Path.home() / ".letta/test", env="LETTA_TEST_DIR")
+    letta_dir: Path | None = Field(Path.home() / ".letta/test", env="LETTA_TEST_DIR")
 
 
 class LogSettings(BaseSettings):

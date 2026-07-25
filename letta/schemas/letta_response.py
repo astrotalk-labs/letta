@@ -2,7 +2,7 @@ import html
 import json
 import re
 from datetime import datetime
-from typing import List, Union
+from typing import Union
 
 from pydantic import BaseModel, Field
 
@@ -26,7 +26,7 @@ class LettaResponse(BaseModel):
         usage (LettaUsageStatistics): The usage statistics
     """
 
-    messages: List[LettaMessageUnion] = Field(
+    messages: list[LettaMessageUnion] = Field(
         ...,
         description="The messages returned by the agent.",
         json_schema_extra={
@@ -184,4 +184,4 @@ class LettaBatchResponse(BaseModel):
 
 
 class LettaBatchMessages(BaseModel):
-    messages: List[Message]
+    messages: list[Message]

@@ -1,4 +1,3 @@
-from typing import List, Optional
 
 from sqlalchemy import select, text
 
@@ -13,8 +12,8 @@ from letta.otel.tracing import trace_method
 from letta.schemas.user import User as PydanticUser
 from letta.schemas.user import UserUpdate
 from letta.server.db import db_registry
-from letta.utils import enforce_types
 from letta.settings import settings
+from letta.utils import enforce_types
 
 logger = get_logger(__name__)
 
@@ -184,7 +183,7 @@ class UserManager:
 
     @enforce_types
     @trace_method
-    def get_user_or_default(self, user_id: Optional[str] = None):
+    def get_user_or_default(self, user_id: str | None = None):
         """Fetch the user or default user."""
         if not user_id:
             return self.get_default_user()
@@ -205,7 +204,7 @@ class UserManager:
 
     @enforce_types
     @trace_method
-    async def get_actor_or_default_async(self, actor_id: Optional[str] = None):
+    async def get_actor_or_default_async(self, actor_id: str | None = None):
         """Fetch the user or default user asynchronously."""
         target_id = actor_id or self.DEFAULT_USER_ID
 
@@ -217,7 +216,7 @@ class UserManager:
 
     @enforce_types
     @trace_method
-    def list_users(self, after: Optional[str] = None, limit: Optional[int] = 50) -> List[PydanticUser]:
+    def list_users(self, after: str | None = None, limit: int | None = 50) -> list[PydanticUser]:
         """List all users with optional pagination."""
         with db_registry.session() as session:
             users = UserModel.list(
@@ -229,7 +228,7 @@ class UserManager:
 
     @enforce_types
     @trace_method
-    async def list_actors_async(self, after: Optional[str] = None, limit: Optional[int] = 50) -> List[PydanticUser]:
+    async def list_actors_async(self, after: str | None = None, limit: int | None = 50) -> list[PydanticUser]:
         """List all users with optional pagination (async version)."""
         async with db_registry.async_session() as session:
             users = await UserModel.list_async(

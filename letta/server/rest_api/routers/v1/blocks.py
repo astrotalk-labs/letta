@@ -1,4 +1,3 @@
-from typing import TYPE_CHECKING, List, Optional
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
 
@@ -8,23 +7,20 @@ from letta.schemas.block import Block, BlockUpdate, CreateBlock
 from letta.server.rest_api.utils import get_letta_server
 from letta.server.server import SyncServer
 
-if TYPE_CHECKING:
-    pass
-
 router = APIRouter(prefix="/blocks", tags=["blocks"])
 
 
-@router.get("/", response_model=List[Block], operation_id="list_blocks")
+@router.get("/", response_model=list[Block], operation_id="list_blocks")
 async def list_blocks(
     # query parameters
-    label: Optional[str] = Query(None, description="Labels to include (e.g. human, persona)"),
+    label: str | None = Query(None, description="Labels to include (e.g. human, persona)"),
     templates_only: bool = Query(False, description="Whether to include only templates"),
-    name: Optional[str] = Query(None, description="Name of the block"),
-    identity_id: Optional[str] = Query(None, description="Search agents by identifier id"),
-    identifier_keys: Optional[List[str]] = Query(None, description="Search agents by identifier keys"),
-    limit: Optional[int] = Query(50, description="Number of blocks to return"),
+    name: str | None = Query(None, description="Name of the block"),
+    identity_id: str | None = Query(None, description="Search agents by identifier id"),
+    identifier_keys: list[str] | None = Query(None, description="Search agents by identifier keys"),
+    limit: int | None = Query(50, description="Number of blocks to return"),
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
     return await server.block_manager.get_blocks_async(
@@ -41,7 +37,7 @@ async def list_blocks(
 @router.get("/count", response_model=int, operation_id="count_blocks")
 async def count_blocks(
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Count all blocks created by a user.
@@ -54,7 +50,7 @@ async def count_blocks(
 async def create_block(
     create_block: CreateBlock = Body(...),
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
     block = Block(**create_block.model_dump())
@@ -66,7 +62,7 @@ async def modify_block(
     block_id: str,
     block_update: BlockUpdate = Body(...),
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
     return await server.block_manager.update_block_async(block_id=block_id, block_update=block_update, actor=actor)
@@ -76,7 +72,7 @@ async def modify_block(
 async def delete_block(
     block_id: str,
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
     return await server.block_manager.delete_block_async(block_id=block_id, actor=actor)
@@ -86,7 +82,7 @@ async def delete_block(
 async def retrieve_block(
     block_id: str,
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
     try:
@@ -98,11 +94,11 @@ async def retrieve_block(
         raise HTTPException(status_code=404, detail="Block not found")
 
 
-@router.get("/{block_id}/agents", response_model=List[AgentState], operation_id="list_agents_for_block")
+@router.get("/{block_id}/agents", response_model=list[AgentState], operation_id="list_agents_for_block")
 async def list_agents_for_block(
     block_id: str,
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Retrieves all agents associated with the specified block.

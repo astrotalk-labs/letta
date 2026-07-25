@@ -2,7 +2,7 @@ import asyncio
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import openai
 
@@ -15,7 +15,9 @@ from letta.helpers.tool_execution_helper import (
     execute_external_tool,
     remove_request_heartbeat,
 )
-from letta.interfaces.openai_chat_completions_streaming_interface import OpenAIChatCompletionsStreamingInterface
+from letta.interfaces.openai_chat_completions_streaming_interface import (
+    OpenAIChatCompletionsStreamingInterface,
+)
 from letta.log import get_logger
 from letta.orm.enums import ToolType
 from letta.schemas.agent import AgentState
@@ -31,7 +33,10 @@ from letta.schemas.openai.chat_completion_request import (
     UserMessage,
 )
 from letta.schemas.user import User
-from letta.server.rest_api.utils import create_assistant_messages_from_openai_response, create_letta_messages_from_llm_response
+from letta.server.rest_api.utils import (
+    create_assistant_messages_from_openai_response,
+    create_letta_messages_from_llm_response,
+)
 from letta.services.agent_manager import AgentManager
 from letta.services.block_manager import BlockManager
 from letta.services.message_manager import MessageManager
@@ -101,7 +106,7 @@ class VoiceAgent(BaseAgent):
 
         return summarizer
 
-    async def step(self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS) -> LettaResponse:
+    async def step(self, input_messages: list[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS) -> LettaResponse:
         raise NotImplementedError("VoiceAgent does not have a synchronous step implemented currently.")
 
     async def _handle_ai_response(
@@ -109,8 +114,8 @@ class VoiceAgent(BaseAgent):
         user_query: str,
         streaming_interface: "OpenAIChatCompletionsStreamingInterface",
         agent_state: AgentState,
-        in_memory_message_history: List[Dict[str, Any]],
-        letta_message_db_queue: List[Any],
+        in_memory_message_history: list[dict[str, Any]],
+        letta_message_db_queue: list[Any],
     ) -> bool:
         """
         Now that streaming is done, handle the final AI response.
@@ -198,7 +203,7 @@ class VoiceAgent(BaseAgent):
             return not streaming_interface.finish_reason_stop
 
     async def _rebuild_context_window(
-        self, summarizer: Summarizer, in_context_messages: List[Message], letta_message_db_queue: List[Message]
+        self, summarizer: Summarizer, in_context_messages: list[Message], letta_message_db_queue: list[Message]
     ) -> None:
         new_letta_messages = await self.message_manager.create_many_messages_async(letta_message_db_queue, actor=self.actor)
 
@@ -213,9 +218,9 @@ class VoiceAgent(BaseAgent):
 
     async def _rebuild_memory_async(
         self,
-        in_context_messages: List[Message],
+        in_context_messages: list[Message],
         agent_state: AgentState,
-    ) -> List[Message]:
+    ) -> list[Message]:
         self.num_messages, self.num_archival_memories = await asyncio.gather(
             (
                 self.message_manager.size_async(actor=self.actor, agent_id=agent_state.id)
@@ -232,7 +237,7 @@ class VoiceAgent(BaseAgent):
             in_context_messages, agent_state, num_messages=self.num_messages, num_archival_memories=self.num_archival_memories
         )
 
-    def _build_openai_request(self, openai_messages: List[Dict], agent_state: AgentState) -> ChatCompletionRequest:
+    def _build_openai_request(self, openai_messages: list[dict], agent_state: AgentState) -> ChatCompletionRequest:
         tool_schemas = self._build_tool_schemas(agent_state)
         tool_choice = "auto" if tool_schemas else None
 
@@ -248,7 +253,7 @@ class VoiceAgent(BaseAgent):
         )
         return openai_request
 
-    def _build_tool_schemas(self, agent_state: AgentState, external_tools_only=True) -> List[Tool]:
+    def _build_tool_schemas(self, agent_state: AgentState, external_tools_only=True) -> list[Tool]:
         if external_tools_only:
             tools = [t for t in agent_state.tools if t.tool_type in {ToolType.EXTERNAL_COMPOSIO, ToolType.CUSTOM}]
         else:
@@ -363,9 +368,9 @@ class VoiceAgent(BaseAgent):
         self,
         archival_query: str,
         agent_state: AgentState,
-        convo_keyword_queries: Optional[List[str]] = None,
-        start_minutes_ago: Optional[int] = None,
-        end_minutes_ago: Optional[int] = None,
+        convo_keyword_queries: list[str] | None = None,
+        start_minutes_ago: int | None = None,
+        end_minutes_ago: int | None = None,
     ) -> str:
         # Retrieve from archival memory
         now = datetime.now(timezone.utc)

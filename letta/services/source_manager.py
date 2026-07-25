@@ -1,5 +1,4 @@
 import asyncio
-from typing import List, Optional
 
 from letta.orm.errors import NoResultFound
 from letta.orm.source import Source as SourceModel
@@ -66,8 +65,8 @@ class SourceManager:
     @enforce_types
     @trace_method
     async def list_sources(
-        self, actor: PydanticUser, after: Optional[str] = None, limit: Optional[int] = 50, **kwargs
-    ) -> List[PydanticSource]:
+        self, actor: PydanticUser, after: str | None = None, limit: int | None = 50, **kwargs
+    ) -> list[PydanticSource]:
         """List all sources with optional pagination."""
         async with db_registry.async_session() as session:
             sources = await SourceModel.list_async(
@@ -90,7 +89,7 @@ class SourceManager:
 
     @enforce_types
     @trace_method
-    async def list_attached_agents(self, source_id: str, actor: Optional[PydanticUser] = None) -> List[PydanticAgentState]:
+    async def list_attached_agents(self, source_id: str, actor: PydanticUser | None = None) -> list[PydanticAgentState]:
         """
         Lists all agents that have the specified source attached.
 
@@ -113,7 +112,7 @@ class SourceManager:
     # TODO: We make actor optional for now, but should most likely be enforced due to security reasons
     @enforce_types
     @trace_method
-    async def get_source_by_id(self, source_id: str, actor: Optional[PydanticUser] = None) -> Optional[PydanticSource]:
+    async def get_source_by_id(self, source_id: str, actor: PydanticUser | None = None) -> PydanticSource | None:
         """Retrieve a source by its ID."""
         async with db_registry.async_session() as session:
             try:
@@ -124,7 +123,7 @@ class SourceManager:
 
     @enforce_types
     @trace_method
-    async def get_source_by_name(self, source_name: str, actor: PydanticUser) -> Optional[PydanticSource]:
+    async def get_source_by_name(self, source_name: str, actor: PydanticUser) -> PydanticSource | None:
         """Retrieve a source by its name."""
         async with db_registry.async_session() as session:
             sources = await SourceModel.list_async(

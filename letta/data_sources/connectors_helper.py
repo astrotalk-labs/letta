@@ -2,7 +2,6 @@ import mimetypes
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
 
 
 def extract_file_metadata(file_path) -> dict:
@@ -32,7 +31,7 @@ def extract_metadata_from_files(file_list):
 
 
 def get_filenames_in_dir(
-    input_dir: str, recursive: bool = True, required_exts: Optional[List[str]] = None, exclude: Optional[List[str]] = None
+    input_dir: str, recursive: bool = True, required_exts: list[str] | None = None, exclude: list[str] | None = None
 ):
     """
     Recursively reads files from the directory, applying required_exts and exclude filters.
@@ -78,7 +77,7 @@ def get_filenames_in_dir(
     return files
 
 
-def assert_all_files_exist_locally(file_paths: List[str]) -> bool:
+def assert_all_files_exist_locally(file_paths: list[str]) -> bool:
     """
     Checks if all file paths in the provided list exist locally.
     Raises a FileNotFoundError with a list of missing files if any do not exist.

@@ -1,14 +1,15 @@
 import uuid
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON
+from sqlalchemy import JSON, Index, String, UniqueConstraint
 from sqlalchemy import Enum as SqlEnum
-from sqlalchemy import Index, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from letta.orm.mixins import AgentMixin, OrganizationMixin, SandboxConfigMixin
 from letta.orm.sqlalchemy_base import SqlalchemyBase
-from letta.schemas.environment_variables import SandboxEnvironmentVariable as PydanticSandboxEnvironmentVariable
+from letta.schemas.environment_variables import (
+    SandboxEnvironmentVariable as PydanticSandboxEnvironmentVariable,
+)
 from letta.schemas.sandbox_config import SandboxConfig as PydanticSandboxConfig
 from letta.schemas.sandbox_config import SandboxType
 
@@ -28,11 +29,11 @@ class SandboxConfig(SqlalchemyBase, OrganizationMixin):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, nullable=False)
     type: Mapped[SandboxType] = mapped_column(SqlEnum(SandboxType), nullable=False, doc="The type of sandbox.")
-    config: Mapped[Dict] = mapped_column(JSON, nullable=False, doc="The JSON configuration data.")
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, doc="The JSON configuration data.")
 
     # relationships
     organization: Mapped["Organization"] = relationship("Organization", back_populates="sandbox_configs")
-    sandbox_environment_variables: Mapped[List["SandboxEnvironmentVariable"]] = relationship(
+    sandbox_environment_variables: Mapped[list["SandboxEnvironmentVariable"]] = relationship(
         "SandboxEnvironmentVariable", back_populates="sandbox_config", cascade="all, delete-orphan"
     )
 
@@ -49,7 +50,7 @@ class SandboxEnvironmentVariable(SqlalchemyBase, OrganizationMixin, SandboxConfi
     id: Mapped[str] = mapped_column(String, primary_key=True, nullable=False)
     key: Mapped[str] = mapped_column(String, nullable=False, doc="The name of the environment variable.")
     value: Mapped[str] = mapped_column(String, nullable=False, doc="The value of the environment variable.")
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="An optional description of the environment variable.")
+    description: Mapped[str | None] = mapped_column(String, nullable=True, doc="An optional description of the environment variable.")
 
     # relationships
     organization: Mapped["Organization"] = relationship("Organization", back_populates="sandbox_environment_variables")
@@ -71,7 +72,7 @@ class AgentEnvironmentVariable(SqlalchemyBase, OrganizationMixin, AgentMixin):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: f"agent-env-{uuid.uuid4()}")
     key: Mapped[str] = mapped_column(String, nullable=False, doc="The name of the environment variable.")
     value: Mapped[str] = mapped_column(String, nullable=False, doc="The value of the environment variable.")
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="An optional description of the environment variable.")
+    description: Mapped[str | None] = mapped_column(String, nullable=True, doc="An optional description of the environment variable.")
 
     organization: Mapped["Organization"] = relationship("Organization", back_populates="agent_environment_variables")
-    agent: Mapped[List["Agent"]] = relationship("Agent", back_populates="tool_exec_environment_variables")
+    agent: Mapped[list["Agent"]] = relationship("Agent", back_populates="tool_exec_environment_variables")

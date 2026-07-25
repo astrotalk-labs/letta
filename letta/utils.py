@@ -12,11 +12,19 @@ import re
 import subprocess
 import sys
 import uuid
+from collections.abc import Coroutine
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from functools import wraps
 from logging import Logger
-from typing import Any, Coroutine, List, Union, _GenericAlias, get_args, get_origin, get_type_hints
+from typing import (
+    Any,
+    Union,
+    _GenericAlias,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 from urllib.parse import urljoin, urlparse
 
 import demjson3 as demjson
@@ -553,7 +561,7 @@ def enforce_types(func):
     return wrapper
 
 
-def annotate_message_json_list_with_tool_calls(messages: List[dict], allow_tool_roles: bool = False):
+def annotate_message_json_list_with_tool_calls(messages: list[dict], allow_tool_roles: bool = False):
     """Add in missing tool_call_id fields to a list of messages using function call style
 
     Walk through the list forwards:
@@ -573,7 +581,7 @@ def annotate_message_json_list_with_tool_calls(messages: List[dict], allow_tool_
         # If we find a function call w/o a tool call ID annotation, annotate it
         if message["role"] == "assistant" and "function_call" in message:
             if "tool_call_id" in message and message["tool_call_id"] is not None:
-                printd(f"Message already has tool_call_id")
+                printd("Message already has tool_call_id")
                 tool_call_id = message["tool_call_id"]
             else:
                 tool_call_id = str(uuid.uuid4())
@@ -615,7 +623,7 @@ def annotate_message_json_list_with_tool_calls(messages: List[dict], allow_tool_
 
             assistant_tool_call = message["tool_calls"][0]
             if "id" in assistant_tool_call and assistant_tool_call["id"] is not None:
-                printd(f"Message already has id (tool_call_id)")
+                printd("Message already has id (tool_call_id)")
                 tool_call_id = assistant_tool_call["id"]
             else:
                 tool_call_id = str(uuid.uuid4())

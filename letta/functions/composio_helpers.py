@@ -1,5 +1,5 @@
 import os
-from typing import Any, Optional
+from typing import Any
 
 from composio.constants import DEFAULT_ENTITY_ID
 from composio.exceptions import (
@@ -59,33 +59,33 @@ def {func_name}(**kwargs):
 
 
 async def execute_composio_action_async(
-    action_name: str, args: dict, api_key: Optional[str] = None, entity_id: Optional[str] = None
+    action_name: str, args: dict, api_key: str | None = None, entity_id: str | None = None
 ) -> tuple[str, str]:
     entity_id = entity_id or os.getenv(COMPOSIO_ENTITY_ENV_VAR_KEY, DEFAULT_ENTITY_ID)
     composio_toolset = AsyncComposioToolSet(api_key=api_key, entity_id=entity_id, lock=False)
     try:
         response = await composio_toolset.execute_action(action=action_name, params=args)
     except ApiKeyNotProvidedError as e:
-        raise RuntimeError(f"API key not provided or invalid for Composio action '{action_name}': {str(e)}")
+        raise RuntimeError(f"API key not provided or invalid for Composio action '{action_name}': {e!s}")
     except ConnectedAccountNotFoundError as e:
-        raise RuntimeError(f"Connected account not found for Composio action '{action_name}': {str(e)}")
+        raise RuntimeError(f"Connected account not found for Composio action '{action_name}': {e!s}")
     except EnumMetadataNotFound as e:
-        raise RuntimeError(f"Enum metadata not found for Composio action '{action_name}': {str(e)}")
+        raise RuntimeError(f"Enum metadata not found for Composio action '{action_name}': {e!s}")
     except EnumStringNotFound as e:
-        raise RuntimeError(f"Enum string not found for Composio action '{action_name}': {str(e)}")
+        raise RuntimeError(f"Enum string not found for Composio action '{action_name}': {e!s}")
     except ComposioSDKError as e:
-        raise RuntimeError(f"Composio SDK error while executing action '{action_name}': {str(e)}")
+        raise RuntimeError(f"Composio SDK error while executing action '{action_name}': {e!s}")
     except Exception as e:
         print(type(e))
-        raise RuntimeError(f"An unexpected error occurred in Composio SDK while executing action '{action_name}': {str(e)}")
+        raise RuntimeError(f"An unexpected error occurred in Composio SDK while executing action '{action_name}': {e!s}")
 
-    if "error" in response and response["error"]:
-        raise RuntimeError(f"Error while executing action '{action_name}': {str(response['error'])}")
+    if response.get("error"):
+        raise RuntimeError(f"Error while executing action '{action_name}': {response['error']!s}")
 
     return response.get("data")
 
 
-def execute_composio_action(action_name: str, args: dict, api_key: Optional[str] = None, entity_id: Optional[str] = None) -> Any:
+def execute_composio_action(action_name: str, args: dict, api_key: str | None = None, entity_id: str | None = None) -> Any:
     return run_async_task(execute_composio_action_async(action_name, args, api_key, entity_id))
 
 

@@ -1,3 +1,2 @@
-from typing import Dict
 
-EMBEDDING_HANDLE_OVERRIDES: Dict[str, Dict[str, str]] = {}
+EMBEDDING_HANDLE_OVERRIDES: dict[str, dict[str, str]] = {}

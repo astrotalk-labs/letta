@@ -1,4 +1,4 @@
-from typing import Annotated, List, Optional
+from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, status
 from fastapi.responses import JSONResponse
@@ -16,15 +16,15 @@ from letta.server.server import SyncServer
 router = APIRouter(prefix="/groups", tags=["groups"])
 
 
-@router.get("/", response_model=List[Group], operation_id="list_groups")
+@router.get("/", response_model=list[Group], operation_id="list_groups")
 def list_groups(
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
-    manager_type: Optional[ManagerType] = Query(None, description="Search groups by manager type"),
-    before: Optional[str] = Query(None, description="Cursor for pagination"),
-    after: Optional[str] = Query(None, description="Cursor for pagination"),
-    limit: Optional[int] = Query(None, description="Limit for pagination"),
-    project_id: Optional[str] = Query(None, description="Search groups by project id"),
+    actor_id: str | None = Header(None, alias="user_id"),
+    manager_type: ManagerType | None = Query(None, description="Search groups by manager type"),
+    before: str | None = Query(None, description="Cursor for pagination"),
+    after: str | None = Query(None, description="Cursor for pagination"),
+    limit: int | None = Query(None, description="Limit for pagination"),
+    project_id: str | None = Query(None, description="Search groups by project id"),
 ):
     """
     Fetch all multi-agent groups matching query.
@@ -43,7 +43,7 @@ def list_groups(
 @router.get("/count", response_model=int, operation_id="count_groups")
 def count_groups(
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Get the count of all groups associated with a given user.
@@ -55,7 +55,7 @@ def count_groups(
 async def retrieve_group(
     group_id: str,
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Retrieve the group by id.
@@ -72,8 +72,8 @@ async def retrieve_group(
 def create_group(
     group: GroupCreate = Body(...),
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
-    x_project: Optional[str] = Header(None, alias="X-Project"),  # Only handled by next js middleware
+    actor_id: str | None = Header(None, alias="user_id"),
+    x_project: str | None = Header(None, alias="X-Project"),  # Only handled by next js middleware
 ):
     """
     Create a new multi-agent group with the specified configuration.
@@ -90,8 +90,8 @@ async def modify_group(
     group_id: str,
     group: GroupUpdate = Body(...),
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
-    x_project: Optional[str] = Header(None, alias="X-Project"),  # Only handled by next js middleware
+    actor_id: str | None = Header(None, alias="user_id"),
+    x_project: str | None = Header(None, alias="X-Project"),  # Only handled by next js middleware
 ):
     """
     Create a new multi-agent group with the specified configuration.
@@ -107,7 +107,7 @@ async def modify_group(
 def delete_group(
     group_id: str,
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Delete a multi-agent group.
@@ -129,7 +129,7 @@ async def send_group_message(
     group_id: str,
     server: SyncServer = Depends(get_letta_server),
     request: LettaRequest = Body(...),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Process a user message and return the group's response.
@@ -167,7 +167,7 @@ async def send_group_message_streaming(
     group_id: str,
     server: SyncServer = Depends(get_letta_server),
     request: LettaStreamingRequest = Body(...),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Process a user message and return the group's responses.
@@ -190,7 +190,7 @@ async def send_group_message_streaming(
 
 
 GroupMessagesResponse = Annotated[
-    List[LettaMessageUnion], Field(json_schema_extra={"type": "array", "items": {"$ref": "#/components/schemas/LettaMessageUnion"}})
+    list[LettaMessageUnion], Field(json_schema_extra={"type": "array", "items": {"$ref": "#/components/schemas/LettaMessageUnion"}})
 ]
 
 
@@ -200,7 +200,7 @@ def modify_group_message(
     message_id: str,
     request: LettaMessageUpdateUnion = Body(...),
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Update the details of a message associated with an agent.
@@ -214,13 +214,13 @@ def modify_group_message(
 def list_group_messages(
     group_id: str,
     server: "SyncServer" = Depends(get_letta_server),
-    after: Optional[str] = Query(None, description="Message after which to retrieve the returned messages."),
-    before: Optional[str] = Query(None, description="Message before which to retrieve the returned messages."),
+    after: str | None = Query(None, description="Message after which to retrieve the returned messages."),
+    before: str | None = Query(None, description="Message before which to retrieve the returned messages."),
     limit: int = Query(10, description="Maximum number of messages to retrieve."),
     use_assistant_message: bool = Query(True, description="Whether to use assistant messages"),
     assistant_message_tool_name: str = Query(DEFAULT_MESSAGE_TOOL, description="The name of the designated message tool."),
     assistant_message_tool_kwarg: str = Query(DEFAULT_MESSAGE_TOOL_KWARG, description="The name of the message argument."),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Retrieve message history for an agent.
@@ -258,7 +258,7 @@ def list_group_messages(
 def reset_group_messages(
     group_id: str,
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Delete the group messages for all agents that are part of the multi-agent group.

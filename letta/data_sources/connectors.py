@@ -1,9 +1,13 @@
-from typing import Dict, Iterator, List, Tuple
+from collections.abc import Iterator
 
 import typer
 
 from letta.constants import EMBEDDING_BATCH_SIZE
-from letta.data_sources.connectors_helper import assert_all_files_exist_locally, extract_metadata_from_files, get_filenames_in_dir
+from letta.data_sources.connectors_helper import (
+    assert_all_files_exist_locally,
+    extract_metadata_from_files,
+    get_filenames_in_dir,
+)
 from letta.embeddings import embedding_model
 from letta.schemas.file import FileMetadata
 from letta.schemas.passage import Passage
@@ -25,7 +29,7 @@ class DataConnector:
             files (Iterator[FileMetadata]): Generate file metadata for each file found.
         """
 
-    def generate_passages(self, file: FileMetadata, chunk_size: int = 1024) -> Iterator[Tuple[str, Dict]]:  # -> Iterator[Passage]:
+    def generate_passages(self, file: FileMetadata, chunk_size: int = 1024) -> Iterator[tuple[str, dict]]:  # -> Iterator[Passage]:
         """
         Generate passage text and metadata from a list of files.
 
@@ -51,7 +55,7 @@ async def load_data(connector: DataConnector, source: Source, passage_manager: P
     passage_count = 0
     file_count = 0
 
-    async def generate_embeddings(texts: List[str], embedding_config: EmbeddingConfig) -> List[Passage]:
+    async def generate_embeddings(texts: list[str], embedding_config: EmbeddingConfig) -> list[Passage]:
         passages = []
         if embedding_config.embedding_endpoint_type == "openai":
             texts.append(passage_text)
@@ -126,7 +130,7 @@ async def load_data(connector: DataConnector, source: Source, passage_manager: P
 
 
 class DirectoryConnector(DataConnector):
-    def __init__(self, input_files: List[str] = None, input_directory: str = None, recursive: bool = False, extensions: List[str] = None):
+    def __init__(self, input_files: list[str] = None, input_directory: str = None, recursive: bool = False, extensions: list[str] = None):
         """
         Connector for reading text data from a directory of files.
 
@@ -170,7 +174,7 @@ class DirectoryConnector(DataConnector):
                 file_last_modified_date=metadata.get("file_last_modified_date"),
             )
 
-    def generate_passages(self, file: FileMetadata, chunk_size: int = 1024) -> Iterator[Tuple[str, Dict]]:
+    def generate_passages(self, file: FileMetadata, chunk_size: int = 1024) -> Iterator[tuple[str, dict]]:
         from llama_index.core import SimpleDirectoryReader
         from llama_index.core.node_parser import TokenTextSplitter
 

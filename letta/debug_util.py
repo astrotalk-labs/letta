@@ -1,6 +1,6 @@
 import uuid
+from collections.abc import Callable
 from contextvars import ContextVar
-from typing import Callable, Union
 
 from letta.log import get_logger
 
@@ -33,7 +33,7 @@ def new_debug_request_id(user_id) -> str:
     return ""
 
 
-def debug_log(user_id, message: Union[str, Callable[[], str]]) -> None:
+def debug_log(user_id, message: str | Callable[[], str]) -> None:
     """Log a debug message only for the hardcoded debug user.
 
     Pass a callable (lambda) when the message involves expensive computation

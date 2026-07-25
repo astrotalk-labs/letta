@@ -1,5 +1,5 @@
 import traceback
-from typing import Any, Dict, Optional, Type
+from typing import Any
 
 from letta.constants import FUNCTION_RETURN_VALUE_TRUNCATED
 from letta.helpers.datetime_helpers import AsyncTimer
@@ -18,11 +18,15 @@ from letta.services.block_manager import BlockManager
 from letta.services.message_manager import MessageManager
 from letta.services.passage_manager import PassageManager
 from letta.services.tool_executor.builtin_tool_executor import LettaBuiltinToolExecutor
-from letta.services.tool_executor.composio_tool_executor import ExternalComposioToolExecutor
+from letta.services.tool_executor.composio_tool_executor import (
+    ExternalComposioToolExecutor,
+)
 from letta.services.tool_executor.core_tool_executor import LettaCoreToolExecutor
 from letta.services.tool_executor.files_tool_executor import LettaFileToolExecutor
 from letta.services.tool_executor.mcp_tool_executor import ExternalMCPToolExecutor
-from letta.services.tool_executor.multi_agent_tool_executor import LettaMultiAgentToolExecutor
+from letta.services.tool_executor.multi_agent_tool_executor import (
+    LettaMultiAgentToolExecutor,
+)
 from letta.services.tool_executor.tool_executor import SandboxToolExecutor
 from letta.services.tool_executor.tool_executor_base import ToolExecutor
 from letta.utils import get_friendly_error_msg
@@ -31,7 +35,7 @@ from letta.utils import get_friendly_error_msg
 class ToolExecutorFactory:
     """Factory for creating appropriate tool executors based on tool type."""
 
-    _executor_map: Dict[ToolType, Type[ToolExecutor]] = {
+    _executor_map: dict[ToolType, type[ToolExecutor]] = {
         ToolType.LETTA_CORE: LettaCoreToolExecutor,
         ToolType.LETTA_MEMORY_CORE: LettaCoreToolExecutor,
         ToolType.LETTA_SLEEPTIME_CORE: LettaCoreToolExecutor,
@@ -51,7 +55,7 @@ class ToolExecutorFactory:
         block_manager: BlockManager,
         passage_manager: PassageManager,
         actor: User,
-        task_id: Optional[str] = None,
+        task_id: str | None = None,
     ) -> ToolExecutor:
         """Get the appropriate executor for the given tool type."""
         executor_class = cls._executor_map.get(tool_type, SandboxToolExecutor)
@@ -75,10 +79,10 @@ class ToolExecutionManager:
         block_manager: BlockManager,
         passage_manager: PassageManager,
         actor: User,
-        agent_state: Optional[AgentState] = None,
-        sandbox_config: Optional[SandboxConfig] = None,
-        sandbox_env_vars: Optional[Dict[str, Any]] = None,
-        task_id: Optional[str] = None,
+        agent_state: AgentState | None = None,
+        sandbox_config: SandboxConfig | None = None,
+        sandbox_env_vars: dict[str, Any] | None = None,
+        task_id: str | None = None,
     ):
         self.message_manager = message_manager
         self.agent_manager = agent_manager
@@ -130,7 +134,7 @@ class ToolExecutionManager:
 
         except Exception as e:
             status = "error"
-            self.logger.error(f"Error executing tool {function_name}: {str(e)}")
+            self.logger.error(f"Error executing tool {function_name}: {e!s}")
             error_message = get_friendly_error_msg(
                 function_name=function_name,
                 exception_name=type(e).__name__,

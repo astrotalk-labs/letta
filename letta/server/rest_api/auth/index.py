@@ -1,4 +1,3 @@
-from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter
@@ -14,7 +13,7 @@ router = APIRouter()
 
 class AuthResponse(BaseModel):
     uuid: UUID = Field(..., description="UUID of the user")
-    is_admin: Optional[bool] = Field(None, description="Whether the user is an admin")
+    is_admin: bool | None = Field(None, description="Whether the user is an admin")
 
 
 class AuthRequest(BaseModel):

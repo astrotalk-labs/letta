@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from mistralai import OCRPageObject
@@ -20,11 +20,11 @@ class LlamaIndexChunker:
         self.parser = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
     # TODO: Make this more general beyond Mistral
-    def chunk_text(self, page: "OCRPageObject") -> List[str]:
+    def chunk_text(self, page: "OCRPageObject") -> list[str]:
         """Chunk text using LlamaIndex splitter"""
         try:
             return self.parser.split_text(page.markdown)
 
         except Exception as e:
-            logger.error(f"Chunking failed: {str(e)}")
+            logger.error(f"Chunking failed: {e!s}")
             raise

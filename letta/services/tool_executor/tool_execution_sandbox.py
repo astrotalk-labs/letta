@@ -7,7 +7,7 @@ import sys
 import tempfile
 import traceback
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from letta.functions.helpers import generate_model_from_args_json_schema
 from letta.log import get_logger
@@ -23,7 +23,10 @@ from letta.services.helpers.tool_execution_helper import (
     find_python_executable,
     install_pip_requirements_for_sandbox,
 )
-from letta.services.helpers.tool_parser_helper import convert_param_to_str_value, parse_function_arguments
+from letta.services.helpers.tool_parser_helper import (
+    convert_param_to_str_value,
+    parse_function_arguments,
+)
 from letta.services.organization_manager import OrganizationManager
 from letta.services.sandbox_config_manager import SandboxConfigManager
 from letta.services.tool_manager import ToolManager
@@ -47,7 +50,7 @@ class ToolExecutionSandbox:
     LOCAL_SANDBOX_RESULT_VAR_NAME = "result_ZQqiequkcFwRwwGQMqkt"
 
     def __init__(
-        self, tool_name: str, args: dict, user: User, force_recreate=True, force_recreate_venv=False, tool_object: Optional[Tool] = None
+        self, tool_name: str, args: dict, user: User, force_recreate=True, force_recreate_venv=False, tool_object: Tool | None = None
     ):
         self.tool_name = tool_name
         self.args = args
@@ -75,8 +78,8 @@ class ToolExecutionSandbox:
     @trace_method
     def run(
         self,
-        agent_state: Optional[AgentState] = None,
-        additional_env_vars: Optional[Dict] = None,
+        agent_state: AgentState | None = None,
+        additional_env_vars: dict | None = None,
     ) -> ToolExecutionResult:
         """
         Run the tool in a sandbox environment.
@@ -99,7 +102,7 @@ class ToolExecutionSandbox:
         logger.debug(f"Executed tool '{self.tool_name}', logging output from tool run: \n")
         for log_line in (result.stdout or []) + (result.stderr or []):
             logger.debug(f"{log_line}")
-        logger.debug(f"Ending output log from tool run.")
+        logger.debug("Ending output log from tool run.")
 
         # Return result
         return result
@@ -119,7 +122,7 @@ class ToolExecutionSandbox:
 
     @trace_method
     def run_local_dir_sandbox(
-        self, agent_state: Optional[AgentState] = None, additional_env_vars: Optional[Dict] = None
+        self, agent_state: AgentState | None = None, additional_env_vars: dict | None = None
     ) -> ToolExecutionResult:
         sbx_config = self.sandbox_config_manager.get_or_create_default_sandbox_config(sandbox_type=SandboxType.LOCAL, actor=self.user)
         local_configs = sbx_config.get_local_config()
@@ -170,7 +173,7 @@ class ToolExecutionSandbox:
     def run_local_dir_sandbox_venv(
         self,
         sbx_config: SandboxConfig,
-        env: Dict[str, str],
+        env: dict[str, str],
         temp_file_path: str,
     ) -> ToolExecutionResult:
         local_configs = sbx_config.get_local_config()
@@ -250,7 +253,7 @@ class ToolExecutionSandbox:
     def run_local_dir_sandbox_directly(
         self,
         sbx_config: SandboxConfig,
-        env: Dict[str, str],
+        env: dict[str, str],
         temp_file_path: str,
     ) -> ToolExecutionResult:
         status = "success"
@@ -324,8 +327,8 @@ class ToolExecutionSandbox:
     @trace_method
     def run_e2b_sandbox(
         self,
-        agent_state: Optional[AgentState] = None,
-        additional_env_vars: Optional[Dict] = None,
+        agent_state: AgentState | None = None,
+        additional_env_vars: dict | None = None,
     ) -> ToolExecutionResult:
         sbx_config = self.sandbox_config_manager.get_or_create_default_sandbox_config(sandbox_type=SandboxType.E2B, actor=self.user)
         sbx = self.get_running_e2b_sandbox_with_same_state(sbx_config)

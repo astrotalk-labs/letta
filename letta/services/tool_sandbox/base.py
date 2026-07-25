@@ -1,15 +1,20 @@
 import pickle
 import uuid
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any
 
 from letta.functions.helpers import generate_model_from_args_json_schema
 from letta.schemas.agent import AgentState
 from letta.schemas.sandbox_config import SandboxConfig
 from letta.schemas.tool import Tool
 from letta.schemas.tool_execution_result import ToolExecutionResult
-from letta.services.helpers.tool_execution_helper import add_imports_and_pydantic_schemas_for_args
-from letta.services.helpers.tool_parser_helper import convert_param_to_str_value, parse_function_arguments
+from letta.services.helpers.tool_execution_helper import (
+    add_imports_and_pydantic_schemas_for_args,
+)
+from letta.services.helpers.tool_parser_helper import (
+    convert_param_to_str_value,
+    parse_function_arguments,
+)
 from letta.services.sandbox_config_manager import SandboxConfigManager
 from letta.services.tool_manager import ToolManager
 from letta.types import JsonDict, JsonValue
@@ -25,9 +30,9 @@ class AsyncToolSandboxBase(ABC):
         tool_name: str,
         args: JsonDict,
         user,
-        tool_object: Optional[Tool] = None,
-        sandbox_config: Optional[SandboxConfig] = None,
-        sandbox_env_vars: Optional[Dict[str, Any]] = None,
+        tool_object: Tool | None = None,
+        sandbox_config: SandboxConfig | None = None,
+        sandbox_env_vars: dict[str, Any] | None = None,
     ):
         self.tool_name = tool_name
         self.args = args
@@ -62,8 +67,8 @@ class AsyncToolSandboxBase(ABC):
     @abstractmethod
     async def run(
         self,
-        agent_state: Optional[AgentState] = None,
-        additional_env_vars: Optional[Dict] = None,
+        agent_state: AgentState | None = None,
+        additional_env_vars: dict | None = None,
     ) -> ToolExecutionResult:
         """
         Run the tool in a sandbox environment asynchronously.
@@ -71,7 +76,7 @@ class AsyncToolSandboxBase(ABC):
         """
         raise NotImplementedError
 
-    def generate_execution_script(self, agent_state: Optional[AgentState], wrap_print_with_markers: bool = False) -> str:
+    def generate_execution_script(self, agent_state: AgentState | None, wrap_print_with_markers: bool = False) -> str:
         """
         Generate code to run inside of execution sandbox. Serialize the agent state and arguments, call the tool,
         then base64-encode/pickle the result. Runs a jinja2 template constructing the python file.

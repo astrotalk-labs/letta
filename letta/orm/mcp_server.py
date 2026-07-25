@@ -1,4 +1,3 @@
-from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import JSON, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
@@ -11,9 +10,6 @@ from letta.orm.enums import MCPServerType
 from letta.orm.mixins import OrganizationMixin
 from letta.orm.sqlalchemy_base import SqlalchemyBase
 from letta.schemas.mcp import MCPServer
-
-if TYPE_CHECKING:
-    pass
 
 
 class MCPServer(SqlalchemyBase, OrganizationMixin):
@@ -32,20 +28,20 @@ class MCPServer(SqlalchemyBase, OrganizationMixin):
     )
 
     # sse server
-    server_url: Mapped[Optional[str]] = mapped_column(
+    server_url: Mapped[str | None] = mapped_column(
         String, nullable=True, doc="The URL of the server (MCP SSE client will connect to this URL)"
     )
 
     # access token / api key for MCP servers that require authentication
-    token: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="The access token or api key for the MCP server")
+    token: Mapped[str | None] = mapped_column(String, nullable=True, doc="The access token or api key for the MCP server")
 
     # stdio server
-    stdio_config: Mapped[Optional[StdioServerConfig]] = mapped_column(
+    stdio_config: Mapped[StdioServerConfig | None] = mapped_column(
         MCPStdioServerConfigColumn, nullable=True, doc="The configuration for the stdio server"
     )
 
-    metadata_: Mapped[Optional[dict]] = mapped_column(
-        JSON, default=lambda: {}, doc="A dictionary of additional metadata for the MCP server."
+    metadata_: Mapped[dict | None] = mapped_column(
+        JSON, default=dict, doc="A dictionary of additional metadata for the MCP server."
     )
     # relationships
     # organization: Mapped["Organization"] = relationship("Organization", back_populates="mcp_server", lazy="selectin")

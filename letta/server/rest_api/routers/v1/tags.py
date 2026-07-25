@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Header, Query
 
@@ -11,13 +11,13 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/tags", tags=["tag", "admin"])
 
 
-@router.get("/", tags=["admin"], response_model=List[str], operation_id="list_tags")
+@router.get("/", tags=["admin"], response_model=list[str], operation_id="list_tags")
 async def list_tags(
-    after: Optional[str] = Query(None),
-    limit: Optional[int] = Query(50),
+    after: str | None = Query(None),
+    limit: int | None = Query(50),
     server: "SyncServer" = Depends(get_letta_server),
-    query_text: Optional[str] = Query(None),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    query_text: str | None = Query(None),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Get a list of all tags in the database

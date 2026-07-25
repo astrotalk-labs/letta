@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -12,13 +11,13 @@ from letta.schemas.letta_base import OrmMetadataBase
 class JobBase(OrmMetadataBase):
     __id_prefix__ = "job"
     status: JobStatus = Field(default=JobStatus.created, description="The status of the job.")
-    completed_at: Optional[datetime] = Field(None, description="The unix timestamp of when the job was completed.")
-    metadata: Optional[dict] = Field(None, validation_alias="metadata_", description="The metadata of the job.")
+    completed_at: datetime | None = Field(None, description="The unix timestamp of when the job was completed.")
+    metadata: dict | None = Field(None, validation_alias="metadata_", description="The metadata of the job.")
     job_type: JobType = Field(default=JobType.JOB, description="The type of the job.")
 
-    callback_url: Optional[str] = Field(None, description="If set, POST to this URL when the job completes.")
-    callback_sent_at: Optional[datetime] = Field(None, description="Timestamp when the callback was last attempted.")
-    callback_status_code: Optional[int] = Field(None, description="HTTP status code returned by the callback endpoint.")
+    callback_url: str | None = Field(None, description="If set, POST to this URL when the job completes.")
+    callback_sent_at: datetime | None = Field(None, description="Timestamp when the callback was last attempted.")
+    callback_status_code: int | None = Field(None, description="HTTP status code returned by the callback endpoint.")
 
 
 class Job(JobBase):
@@ -35,12 +34,12 @@ class Job(JobBase):
     """
 
     id: str = JobBase.generate_id_field()
-    user_id: Optional[str] = Field(None, description="The unique identifier of the user associated with the job.")
+    user_id: str | None = Field(None, description="The unique identifier of the user associated with the job.")
 
 
 class BatchJob(JobBase):
     id: str = JobBase.generate_id_field()
-    user_id: Optional[str] = Field(None, description="The unique identifier of the user associated with the job.")
+    user_id: str | None = Field(None, description="The unique identifier of the user associated with the job.")
     job_type: JobType = JobType.BATCH
 
     @classmethod
@@ -74,7 +73,7 @@ class BatchJob(JobBase):
 
 
 class JobUpdate(JobBase):
-    status: Optional[JobStatus] = Field(None, description="The status of the job.")
+    status: JobStatus | None = Field(None, description="The status of the job.")
 
     class Config:
         extra = "ignore"  # Ignores extra fields

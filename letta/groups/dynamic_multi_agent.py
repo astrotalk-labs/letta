@@ -1,4 +1,3 @@
-from typing import List, Optional
 
 from letta.agent import Agent, AgentState
 from letta.interface import AgentInterface
@@ -19,9 +18,9 @@ class DynamicMultiAgent(Agent):
         user: User,
         # custom
         group_id: str = "",
-        agent_ids: List[str] = [],
+        agent_ids: list[str] = [],
         description: str = "",
-        max_turns: Optional[int] = None,
+        max_turns: int | None = None,
         termination_token: str = "DONE!",
     ):
         super().__init__(interface, agent_state, user)
@@ -35,9 +34,9 @@ class DynamicMultiAgent(Agent):
 
     def step(
         self,
-        input_messages: List[MessageCreate],
+        input_messages: list[MessageCreate],
         chaining: bool = True,
-        max_chaining_steps: Optional[int] = None,
+        max_chaining_steps: int | None = None,
         put_inner_thoughts_first: bool = True,
         **kwargs,
     ) -> LettaUsageStatistics:
@@ -52,7 +51,7 @@ class DynamicMultiAgent(Agent):
         # Load agents and initialize chat history with indexing
         agents = {self.agent_state.id: self.load_manager_agent()}
         message_index = {self.agent_state.id: 0}
-        chat_history: List[MessageCreate] = []
+        chat_history: list[MessageCreate] = []
         for agent_id in self.agent_ids:
             agents[agent_id] = self.load_participant_agent(agent_id=agent_id)
             message_index[agent_id] = 0
@@ -251,9 +250,9 @@ class DynamicMultiAgent(Agent):
     def ask_manager_to_choose_participant_message(
         self,
         manager_agent_id: str,
-        new_messages: List[MessageCreate],
-        chat_history: List[Message],
-        agent_id_options: List[str],
+        new_messages: list[MessageCreate],
+        chat_history: list[Message],
+        agent_id_options: list[str],
     ) -> MessageCreate:
         text_chat_history = [f"{message.name or 'user'}: {message.content[0].text}" for message in chat_history]
         for message in new_messages:

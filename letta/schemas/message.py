@@ -7,13 +7,21 @@ import uuid
 import warnings
 from collections import OrderedDict
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Literal
 
-from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall as OpenAIToolCall
-from openai.types.chat.chat_completion_message_tool_call import Function as OpenAIFunction
+from openai.types.chat.chat_completion_message_tool_call import (
+    ChatCompletionMessageToolCall as OpenAIToolCall,
+)
+from openai.types.chat.chat_completion_message_tool_call import (
+    Function as OpenAIFunction,
+)
 from pydantic import BaseModel, Field, field_validator
 
-from letta.constants import DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG, TOOL_CALL_ID_MAX_LEN
+from letta.constants import (
+    DEFAULT_MESSAGE_TOOL,
+    DEFAULT_MESSAGE_TOOL_KWARG,
+    TOOL_CALL_ID_MAX_LEN,
+)
 from letta.helpers.datetime_helpers import get_utc_time, is_utc_datetime
 from letta.helpers.json_helpers import json_dumps
 from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_VERTEX
@@ -79,18 +87,18 @@ class MessageCreate(BaseModel):
         MessageRole.system,
         MessageRole.assistant,
     ] = Field(..., description="The role of the participant.")
-    content: Union[str, List[LettaMessageContentUnion]] = Field(
+    content: str | list[LettaMessageContentUnion] = Field(
         ...,
         description="The content of the message.",
         json_schema_extra=get_letta_message_content_union_str_json_schema(),
     )
-    name: Optional[str] = Field(None, description="The name of the participant.")
-    otid: Optional[str] = Field(None, description="The offline threading id associated with this message")
-    sender_id: Optional[str] = Field(None, description="The id of the sender of the message, can be an identity id or agent id")
-    batch_item_id: Optional[str] = Field(None, description="The id of the LLMBatchItem that this message is associated with")
-    group_id: Optional[str] = Field(None, description="The multi-agent group that the message was sent in")
+    name: str | None = Field(None, description="The name of the participant.")
+    otid: str | None = Field(None, description="The offline threading id associated with this message")
+    sender_id: str | None = Field(None, description="The id of the sender of the message, can be an identity id or agent id")
+    batch_item_id: str | None = Field(None, description="The id of the LLMBatchItem that this message is associated with")
+    group_id: str | None = Field(None, description="The multi-agent group that the message was sent in")
 
-    def model_dump(self, to_orm: bool = False, **kwargs) -> Dict[str, Any]:
+    def model_dump(self, to_orm: bool = False, **kwargs) -> dict[str, Any]:
         data = super().model_dump(**kwargs)
         if to_orm and "content" in data:
             if isinstance(data["content"], str):
@@ -101,8 +109,8 @@ class MessageCreate(BaseModel):
 class MessageUpdate(BaseModel):
     """Request to update a message"""
 
-    role: Optional[MessageRole] = Field(None, description="The role of the participant.")
-    content: Optional[Union[str, List[LettaMessageContentUnion]]] = Field(
+    role: MessageRole | None = Field(None, description="The role of the participant.")
+    content: str | list[LettaMessageContentUnion] | None = Field(
         None,
         description="The content of the message.",
         json_schema_extra=get_letta_message_content_union_str_json_schema(),
@@ -112,13 +120,13 @@ class MessageUpdate(BaseModel):
     # agent_id: Optional[str] = Field(None, description="The unique identifier of the agent.")
     # NOTE: we probably shouldn't allow updating the model field, otherwise this loses meaning
     # model: Optional[str] = Field(None, description="The model used to make the function call.")
-    name: Optional[str] = Field(None, description="The name of the participant.")
+    name: str | None = Field(None, description="The name of the participant.")
     # NOTE: we probably shouldn't allow updating the created_at field, right?
     # created_at: Optional[datetime] = Field(None, description="The time the message was created.")
-    tool_calls: Optional[List[OpenAIToolCall,]] = Field(None, description="The list of tool calls requested.")
-    tool_call_id: Optional[str] = Field(None, description="The id of the tool call.")
+    tool_calls: list[OpenAIToolCall,] | None = Field(None, description="The list of tool calls requested.")
+    tool_call_id: str | None = Field(None, description="The id of the tool call.")
 
-    def model_dump(self, to_orm: bool = False, **kwargs) -> Dict[str, Any]:
+    def model_dump(self, to_orm: bool = False, **kwargs) -> dict[str, Any]:
         data = super().model_dump(**kwargs)
         if to_orm and "content" in data:
             if isinstance(data["content"], str):
@@ -150,28 +158,28 @@ class Message(BaseMessage):
     """
 
     id: str = BaseMessage.generate_id_field()
-    organization_id: Optional[str] = Field(None, description="The unique identifier of the organization.")
-    agent_id: Optional[str] = Field(None, description="The unique identifier of the agent.")
-    model: Optional[str] = Field(None, description="The model used to make the function call.")
+    organization_id: str | None = Field(None, description="The unique identifier of the organization.")
+    agent_id: str | None = Field(None, description="The unique identifier of the agent.")
+    model: str | None = Field(None, description="The model used to make the function call.")
     # Basic OpenAI-style fields
     role: MessageRole = Field(..., description="The role of the participant.")
-    content: Optional[List[LettaMessageContentUnion]] = Field(None, description="The content of the message.")
+    content: list[LettaMessageContentUnion] | None = Field(None, description="The content of the message.")
     # NOTE: in OpenAI, this field is only used for roles 'user', 'assistant', and 'function' (now deprecated). 'tool' does not use it.
-    name: Optional[str] = Field(
+    name: str | None = Field(
         None,
         description="For role user/assistant: the (optional) name of the participant. For role tool/function: the name of the function called.",
     )
-    tool_calls: Optional[List[OpenAIToolCall]] = Field(
+    tool_calls: list[OpenAIToolCall] | None = Field(
         None, description="The list of tool calls requested. Only applicable for role assistant."
     )
-    tool_call_id: Optional[str] = Field(None, description="The ID of the tool call. Only applicable for role tool.")
+    tool_call_id: str | None = Field(None, description="The ID of the tool call. Only applicable for role tool.")
     # Extras
-    step_id: Optional[str] = Field(None, description="The id of the step that this message was created in.")
-    otid: Optional[str] = Field(None, description="The offline threading id associated with this message")
-    tool_returns: Optional[List[ToolReturn]] = Field(None, description="Tool execution return information for prior tool calls")
-    group_id: Optional[str] = Field(None, description="The multi-agent group that the message was sent in")
-    sender_id: Optional[str] = Field(None, description="The id of the sender of the message, can be an identity id or agent id")
-    batch_item_id: Optional[str] = Field(None, description="The id of the LLMBatchItem that this message is associated with")
+    step_id: str | None = Field(None, description="The id of the step that this message was created in.")
+    otid: str | None = Field(None, description="The offline threading id associated with this message")
+    tool_returns: list[ToolReturn] | None = Field(None, description="Tool execution return information for prior tool calls")
+    group_id: str | None = Field(None, description="The multi-agent group that the message was sent in")
+    sender_id: str | None = Field(None, description="The id of the sender of the message, can be an identity id or agent id")
+    batch_item_id: str | None = Field(None, description="The id of the LLMBatchItem that this message is associated with")
     # This overrides the optional base orm schema, created_at MUST exist on all messages objects
     created_at: datetime = Field(default_factory=get_utc_time, description="The timestamp when the object was created.")
 
@@ -199,12 +207,12 @@ class Message(BaseMessage):
 
     @staticmethod
     def to_letta_messages_from_list(
-        messages: List[Message],
+        messages: list[Message],
         use_assistant_message: bool = True,
         assistant_message_tool_name: str = DEFAULT_MESSAGE_TOOL,
         assistant_message_tool_kwarg: str = DEFAULT_MESSAGE_TOOL_KWARG,
         reverse: bool = True,
-    ) -> List[LettaMessage]:
+    ) -> list[LettaMessage]:
         if use_assistant_message:
             message_ids_to_remove = []
             assistant_messages_by_tool_call = {
@@ -243,7 +251,7 @@ class Message(BaseMessage):
         assistant_message_tool_name: str = DEFAULT_MESSAGE_TOOL,
         assistant_message_tool_kwarg: str = DEFAULT_MESSAGE_TOOL_KWARG,
         reverse: bool = True,
-    ) -> List[LettaMessage]:
+    ) -> list[LettaMessage]:
         """Convert message object (in DB format) to the style used by the original Letta API"""
         messages = []
 
@@ -463,13 +471,13 @@ class Message(BaseMessage):
     def dict_to_message(
         agent_id: str,
         openai_message_dict: dict,
-        model: Optional[str] = None,  # model used to make function call
+        model: str | None = None,  # model used to make function call
         allow_functions_style: bool = False,  # allow deprecated functions style?
-        created_at: Optional[datetime] = None,
-        id: Optional[str] = None,
-        name: Optional[str] = None,
-        group_id: Optional[str] = None,
-        tool_returns: Optional[List[ToolReturn]] = None,
+        created_at: datetime | None = None,
+        id: str | None = None,
+        name: str | None = None,
+        group_id: str | None = None,
+        tool_returns: list[ToolReturn] | None = None,
     ) -> Message:
         """Convert a ChatCompletion message object into a Message object (synced to DB)"""
         if not created_at:
@@ -485,7 +493,7 @@ class Message(BaseMessage):
         content = [TextContent(text=openai_message_dict["content"])] if openai_message_dict["content"] else []
 
         # TODO(caren) bad assumption here that "reasoning_content" always comes before "redacted_reasoning_content"
-        if "reasoning_content" in openai_message_dict and openai_message_dict["reasoning_content"]:
+        if openai_message_dict.get("reasoning_content"):
             content.append(
                 ReasoningContent(
                     reasoning=openai_message_dict["reasoning_content"],
@@ -495,13 +503,13 @@ class Message(BaseMessage):
                     ),
                 ),
             )
-        if "redacted_reasoning_content" in openai_message_dict and openai_message_dict["redacted_reasoning_content"]:
+        if openai_message_dict.get("redacted_reasoning_content"):
             content.append(
                 RedactedReasoningContent(
                     data=openai_message_dict["redacted_reasoning_content"] if "redacted_reasoning_content" in openai_message_dict else None,
                 ),
             )
-        if "omitted_reasoning_content" in openai_message_dict and openai_message_dict["omitted_reasoning_content"]:
+        if openai_message_dict.get("omitted_reasoning_content"):
             content.append(
                 OmittedReasoningContent(),
             )
@@ -762,7 +770,7 @@ class Message(BaseMessage):
         else:
             text_content = None
 
-        def add_xml_tag(string: str, xml_tag: Optional[str]):
+        def add_xml_tag(string: str, xml_tag: str | None):
             # NOTE: Anthropic docs recommends using <thinking> tag when using CoT + tool use
             if f"<{xml_tag}>" in string and f"</{xml_tag}>" in string:
                 # don't nest if tags already exist
@@ -987,7 +995,7 @@ class Message(BaseMessage):
             assert all([v is not None for v in [self.role, self.tool_call_id]]), vars(self)
 
             if self.name is None:
-                warnings.warn(f"Couldn't find function name on tool call, defaulting to tool ID instead.")
+                warnings.warn("Couldn't find function name on tool call, defaulting to tool ID instead.")
                 function_name = self.tool_call_id
             else:
                 function_name = self.name
@@ -1028,12 +1036,12 @@ class Message(BaseMessage):
 
     def to_cohere_dict(
         self,
-        function_call_role: Optional[str] = "SYSTEM",
-        function_call_prefix: Optional[str] = "[CHATBOT called function]",
-        function_response_role: Optional[str] = "SYSTEM",
-        function_response_prefix: Optional[str] = "[CHATBOT function returned]",
-        inner_thoughts_as_kwarg: Optional[bool] = False,
-    ) -> List[dict]:
+        function_call_role: str | None = "SYSTEM",
+        function_call_prefix: str | None = "[CHATBOT called function]",
+        function_response_role: str | None = "SYSTEM",
+        function_response_prefix: str | None = "[CHATBOT function returned]",
+        inner_thoughts_as_kwarg: bool | None = False,
+    ) -> list[dict]:
         """
         Cohere chat_history dicts only have 'role' and 'message' fields
         """
@@ -1062,7 +1070,7 @@ class Message(BaseMessage):
             The chat_history parameter should not be used for SYSTEM messages in most cases.
             Instead, to add a SYSTEM role message at the beginning of a conversation, the preamble parameter should be used.
             """
-            raise UserWarning(f"role 'system' messages should go in 'preamble' field for Cohere API")
+            raise UserWarning("role 'system' messages should go in 'preamble' field for Cohere API")
 
         elif self.role == "user":
             assert all([v is not None for v in [text_content, self.role]]), vars(self)
@@ -1154,6 +1162,6 @@ class Message(BaseMessage):
 
 class ToolReturn(BaseModel):
     status: Literal["success", "error"] = Field(..., description="The status of the tool call")
-    stdout: Optional[List[str]] = Field(None, description="Captured stdout (e.g. prints, logs) from the tool invocation")
-    stderr: Optional[List[str]] = Field(None, description="Captured stderr from the tool invocation")
+    stdout: list[str] | None = Field(None, description="Captured stdout (e.g. prints, logs) from the tool invocation")
+    stderr: list[str] | None = Field(None, description="Captured stderr from the tool invocation")
     # func_return: Optional[Any] = Field(None, description="The function return object")

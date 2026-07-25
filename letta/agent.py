@@ -5,7 +5,6 @@ import time
 import traceback
 import warnings
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Tuple, Union
 
 from openai.types.beta.function_tool import FunctionTool as OpenAITool
 
@@ -24,8 +23,14 @@ from letta.constants import (
     SEND_MESSAGE_TOOL_NAME,
 )
 from letta.errors import ContextWindowExceededError
-from letta.functions.ast_parsers import coerce_dict_args_by_annotations, get_function_annotations_from_source
-from letta.functions.composio_helpers import execute_composio_action, generate_composio_action_from_func_name
+from letta.functions.ast_parsers import (
+    coerce_dict_args_by_annotations,
+    get_function_annotations_from_source,
+)
+from letta.functions.composio_helpers import (
+    execute_composio_action,
+    generate_composio_action_from_func_name,
+)
 from letta.functions.functions import get_function_from_module
 from letta.helpers import ToolRulesSolver
 from letta.helpers.composio_helpers import get_composio_api_key
@@ -33,7 +38,11 @@ from letta.helpers.datetime_helpers import get_utc_time
 from letta.helpers.json_helpers import json_dumps, json_loads
 from letta.helpers.message_helper import convert_message_creates_to_messages
 from letta.interface import AgentInterface
-from letta.llm_api.helpers import calculate_summarizer_cutoff, get_token_counts_for_messages, is_context_overflow_error
+from letta.llm_api.helpers import (
+    calculate_summarizer_cutoff,
+    get_token_counts_for_messages,
+    is_context_overflow_error,
+)
 from letta.llm_api.llm_api_tools import create
 from letta.llm_api.llm_client import LLMClient
 from letta.local_llm.utils import num_tokens_from_functions, num_tokens_from_messages
@@ -42,16 +51,25 @@ from letta.memory import summarize_messages
 from letta.orm import User
 from letta.orm.enums import ToolType
 from letta.otel.tracing import log_event, trace_method
-from letta.schemas.agent import AgentState, AgentStepResponse, UpdateAgent, get_prompt_template_for_agent_type
+from letta.schemas.agent import (
+    AgentState,
+    AgentStepResponse,
+    UpdateAgent,
+    get_prompt_template_for_agent_type,
+)
 from letta.schemas.block import BlockUpdate
 from letta.schemas.embedding_config import EmbeddingConfig
 from letta.schemas.enums import MessageRole, ProviderType
 from letta.schemas.letta_message_content import ImageContent, TextContent
 from letta.schemas.memory import ContextWindowOverview, Memory
 from letta.schemas.message import Message, MessageCreate, ToolReturn
-from letta.schemas.openai.chat_completion_response import ChatCompletionResponse
-from letta.schemas.openai.chat_completion_response import Message as ChatCompletionMessage
-from letta.schemas.openai.chat_completion_response import UsageStatistics
+from letta.schemas.openai.chat_completion_response import (
+    ChatCompletionResponse,
+    UsageStatistics,
+)
+from letta.schemas.openai.chat_completion_response import (
+    Message as ChatCompletionMessage,
+)
 from letta.schemas.response_format import ResponseFormatType
 from letta.schemas.tool import Tool
 from letta.schemas.tool_execution_result import ToolExecutionResult
@@ -59,7 +77,10 @@ from letta.schemas.tool_rule import TerminalToolRule
 from letta.schemas.usage import LettaUsageStatistics
 from letta.services.agent_manager import AgentManager
 from letta.services.block_manager import BlockManager
-from letta.services.helpers.agent_manager_helper import check_supports_structured_output, compile_memory_metadata_block
+from letta.services.helpers.agent_manager_helper import (
+    check_supports_structured_output,
+    compile_memory_metadata_block,
+)
 from letta.services.helpers.tool_parser_helper import runtime_override_tool_json_schema
 from letta.services.job_manager import JobManager
 from letta.services.mcp.base_client import AsyncBaseMCPClient
@@ -72,8 +93,21 @@ from letta.services.tool_executor.tool_execution_sandbox import ToolExecutionSan
 from letta.services.tool_manager import ToolManager
 from letta.settings import settings, summarizer_settings
 from letta.streaming_interface import StreamingRefreshCLIInterface
-from letta.system import get_heartbeat, get_token_limit_warning, package_function_response, package_summarize_message, package_user_message
-from letta.utils import count_tokens, get_friendly_error_msg, get_tool_call_id, log_telemetry, parse_json, validate_function_response
+from letta.system import (
+    get_heartbeat,
+    get_token_limit_warning,
+    package_function_response,
+    package_summarize_message,
+    package_user_message,
+)
+from letta.utils import (
+    count_tokens,
+    get_friendly_error_msg,
+    get_tool_call_id,
+    log_telemetry,
+    parse_json,
+    validate_function_response,
+)
 
 logger = get_logger(__name__)
 
@@ -87,7 +121,7 @@ class BaseAgent(ABC):
     @abstractmethod
     def step(
         self,
-        input_messages: List[MessageCreate],
+        input_messages: list[MessageCreate],
     ) -> LettaUsageStatistics:
         """
         Top-level event message handler for the agent.
@@ -98,13 +132,13 @@ class BaseAgent(ABC):
 class Agent(BaseAgent):
     def __init__(
         self,
-        interface: Optional[Union[AgentInterface, StreamingRefreshCLIInterface]],
+        interface: AgentInterface | StreamingRefreshCLIInterface | None,
         agent_state: AgentState,  # in-memory representation of the agent state (read from multiple tables)
         user: User,
         # extras
         first_message_verify_mono: bool = True,  # TODO move to config?
         # MCP sessions, state held in-memory in the server
-        mcp_clients: Optional[Dict[str, AsyncBaseMCPClient]] = None,
+        mcp_clients: dict[str, AsyncBaseMCPClient] | None = None,
         save_last_response: bool = False,
     ):
         assert isinstance(agent_state.memory, Memory), f"Memory object is not of type Memory: {type(agent_state.memory)}"
@@ -242,11 +276,11 @@ class Agent(BaseAgent):
         function_name: str,
         function_args: dict,
         function_response: str,
-        messages: List[Message],
-        tool_returns: Optional[List[ToolReturn]] = None,
+        messages: list[Message],
+        tool_returns: list[ToolReturn] | None = None,
         include_function_failed_message: bool = False,
-        group_id: Optional[str] = None,
-    ) -> List[Message]:
+        group_id: str | None = None,
+    ) -> list[Message]:
         """
         Handle error from function call response
         """
@@ -278,8 +312,8 @@ class Agent(BaseAgent):
 
     def _runtime_override_tool_json_schema(
         self,
-        functions_list: List[Dict | None],
-    ) -> List[Dict | None]:
+        functions_list: list[dict | None],
+    ) -> list[dict | None]:
         """Override the tool JSON schema at runtime for a particular tool if conditions are met."""
 
         # Currently just injects `send_message` with a `response_format` if provided to the agent.
@@ -301,17 +335,17 @@ class Agent(BaseAgent):
     @trace_method
     def _get_ai_reply(
         self,
-        message_sequence: List[Message],
-        function_call: Optional[str] = None,
+        message_sequence: list[Message],
+        function_call: str | None = None,
         first_message: bool = False,
         stream: bool = False,  # TODO move to config?
         empty_response_retry_limit: int = 3,
         backoff_factor: float = 0.5,  # delay multiplier for exponential backoff
         max_delay: float = 10.0,  # max delay between retries
-        step_count: Optional[int] = None,
+        step_count: int | None = None,
         last_function_failed: bool = False,
         put_inner_thoughts_first: bool = True,
-        step_id: Optional[str] = None,
+        step_id: str | None = None,
     ) -> ChatCompletionResponse | None:
         """Get response from LLM API with robust retry mechanism."""
         log_telemetry(self.logger, "_get_ai_reply start")
@@ -446,9 +480,9 @@ class Agent(BaseAgent):
         # If we are streaming, we needed to create a Message ID ahead of time,
         # and now we want to use it in the creation of the Message object
         # TODO figure out a cleaner way to do this
-        response_message_id: Optional[str] = None,
-        group_id: Optional[str] = None,
-    ) -> Tuple[List[Message], bool, bool]:
+        response_message_id: str | None = None,
+        group_id: str | None = None,
+    ) -> tuple[list[Message], bool, bool]:
         """Handles parsing and function execution"""
         log_telemetry(self.logger, "_handle_ai_response start")
         # Hacky failsafe for now to make sure we didn't implement the streaming Message ID creation incorrectly
@@ -749,10 +783,10 @@ class Agent(BaseAgent):
     @trace_method
     def step(
         self,
-        input_messages: List[MessageCreate],
+        input_messages: list[MessageCreate],
         # additional args
         chaining: bool = True,
-        max_chaining_steps: Optional[int] = None,
+        max_chaining_steps: int | None = None,
         put_inner_thoughts_first: bool = True,
         **kwargs,
     ) -> LettaUsageStatistics:
@@ -853,13 +887,13 @@ class Agent(BaseAgent):
 
     def inner_step(
         self,
-        messages: List[Message],
+        messages: list[Message],
         first_message: bool = False,
         first_message_retry_limit: int = FIRST_MESSAGE_ATTEMPTS,
         skip_verify: bool = False,
         stream: bool = False,  # TODO move to config?
-        step_count: Optional[int] = None,
-        metadata: Optional[dict] = None,
+        step_count: int | None = None,
+        metadata: dict | None = None,
         summarize_attempt_count: int = 0,
         last_function_failed: bool = False,
         put_inner_thoughts_first: bool = True,
@@ -1025,7 +1059,7 @@ class Agent(BaseAgent):
                 if self.agent_state.message_buffer_autoclear:
                     # no calling the summarizer in this case
                     logger.error(
-                        f"step() failed with an exception that looks like a context window overflow, but message buffer is set to autoclear, so skipping: '{str(e)}'"
+                        f"step() failed with an exception that looks like a context window overflow, but message buffer is set to autoclear, so skipping: '{e!s}'"
                     )
                     raise e
 
@@ -1062,7 +1096,7 @@ class Agent(BaseAgent):
                     )
 
             else:
-                logger.error(f"step() failed with an unrecognized exception: '{str(e)}'")
+                logger.error(f"step() failed with an unrecognized exception: '{e!s}'")
                 traceback.print_exc()
                 raise e
 
@@ -1620,7 +1654,7 @@ class Agent(BaseAgent):
                 # Get the MCPClient from the server's handle
                 # TODO these don't get raised properly
                 if not self.mcp_clients:
-                    raise ValueError(f"No MCP client available to use")
+                    raise ValueError("No MCP client available to use")
                 if server_name not in self.mcp_clients:
                     raise ValueError(f"Unknown MCP server name: {server_name}")
                 mcp_client = self.mcp_clients[server_name]
@@ -1707,7 +1741,7 @@ def save_agent(agent: Agent):
     agent_manager.update_agent(agent_id=agent_state.id, agent_update=update_agent, actor=agent.user)
 
 
-def strip_name_field_from_user_message(user_message_text: str) -> Tuple[str, Optional[str]]:
+def strip_name_field_from_user_message(user_message_text: str) -> tuple[str, str | None]:
     """If 'name' exists in the JSON string, remove it and return the cleaned text + name value"""
     try:
         user_message_json = dict(json_loads(user_message_text))

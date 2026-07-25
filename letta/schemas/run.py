@@ -1,4 +1,3 @@
-from typing import Optional
 
 from pydantic import Field
 
@@ -27,8 +26,8 @@ class Run(RunBase):
     """
 
     id: str = RunBase.generate_id_field()
-    user_id: Optional[str] = Field(None, description="The unique identifier of the user associated with the run.")
-    request_config: Optional[LettaRequestConfig] = Field(None, description="The request configuration for the run.")
+    user_id: str | None = Field(None, description="The unique identifier of the user associated with the run.")
+    request_config: LettaRequestConfig | None = Field(None, description="The request configuration for the run.")
 
     @classmethod
     def from_job(cls, job: Job) -> "Run":

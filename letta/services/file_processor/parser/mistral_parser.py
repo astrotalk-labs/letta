@@ -65,5 +65,5 @@ class MistralFileParser(FileParser):
             return ocr_response
 
         except Exception as e:
-            logger.error(f"OCR extraction failed: {str(e)}")
+            logger.error(f"OCR extraction failed: {e!s}")
             raise

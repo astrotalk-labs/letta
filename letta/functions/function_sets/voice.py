@@ -1,5 +1,4 @@
 ## Voice chat + sleeptime tools
-from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -15,7 +14,7 @@ def rethink_user_memory(agent_state: "AgentState", new_memory: str) -> None:
         None: None is always returned as this function does not produce a response.
     """
     # This is implemented directly in the agent loop
-    return None
+    return
 
 
 def finish_rethinking_memory(agent_state: "AgentState") -> None:  # type: ignore
@@ -25,7 +24,7 @@ def finish_rethinking_memory(agent_state: "AgentState") -> None:  # type: ignore
     Returns:
         Optional[str]: None is always returned as this function does not produce a response.
     """
-    return None
+    return
 
 
 class MemoryChunk(BaseModel):
@@ -43,7 +42,7 @@ class MemoryChunk(BaseModel):
     )
 
 
-def store_memories(agent_state: "AgentState", chunks: List[MemoryChunk]) -> None:
+def store_memories(agent_state: "AgentState", chunks: list[MemoryChunk]) -> None:
     """
     Persist dialogue that is about to fall out of the agent’s context window.
 
@@ -55,15 +54,15 @@ def store_memories(agent_state: "AgentState", chunks: List[MemoryChunk]) -> None
         None
     """
     # This is implemented directly in the agent loop
-    return None
+    return
 
 
 def search_memory(
     agent_state: "AgentState",
-    convo_keyword_queries: Optional[List[str]],
-    start_minutes_ago: Optional[int],
-    end_minutes_ago: Optional[int],
-) -> Optional[str]:
+    convo_keyword_queries: list[str] | None,
+    start_minutes_ago: int | None,
+    end_minutes_ago: int | None,
+) -> str | None:
     """
     Look in long-term or earlier-conversation memory only when the user asks about something missing from the visible context. The user’s latest utterance is sent automatically as the main query.
 

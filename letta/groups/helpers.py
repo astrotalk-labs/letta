@@ -1,5 +1,4 @@
 import json
-from typing import Dict, Optional, Union
 
 from letta.agent import Agent
 from letta.interface import AgentInterface
@@ -13,10 +12,10 @@ from letta.services.mcp.base_client import AsyncBaseMCPClient
 
 def load_multi_agent(
     group: Group,
-    agent_state: Optional[AgentState],
+    agent_state: AgentState | None,
     actor: User,
-    interface: Union[AgentInterface, None] = None,
-    mcp_clients: Optional[Dict[str, AsyncBaseMCPClient]] = None,
+    interface: AgentInterface | None = None,
+    mcp_clients: dict[str, AsyncBaseMCPClient] | None = None,
 ) -> Agent:
     if len(group.agent_ids) == 0:
         raise ValueError("Empty group: group must have at least one agent")

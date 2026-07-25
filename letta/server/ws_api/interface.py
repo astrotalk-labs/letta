@@ -1,8 +1,8 @@
 import asyncio
 import threading
 
-import letta.server.ws_api.protocol as protocol
 from letta.interface import AgentInterface
+from letta.server.ws_api import protocol
 
 
 class BaseWebSocketInterface(AgentInterface):

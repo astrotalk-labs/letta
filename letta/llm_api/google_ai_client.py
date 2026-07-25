@@ -1,4 +1,3 @@
-from typing import List, Optional, Tuple
 
 import httpx
 from google import genai
@@ -19,8 +18,8 @@ class GoogleAIClient(GoogleVertexClient):
 
 
 def get_gemini_endpoint_and_headers(
-    base_url: str, model: Optional[str], api_key: str, key_in_header: bool = True, generate_content: bool = False
-) -> Tuple[str, dict]:
+    base_url: str, model: str | None, api_key: str, key_in_header: bool = True, generate_content: bool = False
+) -> tuple[str, dict]:
     """
     Dynamically generate the model endpoint and headers.
     """
@@ -62,7 +61,7 @@ def google_ai_check_valid_api_key(api_key: str):
         raise LLMError(message=f"{e}", code=ErrorCode.INTERNAL_SERVER_ERROR)
 
 
-def google_ai_get_model_list(base_url: str, api_key: str, key_in_header: bool = True) -> List[dict]:
+def google_ai_get_model_list(base_url: str, api_key: str, key_in_header: bool = True) -> list[dict]:
     """Synchronous version to get model list from Google AI API using httpx."""
     import httpx
 
@@ -101,8 +100,8 @@ def google_ai_get_model_list(base_url: str, api_key: str, key_in_header: bool = 
 
 
 async def google_ai_get_model_list_async(
-    base_url: str, api_key: str, key_in_header: bool = True, client: Optional[httpx.AsyncClient] = None
-) -> List[dict]:
+    base_url: str, api_key: str, key_in_header: bool = True, client: httpx.AsyncClient | None = None
+) -> list[dict]:
     """Asynchronous version to get model list from Google AI API using httpx."""
     from letta.utils import printd
 
@@ -188,7 +187,7 @@ def google_ai_get_model_details(base_url: str, api_key: str, model: str, key_in_
 
 
 async def google_ai_get_model_details_async(
-    base_url: str, api_key: str, model: str, key_in_header: bool = True, client: Optional[httpx.AsyncClient] = None
+    base_url: str, api_key: str, model: str, key_in_header: bool = True, client: httpx.AsyncClient | None = None
 ) -> dict:
     """Asynchronous version to get model details from Google AI API using httpx."""
     import httpx

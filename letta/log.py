@@ -2,7 +2,6 @@ import logging
 from logging.config import dictConfig
 from pathlib import Path
 from sys import stdout
-from typing import Optional
 
 from letta.settings import settings
 
@@ -65,7 +64,7 @@ DEVELOPMENT_LOGGING = {
 dictConfig(DEVELOPMENT_LOGGING)
 
 
-def get_logger(name: Optional[str] = None) -> "logging.Logger":
+def get_logger(name: str | None = None) -> "logging.Logger":
     """returns the project logger, scoped to a child name if provided
     Args:
         name: will define a child logger

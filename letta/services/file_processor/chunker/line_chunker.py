@@ -1,9 +1,11 @@
 import re
-from typing import List, Optional
 
 from letta.log import get_logger
 from letta.schemas.file import FileMetadata
-from letta.services.file_processor.file_types import ChunkingStrategy, file_type_registry
+from letta.services.file_processor.file_types import (
+    ChunkingStrategy,
+    file_type_registry,
+)
 
 logger = get_logger(__name__)
 
@@ -38,7 +40,7 @@ class LineChunker:
         # Default fallback
         return ChunkingStrategy.LINE_BASED
 
-    def _chunk_by_lines(self, text: str, preserve_indentation: bool = False) -> List[str]:
+    def _chunk_by_lines(self, text: str, preserve_indentation: bool = False) -> list[str]:
         """Traditional line-based chunking for code and structured data"""
         lines = []
         for line in text.splitlines():
@@ -55,7 +57,7 @@ class LineChunker:
                     lines.append(line)
         return lines
 
-    def _chunk_by_sentences(self, text: str) -> List[str]:
+    def _chunk_by_sentences(self, text: str) -> list[str]:
         """Sentence-based chunking for documentation and markup"""
         # Simple sentence splitting on periods, exclamation marks, and question marks
         # followed by whitespace or end of string
@@ -73,7 +75,7 @@ class LineChunker:
 
         return cleaned_sentences
 
-    def _chunk_by_characters(self, text: str, target_line_length: int = 100) -> List[str]:
+    def _chunk_by_characters(self, text: str, target_line_length: int = 100) -> list[str]:
         """Character-based wrapping for prose text"""
         words = text.split()
         lines = []
@@ -99,8 +101,8 @@ class LineChunker:
         return [line for line in lines if line.strip()]
 
     def chunk_text(
-        self, text: str, file_metadata: FileMetadata, start: Optional[int] = None, end: Optional[int] = None, add_metadata: bool = True
-    ) -> List[str]:
+        self, text: str, file_metadata: FileMetadata, start: int | None = None, end: int | None = None, add_metadata: bool = True
+    ) -> list[str]:
         """Content-aware text chunking based on file type"""
         strategy = self._determine_chunking_strategy(file_metadata)
 

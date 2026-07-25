@@ -100,10 +100,10 @@ class AsyncComposioToolSet(BaseComposioToolSet, runtime="letta", description_cha
                         raise ValueError(f"API request failed with status {response.status}: {error_message}")
         except aiohttp.ClientError as e:
             # Wrap network errors in ComposioSDKError
-            raise ComposioSDKError(f"Network error when calling Composio API: {str(e)}")
+            raise ComposioSDKError(f"Network error when calling Composio API: {e!s}")
         except ValueError:
             # Re-raise ValueError (which could be our custom error message or a JSON parsing error)
             raise
         except Exception as e:
             # Catch any other exceptions and wrap them in ComposioSDKError
-            raise ComposioSDKError(f"Unexpected error when calling Composio API: {str(e)}")
+            raise ComposioSDKError(f"Unexpected error when calling Composio API: {e!s}")

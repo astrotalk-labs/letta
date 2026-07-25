@@ -1,7 +1,8 @@
 import json
+from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from enum import Enum
-from typing import AsyncGenerator, List, Optional, Union
+from typing import Optional
 
 from anthropic import AsyncStream
 from anthropic.types.beta import (
@@ -36,7 +37,11 @@ from letta.schemas.letta_message import (
     ToolCallDelta,
     ToolCallMessage,
 )
-from letta.schemas.letta_message_content import ReasoningContent, RedactedReasoningContent, TextContent
+from letta.schemas.letta_message_content import (
+    ReasoningContent,
+    RedactedReasoningContent,
+    TextContent,
+)
 from letta.schemas.letta_stop_reason import LettaStopReason, StopReasonType
 from letta.schemas.message import Message
 from letta.schemas.openai.chat_completion_response import FunctionCall, ToolCall
@@ -131,7 +136,7 @@ class AnthropicStreamingInterface:
         self,
         stream: AsyncStream[BetaRawMessageStreamEvent],
         ttft_span: Optional["Span"] = None,
-        provider_request_start_timestamp_ns: Optional[int] = None,
+        provider_request_start_timestamp_ns: int | None = None,
     ) -> AsyncGenerator[LettaMessage, None]:
         prev_message_type = None
         message_index = 0
@@ -392,10 +397,10 @@ class AnthropicStreamingInterface:
         finally:
             logger.info("AnthropicStreamingInterface: Stream processing complete.")
 
-    def get_reasoning_content(self) -> List[Union[TextContent, ReasoningContent, RedactedReasoningContent]]:
+    def get_reasoning_content(self) -> list[TextContent | ReasoningContent | RedactedReasoningContent]:
         def _process_group(
-            group: List[Union[ReasoningMessage, HiddenReasoningMessage]], group_type: str
-        ) -> Union[TextContent, ReasoningContent, RedactedReasoningContent]:
+            group: list[ReasoningMessage | HiddenReasoningMessage], group_type: str
+        ) -> TextContent | ReasoningContent | RedactedReasoningContent:
             if group_type == "reasoning":
                 reasoning_text = "".join(chunk.reasoning for chunk in group).strip()
                 is_native = any(chunk.source == "reasoner_model" for chunk in group)

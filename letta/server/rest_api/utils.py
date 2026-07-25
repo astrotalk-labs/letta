@@ -3,17 +3,30 @@ import json
 import os
 import uuid
 import warnings
+from collections.abc import AsyncGenerator, Iterable
 from enum import Enum
-from typing import TYPE_CHECKING, AsyncGenerator, Dict, Iterable, List, Optional, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    cast,
+)
 
 from fastapi import Header, HTTPException
 from openai.types.chat import ChatCompletionMessageParam
-from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall as OpenAIToolCall
-from openai.types.chat.chat_completion_message_tool_call import Function as OpenAIFunction
+from openai.types.chat.chat_completion_message_tool_call import (
+    ChatCompletionMessageToolCall as OpenAIToolCall,
+)
+from openai.types.chat.chat_completion_message_tool_call import (
+    Function as OpenAIFunction,
+)
 from openai.types.chat.completion_create_params import CompletionCreateParams
 from pydantic import BaseModel
 
-from letta.constants import DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG, FUNC_FAILED_HEARTBEAT_MESSAGE, REQ_HEARTBEAT_MESSAGE
+from letta.constants import (
+    DEFAULT_MESSAGE_TOOL,
+    DEFAULT_MESSAGE_TOOL_KWARG,
+    FUNC_FAILED_HEARTBEAT_MESSAGE,
+    REQ_HEARTBEAT_MESSAGE,
+)
 from letta.errors import ContextWindowExceededError, RateLimitExceededError
 from letta.helpers.datetime_helpers import get_utc_time, get_utc_timestamp_ns, ns_to_ms
 from letta.helpers.message_helper import convert_message_creates_to_messages
@@ -22,7 +35,12 @@ from letta.otel.context import get_ctx_attributes
 from letta.otel.metric_registry import MetricRegistry
 from letta.otel.tracing import tracer
 from letta.schemas.enums import MessageRole
-from letta.schemas.letta_message_content import OmittedReasoningContent, ReasoningContent, RedactedReasoningContent, TextContent
+from letta.schemas.letta_message_content import (
+    OmittedReasoningContent,
+    ReasoningContent,
+    RedactedReasoningContent,
+    TextContent,
+)
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.message import Message, MessageCreate, ToolReturn
 from letta.schemas.tool_execution_result import ToolExecutionResult
@@ -44,7 +62,7 @@ SSE_ARTIFICIAL_DELAY = 0.1
 logger = get_logger(__name__)
 
 
-def sse_formatter(data: Union[dict, str]) -> str:
+def sse_formatter(data: dict | str) -> str:
     """Prefix with 'data: ', and always include double newlines"""
     assert type(data) in [dict, str], f"Expected type dict or str, got type {type(data)}"
     data_str = json.dumps(data, separators=(",", ":")) if isinstance(data, dict) else data
@@ -54,10 +72,10 @@ def sse_formatter(data: Union[dict, str]) -> str:
 
 async def sse_async_generator(
     generator: AsyncGenerator,
-    usage_task: Optional[asyncio.Task] = None,
+    usage_task: asyncio.Task | None = None,
     finish_message=True,
-    request_start_timestamp_ns: Optional[int] = None,
-    llm_config: Optional[LLMConfig] = None,
+    request_start_timestamp_ns: int | None = None,
+    llm_config: LLMConfig | None = None,
 ):
     """
     Wraps a generator for use in Server-Sent Events (SSE), handling errors and ensuring a completion message.
@@ -124,7 +142,7 @@ async def sse_async_generator(
             except Exception as e:
                 log_error_to_sentry(e)
                 logger.error(f"Caught unexpected Exception: {e}")
-                yield sse_formatter({"error": f"Stream failed (internal error occurred)"})
+                yield sse_formatter({"error": "Stream failed (internal error occurred)"})
 
     except Exception as e:
         log_error_to_sentry(e)
@@ -147,7 +165,7 @@ def get_letta_server() -> "SyncServer":
 
 
 # Dependency to get user_id from headers
-def get_user_id(user_id: Optional[str] = Header(None, alias="user_id")) -> Optional[str]:
+def get_user_id(user_id: str | None = Header(None, alias="user_id")) -> str | None:
     return user_id
 
 
@@ -169,7 +187,7 @@ def log_error_to_sentry(e):
         sentry_sdk.capture_exception(e)
 
 
-def create_input_messages(input_messages: List[MessageCreate], agent_id: str, actor: User) -> List[Message]:
+def create_input_messages(input_messages: list[MessageCreate], agent_id: str, actor: User) -> list[Message]:
     """
     Converts a user input message into the internal structured format.
 
@@ -187,18 +205,18 @@ def create_letta_messages_from_llm_response(
     agent_id: str,
     model: str,
     function_name: str,
-    function_arguments: Dict,
+    function_arguments: dict,
     tool_execution_result: ToolExecutionResult,
     tool_call_id: str,
     function_call_success: bool,
-    function_response: Optional[str],
+    function_response: str | None,
     actor: User,
     add_heartbeat_request_system_message: bool = False,
-    reasoning_content: Optional[List[Union[TextContent, ReasoningContent, RedactedReasoningContent, OmittedReasoningContent]]] = None,
-    pre_computed_assistant_message_id: Optional[str] = None,
-    llm_batch_item_id: Optional[str] = None,
+    reasoning_content: list[TextContent | ReasoningContent | RedactedReasoningContent | OmittedReasoningContent] | None = None,
+    pre_computed_assistant_message_id: str | None = None,
+    llm_batch_item_id: str | None = None,
     step_id: str | None = None,
-) -> List[Message]:
+) -> list[Message]:
     messages = []
 
     # Construct the tool call with the assistant's message
@@ -265,7 +283,7 @@ def create_letta_messages_from_llm_response(
 
 
 def create_heartbeat_system_message(
-    agent_id: str, model: str, function_call_success: bool, actor: User, llm_batch_item_id: Optional[str] = None
+    agent_id: str, model: str, function_call_success: bool, actor: User, llm_batch_item_id: str | None = None
 ) -> Message:
     text_content = REQ_HEARTBEAT_MESSAGE if function_call_success else FUNC_FAILED_HEARTBEAT_MESSAGE
     heartbeat_system_message = Message(
@@ -287,7 +305,7 @@ def create_assistant_messages_from_openai_response(
     agent_id: str,
     model: str,
     actor: User,
-) -> List[Message]:
+) -> list[Message]:
     """
     Converts an OpenAI response into Messages that follow the internal
     paradigm where LLM responses are structured as tool calls instead of content.
@@ -308,7 +326,7 @@ def create_assistant_messages_from_openai_response(
     )
 
 
-def convert_in_context_letta_messages_to_openai(in_context_messages: List[Message], exclude_system_messages: bool = False) -> List[dict]:
+def convert_in_context_letta_messages_to_openai(in_context_messages: list[Message], exclude_system_messages: bool = False) -> list[dict]:
     """
     Flattens Letta's messages (with system, user, assistant, tool roles, etc.)
     into standard OpenAI chat messages (system, user, assistant).
@@ -391,7 +409,7 @@ def convert_in_context_letta_messages_to_openai(in_context_messages: List[Messag
     return openai_messages
 
 
-def get_user_message_from_chat_completions_request(completion_request: CompletionCreateParams) -> List[MessageCreate]:
+def get_user_message_from_chat_completions_request(completion_request: CompletionCreateParams) -> list[MessageCreate]:
     try:
         messages = list(cast(Iterable[ChatCompletionMessageParam], completion_request["messages"]))
     except KeyError:
@@ -402,7 +420,7 @@ def get_user_message_from_chat_completions_request(completion_request: Completio
         raise HTTPException(status_code=400, detail="The 'messages' field must be an iterable.")
     except Exception as e:
         # Catch any other unexpected errors and include the exception message
-        raise HTTPException(status_code=400, detail=f"An error occurred while processing 'messages': {str(e)}")
+        raise HTTPException(status_code=400, detail=f"An error occurred while processing 'messages': {e!s}")
 
     if messages[-1]["role"] != "user":
         logger.error(f"The last message does not have a `user` role: {messages}")

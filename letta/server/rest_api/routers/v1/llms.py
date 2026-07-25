@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Header, Query
 
@@ -13,13 +13,13 @@ if TYPE_CHECKING:
 router = APIRouter(prefix="/models", tags=["models", "llms"])
 
 
-@router.get("/", response_model=List[LLMConfig], operation_id="list_models")
+@router.get("/", response_model=list[LLMConfig], operation_id="list_models")
 async def list_llm_models(
-    provider_category: Optional[List[ProviderCategory]] = Query(None),
-    provider_name: Optional[str] = Query(None),
-    provider_type: Optional[ProviderType] = Query(None),
+    provider_category: list[ProviderCategory] | None = Query(None),
+    provider_name: str | None = Query(None),
+    provider_type: ProviderType | None = Query(None),
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
     # Extract user_id from header, default to None if not present
 ):
     """List available LLM models using the asynchronous implementation for improved performance"""
@@ -35,10 +35,10 @@ async def list_llm_models(
     return models
 
 
-@router.get("/embedding", response_model=List[EmbeddingConfig], operation_id="list_embedding_models")
+@router.get("/embedding", response_model=list[EmbeddingConfig], operation_id="list_embedding_models")
 async def list_embedding_models(
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
     # Extract user_id from header, default to None if not present
 ):
     """List available embedding models using the asynchronous implementation for improved performance"""

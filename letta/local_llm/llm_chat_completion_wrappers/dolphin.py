@@ -85,7 +85,7 @@ class Dolphin21MistralWrapper(LLMChatCompletionWrapper):
             func_str = ""
             func_str += f"{schema['name']}:"
             func_str += f"\n  description: {schema['description']}"
-            func_str += f"\n  params:"
+            func_str += "\n  params:"
             for param_k, param_v in schema["parameters"]["properties"].items():
                 # TODO we're ignoring type
                 func_str += f"\n    {param_k}: {param_v['description']}"
@@ -93,8 +93,8 @@ class Dolphin21MistralWrapper(LLMChatCompletionWrapper):
             return func_str
 
         # prompt += f"\nPlease select the most suitable function and parameters from the list of available functions below, based on the user's input. Provide your response in JSON format."
-        prompt += f"\nPlease select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
-        prompt += f"\nAvailable functions:"
+        prompt += "\nPlease select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
+        prompt += "\nAvailable functions:"
         if function_documentation is not None:
             prompt += f"\n{function_documentation}"
         else:
@@ -167,7 +167,7 @@ class Dolphin21MistralWrapper(LLMChatCompletionWrapper):
                     prompt += f"\n{message['content']}"
                 # prompt += f"\nASSISTANT: {message['content']}"
                 # need to add the function call if there was one
-                if "function_call" in message and message["function_call"]:
+                if message.get("function_call"):
                     prompt += f"\n{create_function_call(message['function_call'])}"
                 prompt += f"{IM_END_TOKEN}"
             elif message["role"] in ["function", "tool"]:
@@ -224,12 +224,12 @@ class Dolphin21MistralWrapper(LLMChatCompletionWrapper):
         try:
             function_json_output = clean_json(raw_llm_output)
         except Exception as e:
-            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{str(e)}")
+            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{e!s}")
         try:
             function_name = function_json_output["function"]
             function_parameters = function_json_output["params"]
         except KeyError as e:
-            raise LLMJSONParsingError(f"Received valid JSON from LLM, but JSON was missing fields: {str(e)}")
+            raise LLMJSONParsingError(f"Received valid JSON from LLM, but JSON was missing fields: {e!s}")
 
         if self.clean_func_args:
             function_name, function_parameters = self.clean_function_args(function_name, function_parameters)

@@ -1,6 +1,5 @@
 import asyncio
 from datetime import datetime, timezone
-from typing import List, Optional
 
 from letta.agents.base_agent import BaseAgent
 from letta.agents.letta_agent import LettaAgent
@@ -39,7 +38,7 @@ class SleeptimeMultiAgentV2(BaseAgent):
         actor: User,
         step_manager: StepManager = NoopStepManager(),
         telemetry_manager: TelemetryManager = NoopTelemetryManager(),
-        group: Optional[Group] = None,
+        group: Group | None = None,
     ):
         super().__init__(
             agent_id=agent_id,
@@ -61,11 +60,11 @@ class SleeptimeMultiAgentV2(BaseAgent):
     @trace_method
     async def step(
         self,
-        input_messages: List[MessageCreate],
+        input_messages: list[MessageCreate],
         max_steps: int = DEFAULT_MAX_STEPS,
         use_assistant_message: bool = True,
-        request_start_timestamp_ns: Optional[int] = None,
-        include_return_message_types: Optional[List[MessageType]] = None,
+        request_start_timestamp_ns: int | None = None,
+        include_return_message_types: list[MessageType] | None = None,
     ) -> LettaResponse:
         run_ids = []
 
@@ -122,7 +121,7 @@ class SleeptimeMultiAgentV2(BaseAgent):
 
                 except Exception as e:
                     # Individual task failures
-                    print(f"Agent processing failed: {str(e)}")
+                    print(f"Agent processing failed: {e!s}")
                     raise e
 
         response.usage.run_ids = run_ids
@@ -131,7 +130,7 @@ class SleeptimeMultiAgentV2(BaseAgent):
     async def _issue_background_task(
         self,
         sleeptime_agent_id: str,
-        response_messages: List[Message],
+        response_messages: list[Message],
         last_processed_message_id: str,
         use_assistant_message: bool = True,
     ) -> str:
@@ -161,7 +160,7 @@ class SleeptimeMultiAgentV2(BaseAgent):
         self,
         foreground_agent_id: str,
         sleeptime_agent_id: str,
-        response_messages: List[Message],
+        response_messages: list[Message],
         last_processed_message_id: str,
         run_id: str,
         use_assistant_message: bool = True,

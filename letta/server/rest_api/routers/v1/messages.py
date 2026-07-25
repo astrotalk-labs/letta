@@ -1,4 +1,3 @@
-from typing import List, Optional
 
 from fastapi import APIRouter, Body, Depends, Header, Query, status
 from fastapi.exceptions import HTTPException
@@ -31,7 +30,7 @@ async def create_messages_batch(
     request: Request,
     payload: CreateBatch = Body(..., description="Messages and config for all agents"),
     server: SyncServer = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Submit a batch of agent messages for asynchronous processing.
@@ -49,7 +48,7 @@ async def create_messages_batch(
     if not settings.enable_batch_job_polling:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Server misconfiguration: LETTA_ENABLE_BATCH_JOB_POLLING is set to False.",
+            detail="Server misconfiguration: LETTA_ENABLE_BATCH_JOB_POLLING is set to False.",
         )
 
     actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
@@ -94,7 +93,7 @@ async def create_messages_batch(
 @router.get("/batches/{batch_id}", response_model=BatchJob, operation_id="retrieve_batch_run")
 async def retrieve_batch_run(
     batch_id: str,
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
     server: "SyncServer" = Depends(get_letta_server),
 ):
     """
@@ -109,9 +108,9 @@ async def retrieve_batch_run(
         raise HTTPException(status_code=404, detail="Batch not found")
 
 
-@router.get("/batches", response_model=List[BatchJob], operation_id="list_batch_runs")
+@router.get("/batches", response_model=list[BatchJob], operation_id="list_batch_runs")
 async def list_batch_runs(
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
     server: "SyncServer" = Depends(get_letta_server),
 ):
     """
@@ -132,12 +131,12 @@ async def list_batch_runs(
 async def list_batch_messages(
     batch_id: str,
     limit: int = Query(100, description="Maximum number of messages to return"),
-    cursor: Optional[str] = Query(
+    cursor: str | None = Query(
         None, description="Message ID to use as pagination cursor (get messages before/after this ID) depending on sort_descending."
     ),
-    agent_id: Optional[str] = Query(None, description="Filter messages by agent ID"),
+    agent_id: str | None = Query(None, description="Filter messages by agent ID"),
     sort_descending: bool = Query(True, description="Sort messages by creation time (true=newest first)"),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
     server: SyncServer = Depends(get_letta_server),
 ):
     """
@@ -172,7 +171,7 @@ async def list_batch_messages(
 async def cancel_batch_run(
     batch_id: str,
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     Cancel a batch run.

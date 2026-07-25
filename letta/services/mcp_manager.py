@@ -1,13 +1,25 @@
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
-import letta.constants as constants
-from letta.functions.mcp_client.types import MCPServerType, MCPTool, SSEServerConfig, StdioServerConfig, StreamableHTTPServerConfig
+from letta import constants
+from letta.functions.mcp_client.types import (
+    MCPServerType,
+    MCPTool,
+    SSEServerConfig,
+    StdioServerConfig,
+    StreamableHTTPServerConfig,
+)
 from letta.log import get_logger
 from letta.orm.errors import NoResultFound
 from letta.orm.mcp_server import MCPServer as MCPServerModel
-from letta.schemas.mcp import MCPServer, UpdateMCPServer, UpdateSSEMCPServer, UpdateStdioMCPServer, UpdateStreamableHTTPMCPServer
+from letta.schemas.mcp import (
+    MCPServer,
+    UpdateMCPServer,
+    UpdateSSEMCPServer,
+    UpdateStdioMCPServer,
+    UpdateStreamableHTTPMCPServer,
+)
 from letta.schemas.tool import Tool as PydanticTool
 from letta.schemas.tool import ToolCreate
 from letta.schemas.user import User as PydanticUser
@@ -30,7 +42,7 @@ class MCPManager:
         self.cached_mcp_servers = {}  # maps id -> async connection
 
     @enforce_types
-    async def list_mcp_server_tools(self, mcp_server_name: str, actor: PydanticUser) -> List[MCPTool]:
+    async def list_mcp_server_tools(self, mcp_server_name: str, actor: PydanticUser) -> list[MCPTool]:
         """Get a list of all tools for a specific MCP server."""
         mcp_server_id = await self.get_mcp_server_id_by_name(mcp_server_name, actor=actor)
         mcp_config = await self.get_mcp_server_by_id_async(mcp_server_id, actor=actor)
@@ -56,8 +68,8 @@ class MCPManager:
 
     @enforce_types
     async def execute_mcp_server_tool(
-        self, mcp_server_name: str, tool_name: str, tool_args: Optional[Dict[str, Any]], actor: PydanticUser
-    ) -> Tuple[str, bool]:
+        self, mcp_server_name: str, tool_name: str, tool_args: dict[str, Any] | None, actor: PydanticUser
+    ) -> tuple[str, bool]:
         """Call a specific tool from a specific MCP server."""
         from letta.settings import tool_settings
 
@@ -107,7 +119,7 @@ class MCPManager:
         return None
 
     @enforce_types
-    async def list_mcp_servers(self, actor: PydanticUser) -> List[MCPServer]:
+    async def list_mcp_servers(self, actor: PydanticUser) -> list[MCPServer]:
         """List all MCP servers available"""
         async with db_registry.async_session() as session:
             mcp_servers = await MCPServerModel.list_async(
@@ -178,7 +190,7 @@ class MCPManager:
             return mcp_server.to_pydantic()
 
     @enforce_types
-    async def get_mcp_server_id_by_name(self, mcp_server_name: str, actor: PydanticUser) -> Optional[str]:
+    async def get_mcp_server_id_by_name(self, mcp_server_name: str, actor: PydanticUser) -> str | None:
         """Retrieve a MCP server by its name and a user"""
         try:
             async with db_registry.async_session() as session:
@@ -240,7 +252,7 @@ class MCPManager:
             except NoResultFound:
                 raise ValueError(f"MCP server with id {mcp_server_id} not found.")
 
-    def read_mcp_config(self) -> dict[str, Union[SSEServerConfig, StdioServerConfig, StreamableHTTPServerConfig]]:
+    def read_mcp_config(self) -> dict[str, SSEServerConfig | StdioServerConfig | StreamableHTTPServerConfig]:
         mcp_server_list = {}
 
         # Attempt to read from ~/.letta/mcp_config.json

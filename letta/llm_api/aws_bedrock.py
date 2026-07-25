@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, List
+from typing import Any
 
 from anthropic import AnthropicBedrock
 
@@ -43,7 +43,7 @@ def get_bedrock_client():
     return bedrock
 
 
-def bedrock_get_model_list(region_name: str) -> List[dict]:
+def bedrock_get_model_list(region_name: str) -> list[dict]:
     """
     Get list of available models from Bedrock.
 
@@ -63,11 +63,11 @@ def bedrock_get_model_list(region_name: str) -> List[dict]:
         response = bedrock.list_inference_profiles()
         return response["inferenceProfileSummaries"]
     except Exception as e:
-        logger.exception(f"Error getting model list: {str(e)}", e)
+        logger.exception(f"Error getting model list: {e!s}", e)
         raise e
 
 
-def bedrock_get_model_details(region_name: str, model_id: str) -> Dict[str, Any]:
+def bedrock_get_model_details(region_name: str, model_id: str) -> dict[str, Any]:
     """
     Get details for a specific model from Bedrock.
     """
@@ -80,7 +80,7 @@ def bedrock_get_model_details(region_name: str, model_id: str) -> Dict[str, Any]
         response = bedrock.get_foundation_model(modelIdentifier=model_id)
         return response["modelDetails"]
     except ClientError as e:
-        logger.exception(f"Error getting model details: {str(e)}")
+        logger.exception(f"Error getting model details: {e!s}")
         raise e
 
 

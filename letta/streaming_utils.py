@@ -1,4 +1,3 @@
-from typing import Optional, Tuple
 
 from letta.constants import DEFAULT_MESSAGE_TOOL_KWARG
 
@@ -48,7 +47,7 @@ class JSONInnerThoughtsExtractor:
         self.hold_main_json = wait_for_first_key
         self.main_json_held_buffer = ""
 
-    def process_fragment(self, fragment: str) -> Tuple[str, str]:
+    def process_fragment(self, fragment: str) -> tuple[str, str]:
         updates_main_json = ""
         updates_inner_thoughts = ""
         i = 0
@@ -236,7 +235,7 @@ class FunctionArgumentsStreamHandler:
         self.accumulating = False
         self.message_started = False
 
-    def process_json_chunk(self, chunk: str) -> Optional[str]:
+    def process_json_chunk(self, chunk: str) -> str | None:
         """Process a chunk from the function arguments and return the plaintext version"""
         # Use strip to handle only leading and trailing whitespace in control structures
         if self.accumulating:

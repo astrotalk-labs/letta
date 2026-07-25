@@ -1,13 +1,22 @@
 import json
 import re
 import warnings
-from typing import List, Optional
 
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.message import Message as _Message
-from letta.schemas.openai.chat_completion_request import AssistantMessage, ChatCompletionRequest, ChatMessage
-from letta.schemas.openai.chat_completion_request import FunctionCall as ToolFunctionChoiceFunctionCall
-from letta.schemas.openai.chat_completion_request import Tool, ToolFunctionChoice, ToolMessage, UserMessage, cast_message_to_subtype
+from letta.schemas.openai.chat_completion_request import (
+    AssistantMessage,
+    ChatCompletionRequest,
+    ChatMessage,
+    Tool,
+    ToolFunctionChoice,
+    ToolMessage,
+    UserMessage,
+    cast_message_to_subtype,
+)
+from letta.schemas.openai.chat_completion_request import (
+    FunctionCall as ToolFunctionChoiceFunctionCall,
+)
 from letta.schemas.openai.chat_completion_response import ChatCompletionResponse
 from letta.schemas.openai.openai import Function, ToolCall
 from letta.utils import get_tool_call_id
@@ -40,7 +49,7 @@ def handle_assistant_message(assistant_message: AssistantMessage) -> AssistantMe
     return assistant_message
 
 
-def map_messages_to_deepseek_format(messages: List[ChatMessage]) -> List[_Message]:
+def map_messages_to_deepseek_format(messages: list[ChatMessage]) -> list[_Message]:
     """
     Deepeek API has the following constraints: messages must be interleaved between user and assistant messages, ending on a user message.
     Tools are currently unstable for V3 and not supported for R1 in the API: https://api-docs.deepseek.com/guides/function_calling.
@@ -84,12 +93,12 @@ def map_messages_to_deepseek_format(messages: List[ChatMessage]) -> List[_Messag
 
 def build_deepseek_chat_completions_request(
     llm_config: LLMConfig,
-    messages: List[_Message],
-    user_id: Optional[str],
-    functions: Optional[list],
-    function_call: Optional[str],
+    messages: list[_Message],
+    user_id: str | None,
+    functions: list | None,
+    function_call: str | None,
     use_tool_naming: bool,
-    max_tokens: Optional[int],
+    max_tokens: int | None,
 ) -> ChatCompletionRequest:
     # if functions and llm_config.put_inner_thoughts_in_kwargs:
     #     # Special case for LM Studio backend since it needs extra guidance to force out the thoughts first
@@ -120,7 +129,7 @@ def build_deepseek_chat_completions_request(
 
         def add_functions_to_system_message(system_message: ChatMessage):
             system_message.content += f"<available functions> {''.join(json.dumps(f) for f in functions)} </available functions>"
-            system_message.content += f'Select best function to call simply respond with a single json block with the fields "name" and "arguments". Use double quotes around the arguments.'
+            system_message.content += 'Select best function to call simply respond with a single json block with the fields "name" and "arguments". Use double quotes around the arguments.'
 
         if llm_config.model == "deepseek-reasoner":  # R1 currently doesn't support function calling natively
             add_functions_to_system_message(
@@ -248,7 +257,7 @@ def convert_deepseek_response_to_chatcompletion(
             json.loads(converted_str)
             return converted_str
         except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to create valid JSON with double quotes: {str(e)}")
+            raise ValueError(f"Failed to create valid JSON with double quotes: {e!s}")
 
     def extract_json_block(text):
         # Find the first {

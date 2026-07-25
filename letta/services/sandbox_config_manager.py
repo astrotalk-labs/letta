@@ -1,4 +1,3 @@
-from typing import Dict, List, Optional
 
 from letta.constants import LETTA_TOOL_EXECUTION_DIR
 from letta.log import get_logger
@@ -6,11 +5,20 @@ from letta.orm.errors import NoResultFound
 from letta.orm.sandbox_config import SandboxConfig as SandboxConfigModel
 from letta.orm.sandbox_config import SandboxEnvironmentVariable as SandboxEnvVarModel
 from letta.otel.tracing import trace_method
-from letta.schemas.environment_variables import SandboxEnvironmentVariable as PydanticEnvVar
-from letta.schemas.environment_variables import SandboxEnvironmentVariableCreate, SandboxEnvironmentVariableUpdate
-from letta.schemas.sandbox_config import LocalSandboxConfig
+from letta.schemas.environment_variables import (
+    SandboxEnvironmentVariable as PydanticEnvVar,
+)
+from letta.schemas.environment_variables import (
+    SandboxEnvironmentVariableCreate,
+    SandboxEnvironmentVariableUpdate,
+)
+from letta.schemas.sandbox_config import (
+    LocalSandboxConfig,
+    SandboxConfigCreate,
+    SandboxConfigUpdate,
+    SandboxType,
+)
 from letta.schemas.sandbox_config import SandboxConfig as PydanticSandboxConfig
-from letta.schemas.sandbox_config import SandboxConfigCreate, SandboxConfigUpdate, SandboxType
 from letta.schemas.user import User as PydanticUser
 from letta.server.db import db_registry
 from letta.utils import enforce_types, printd
@@ -206,10 +214,10 @@ class SandboxConfigManager:
     def list_sandbox_configs(
         self,
         actor: PydanticUser,
-        after: Optional[str] = None,
-        limit: Optional[int] = 50,
-        sandbox_type: Optional[SandboxType] = None,
-    ) -> List[PydanticSandboxConfig]:
+        after: str | None = None,
+        limit: int | None = 50,
+        sandbox_type: SandboxType | None = None,
+    ) -> list[PydanticSandboxConfig]:
         """List all sandbox configurations with optional pagination."""
         kwargs = {"organization_id": actor.organization_id}
         if sandbox_type:
@@ -224,10 +232,10 @@ class SandboxConfigManager:
     async def list_sandbox_configs_async(
         self,
         actor: PydanticUser,
-        after: Optional[str] = None,
-        limit: Optional[int] = 50,
-        sandbox_type: Optional[SandboxType] = None,
-    ) -> List[PydanticSandboxConfig]:
+        after: str | None = None,
+        limit: int | None = 50,
+        sandbox_type: SandboxType | None = None,
+    ) -> list[PydanticSandboxConfig]:
         """List all sandbox configurations with optional pagination."""
         kwargs = {"organization_id": actor.organization_id}
         if sandbox_type:
@@ -239,7 +247,7 @@ class SandboxConfigManager:
 
     @enforce_types
     @trace_method
-    def get_sandbox_config_by_id(self, sandbox_config_id: str, actor: Optional[PydanticUser] = None) -> Optional[PydanticSandboxConfig]:
+    def get_sandbox_config_by_id(self, sandbox_config_id: str, actor: PydanticUser | None = None) -> PydanticSandboxConfig | None:
         """Retrieve a sandbox configuration by its ID."""
         with db_registry.session() as session:
             try:
@@ -250,7 +258,7 @@ class SandboxConfigManager:
 
     @enforce_types
     @trace_method
-    def get_sandbox_config_by_type(self, type: SandboxType, actor: Optional[PydanticUser] = None) -> Optional[PydanticSandboxConfig]:
+    def get_sandbox_config_by_type(self, type: SandboxType, actor: PydanticUser | None = None) -> PydanticSandboxConfig | None:
         """Retrieve a sandbox config by its type."""
         with db_registry.session() as session:
             try:
@@ -269,8 +277,8 @@ class SandboxConfigManager:
     @enforce_types
     @trace_method
     async def get_sandbox_config_by_type_async(
-        self, type: SandboxType, actor: Optional[PydanticUser] = None
-    ) -> Optional[PydanticSandboxConfig]:
+        self, type: SandboxType, actor: PydanticUser | None = None
+    ) -> PydanticSandboxConfig | None:
         """Retrieve a sandbox config by its type."""
         async with db_registry.async_session() as session:
             try:
@@ -410,9 +418,9 @@ class SandboxConfigManager:
         self,
         sandbox_config_id: str,
         actor: PydanticUser,
-        after: Optional[str] = None,
-        limit: Optional[int] = 50,
-    ) -> List[PydanticEnvVar]:
+        after: str | None = None,
+        limit: int | None = 50,
+    ) -> list[PydanticEnvVar]:
         """List all sandbox environment variables with optional pagination."""
         with db_registry.session() as session:
             env_vars = SandboxEnvVarModel.list(
@@ -430,9 +438,9 @@ class SandboxConfigManager:
         self,
         sandbox_config_id: str,
         actor: PydanticUser,
-        after: Optional[str] = None,
-        limit: Optional[int] = 50,
-    ) -> List[PydanticEnvVar]:
+        after: str | None = None,
+        limit: int | None = 50,
+    ) -> list[PydanticEnvVar]:
         """List all sandbox environment variables with optional pagination."""
         async with db_registry.async_session() as session:
             env_vars = await SandboxEnvVarModel.list_async(
@@ -447,8 +455,8 @@ class SandboxConfigManager:
     @enforce_types
     @trace_method
     def list_sandbox_env_vars_by_key(
-        self, key: str, actor: PydanticUser, after: Optional[str] = None, limit: Optional[int] = 50
-    ) -> List[PydanticEnvVar]:
+        self, key: str, actor: PydanticUser, after: str | None = None, limit: int | None = 50
+    ) -> list[PydanticEnvVar]:
         """List all sandbox environment variables with optional pagination."""
         with db_registry.session() as session:
             env_vars = SandboxEnvVarModel.list(
@@ -463,8 +471,8 @@ class SandboxConfigManager:
     @enforce_types
     @trace_method
     async def list_sandbox_env_vars_by_key_async(
-        self, key: str, actor: PydanticUser, after: Optional[str] = None, limit: Optional[int] = 50
-    ) -> List[PydanticEnvVar]:
+        self, key: str, actor: PydanticUser, after: str | None = None, limit: int | None = 50
+    ) -> list[PydanticEnvVar]:
         """List all sandbox environment variables with optional pagination."""
         async with db_registry.async_session() as session:
             env_vars = await SandboxEnvVarModel.list_async(
@@ -479,8 +487,8 @@ class SandboxConfigManager:
     @enforce_types
     @trace_method
     def get_sandbox_env_vars_as_dict(
-        self, sandbox_config_id: str, actor: PydanticUser, after: Optional[str] = None, limit: Optional[int] = 50
-    ) -> Dict[str, str]:
+        self, sandbox_config_id: str, actor: PydanticUser, after: str | None = None, limit: int | None = 50
+    ) -> dict[str, str]:
         env_vars = self.list_sandbox_env_vars(sandbox_config_id, actor, after, limit)
         result = {}
         for env_var in env_vars:
@@ -490,8 +498,8 @@ class SandboxConfigManager:
     @enforce_types
     @trace_method
     async def get_sandbox_env_vars_as_dict_async(
-        self, sandbox_config_id: str, actor: PydanticUser, after: Optional[str] = None, limit: Optional[int] = 50
-    ) -> Dict[str, str]:
+        self, sandbox_config_id: str, actor: PydanticUser, after: str | None = None, limit: int | None = 50
+    ) -> dict[str, str]:
         env_vars = await self.list_sandbox_env_vars_async(sandbox_config_id, actor, after, limit)
         result = {}
         for env_var in env_vars:
@@ -501,8 +509,8 @@ class SandboxConfigManager:
     @enforce_types
     @trace_method
     def get_sandbox_env_var_by_key_and_sandbox_config_id(
-        self, key: str, sandbox_config_id: str, actor: Optional[PydanticUser] = None
-    ) -> Optional[PydanticEnvVar]:
+        self, key: str, sandbox_config_id: str, actor: PydanticUser | None = None
+    ) -> PydanticEnvVar | None:
         """Retrieve a sandbox environment variable by its key and sandbox_config_id."""
         with db_registry.session() as session:
             try:
@@ -522,8 +530,8 @@ class SandboxConfigManager:
     @enforce_types
     @trace_method
     async def get_sandbox_env_var_by_key_and_sandbox_config_id_async(
-        self, key: str, sandbox_config_id: str, actor: Optional[PydanticUser] = None
-    ) -> Optional[PydanticEnvVar]:
+        self, key: str, sandbox_config_id: str, actor: PydanticUser | None = None
+    ) -> PydanticEnvVar | None:
         """Retrieve a sandbox environment variable by its key and sandbox_config_id."""
         async with db_registry.async_session() as session:
             try:

@@ -1,13 +1,9 @@
-from typing import TYPE_CHECKING, List, Optional
 
 from jinja2 import Template, TemplateSyntaxError
-from pydantic import BaseModel, Field
 
 # Forward referencing to avoid circular import with Agent -> Memory -> Agent
-if TYPE_CHECKING:
-    pass
-
 from openai.types.beta.function_tool import FunctionTool as OpenAITool
+from pydantic import BaseModel, Field
 
 from letta.constants import CORE_MEMORY_BLOCK_CHAR_LIMIT
 from letta.schemas.block import Block
@@ -45,15 +41,15 @@ class ContextWindowOverview(BaseModel):
     core_memory: str = Field(..., description="The content of the core memory.")
 
     num_tokens_summary_memory: int = Field(..., description="The number of tokens in the summary memory.")
-    summary_memory: Optional[str] = Field(None, description="The content of the summary memory.")
+    summary_memory: str | None = Field(None, description="The content of the summary memory.")
 
     num_tokens_functions_definitions: int = Field(..., description="The number of tokens in the functions definitions.")
-    functions_definitions: Optional[List[OpenAITool]] = Field(..., description="The content of the functions definitions.")
+    functions_definitions: list[OpenAITool] | None = Field(..., description="The content of the functions definitions.")
 
     num_tokens_messages: int = Field(..., description="The number of tokens in the messages list.")
     # TODO make list of messages?
     # messages: List[dict] = Field(..., description="The messages in the context window.")
-    messages: List[Message] = Field(..., description="The messages in the context window.")
+    messages: list[Message] = Field(..., description="The messages in the context window.")
 
 
 class Memory(BaseModel, validate_assignment=True):
@@ -64,8 +60,8 @@ class Memory(BaseModel, validate_assignment=True):
     """
 
     # Memory.block contains the list of memory blocks in the core memory
-    blocks: List[Block] = Field(..., description="Memory blocks contained in the agent's in-context memory")
-    file_blocks: List[Block] = Field(
+    blocks: list[Block] = Field(..., description="Memory blocks contained in the agent's in-context memory")
+    file_blocks: list[Block] = Field(
         default_factory=list, description="Blocks representing the agent's in-context memory of an attached file"
     )
 
@@ -104,16 +100,16 @@ class Memory(BaseModel, validate_assignment=True):
             # If we get here, the template is valid and compatible
             self.prompt_template = prompt_template
         except TemplateSyntaxError as e:
-            raise ValueError(f"Invalid Jinja2 template syntax: {str(e)}")
+            raise ValueError(f"Invalid Jinja2 template syntax: {e!s}")
         except Exception as e:
-            raise ValueError(f"Prompt template is not compatible with current memory structure: {str(e)}")
+            raise ValueError(f"Prompt template is not compatible with current memory structure: {e!s}")
 
     def compile(self) -> str:
         """Generate a string representation of the memory in-context using the Jinja2 template"""
         template = Template(self.prompt_template)
         return template.render(blocks=self.blocks, file_blocks=self.file_blocks)
 
-    def list_block_labels(self) -> List[str]:
+    def list_block_labels(self) -> list[str]:
         """Return a list of the block names held inside the memory object"""
         # return list(self.memory.keys())
         return [block.label for block in self.blocks]
@@ -128,7 +124,7 @@ class Memory(BaseModel, validate_assignment=True):
             keys.append(block.label)
         raise KeyError(f"Block field {label} does not exist (available sections = {', '.join(keys)})")
 
-    def get_blocks(self) -> List[Block]:
+    def get_blocks(self) -> list[Block]:
         """Return a list of the blocks held inside the memory object"""
         # return list(self.memory.values())
         return self.blocks
@@ -144,7 +140,7 @@ class Memory(BaseModel, validate_assignment=True):
     def update_block_value(self, label: str, value: str):
         """Update the value of a block"""
         if not isinstance(value, str):
-            raise ValueError(f"Provided value must be a string")
+            raise ValueError("Provided value must be a string")
 
         for block in self.blocks:
             if block.label == label:
@@ -166,7 +162,7 @@ class BasicBlockMemory(Memory):
         core_memory_replace: Replace the contents of core memory.
     """
 
-    def __init__(self, blocks: List[Block] = []):
+    def __init__(self, blocks: list[Block] = []):
         """
         Initialize the BasicBlockMemory object with a list of pre-defined blocks.
 
@@ -175,7 +171,7 @@ class BasicBlockMemory(Memory):
         """
         super().__init__(blocks=blocks)
 
-    def core_memory_append(agent_state: "AgentState", label: str, content: str) -> Optional[str]:  # type: ignore
+    def core_memory_append(agent_state: "AgentState", label: str, content: str) -> str | None:  # type: ignore
         """
         Append to the contents of core memory.
 
@@ -191,7 +187,7 @@ class BasicBlockMemory(Memory):
         agent_state.memory.update_block_value(label=label, value=new_value)
         return None
 
-    def core_memory_replace(agent_state: "AgentState", label: str, old_content: str, new_content: str) -> Optional[str]:  # type: ignore
+    def core_memory_replace(agent_state: "AgentState", label: str, old_content: str, new_content: str) -> str | None:  # type: ignore
         """
         Replace the contents of core memory. To delete memories, use an empty string for new_content.
 

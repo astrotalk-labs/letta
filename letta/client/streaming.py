@@ -1,5 +1,6 @@
 import json
-from typing import Generator, Union, get_args
+from collections.abc import Generator
+from typing import get_args
 
 import httpx
 from httpx_sse import SSEError, connect_sse
@@ -9,14 +10,20 @@ from letta.constants import OPENAI_CONTEXT_WINDOW_ERROR_SUBSTRING
 from letta.errors import LLMError
 from letta.log import get_logger
 from letta.schemas.enums import MessageStreamStatus
-from letta.schemas.letta_message import AssistantMessage, HiddenReasoningMessage, ReasoningMessage, ToolCallMessage, ToolReturnMessage
+from letta.schemas.letta_message import (
+    AssistantMessage,
+    HiddenReasoningMessage,
+    ReasoningMessage,
+    ToolCallMessage,
+    ToolReturnMessage,
+)
 from letta.schemas.letta_response import LettaStreamingResponse
 from letta.schemas.usage import LettaUsageStatistics
 
 logger = get_logger(__name__)
 
 
-def _sse_post(url: str, data: dict, headers: dict) -> Generator[Union[LettaStreamingResponse, ChatCompletionChunk], None, None]:
+def _sse_post(url: str, data: dict, headers: dict) -> Generator[LettaStreamingResponse | ChatCompletionChunk, None, None]:
     """
     Sends an SSE POST request and yields parsed response chunks.
     """

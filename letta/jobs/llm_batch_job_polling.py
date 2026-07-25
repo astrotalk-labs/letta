@@ -1,9 +1,11 @@
 import asyncio
 import datetime
-from typing import List
 
 from letta.agents.letta_agent_batch import LettaAgentBatch
-from letta.jobs.helpers import map_anthropic_batch_job_status_to_job_status, map_anthropic_individual_batch_item_status_to_job_status
+from letta.jobs.helpers import (
+    map_anthropic_batch_job_status_to_job_status,
+    map_anthropic_individual_batch_item_status_to_job_status,
+)
 from letta.jobs.types import BatchPollingResult, ItemUpdateInfo
 from letta.log import get_logger
 from letta.schemas.enums import JobStatus, ProviderType
@@ -60,7 +62,7 @@ async def fetch_batch_status(server: SyncServer, batch_job: LLMBatchJob) -> Batc
         return BatchPollingResult(batch_job.id, JobStatus.running, None)
 
 
-async def fetch_batch_items(server: SyncServer, batch_id: str, batch_resp_id: str) -> List[ItemUpdateInfo]:
+async def fetch_batch_items(server: SyncServer, batch_id: str, batch_resp_id: str) -> list[ItemUpdateInfo]:
     """
     Fetch individual item results for a completed batch.
 
@@ -86,7 +88,7 @@ async def fetch_batch_items(server: SyncServer, batch_id: str, batch_resp_id: st
     return updates
 
 
-async def poll_batch_updates(server: SyncServer, batch_jobs: List[LLMBatchJob], metrics: BatchPollingMetrics) -> List[BatchPollingResult]:
+async def poll_batch_updates(server: SyncServer, batch_jobs: list[LLMBatchJob], metrics: BatchPollingMetrics) -> list[BatchPollingResult]:
     """
     Poll for updates to multiple batch jobs concurrently.
 
@@ -104,7 +106,7 @@ async def poll_batch_updates(server: SyncServer, batch_jobs: List[LLMBatchJob], 
 
     # Create polling tasks for all batch jobs
     coros = [fetch_batch_status(server, b) for b in batch_jobs]
-    results: List[BatchPollingResult] = await asyncio.gather(*coros)
+    results: list[BatchPollingResult] = await asyncio.gather(*coros)
 
     # Update the server with batch status changes
     await server.batch_manager.bulk_update_llm_batch_statuses_async(updates=results)
@@ -114,8 +116,8 @@ async def poll_batch_updates(server: SyncServer, batch_jobs: List[LLMBatchJob], 
 
 
 async def process_completed_batches(
-    server: SyncServer, batch_results: List[BatchPollingResult], metrics: BatchPollingMetrics
-) -> List[ItemUpdateInfo]:
+    server: SyncServer, batch_results: list[BatchPollingResult], metrics: BatchPollingMetrics
+) -> list[ItemUpdateInfo]:
     """
     Process batches that have completed and fetch their item results.
 
@@ -161,7 +163,7 @@ async def process_completed_batches(
     return item_updates
 
 
-async def poll_running_llm_batches(server: "SyncServer") -> List[LettaBatchResponse]:
+async def poll_running_llm_batches(server: "SyncServer") -> list[LettaBatchResponse]:
     """
     Cron job to poll all running LLM batch jobs and update their polling responses in bulk.
 

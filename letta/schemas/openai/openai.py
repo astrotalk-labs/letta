@@ -1,5 +1,4 @@
 from enum import Enum
-from typing import Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -25,13 +24,13 @@ class OpenAIAssistant(BaseModel):
     id: str = Field(..., description="The unique identifier of the assistant.")
     name: str = Field(..., description="The name of the assistant.")
     object: str = "assistant"
-    description: Optional[str] = Field(None, description="The description of the assistant.")
+    description: str | None = Field(None, description="The description of the assistant.")
     created_at: int = Field(..., description="The unix timestamp of when the assistant was created.")
     model: str = Field(..., description="The model used by the assistant.")
     instructions: str = Field(..., description="The instructions for the assistant.")
-    tools: Optional[List[str]] = Field(None, description="The tools used by the assistant.")
-    file_ids: Optional[List[str]] = Field(None, description="List of file IDs associated with the assistant.")
-    metadata: Optional[dict] = Field(None, description="Metadata associated with the assistant.")
+    tools: list[str] | None = Field(None, description="The tools used by the assistant.")
+    file_ids: list[str] | None = Field(None, description="List of file IDs associated with the assistant.")
+    metadata: dict | None = Field(None, description="Metadata associated with the assistant.")
 
 
 class OpenAIMessage(BaseModel):
@@ -40,11 +39,11 @@ class OpenAIMessage(BaseModel):
     created_at: int = Field(..., description="The unix timestamp of when the message was created.")
     thread_id: str = Field(..., description="The unique identifier of the thread.")
     role: str = Field(..., description="Role of the message sender (either 'user' or 'system')")
-    content: List[Union[Text, ImageFile]] = Field(None, description="The message content to be processed by the agent.")
+    content: list[Text | ImageFile] = Field(None, description="The message content to be processed by the agent.")
     assistant_id: str = Field(..., description="The unique identifier of the assistant.")
-    run_id: Optional[str] = Field(None, description="The unique identifier of the run.")
-    file_ids: Optional[List[str]] = Field(None, description="List of file IDs associated with the message.")
-    metadata: Optional[Dict] = Field(None, description="Metadata associated with the message.")
+    run_id: str | None = Field(None, description="The unique identifier of the run.")
+    file_ids: list[str] | None = Field(None, description="List of file IDs associated with the message.")
+    metadata: dict | None = Field(None, description="Metadata associated with the message.")
 
 
 class OpenAIThread(BaseModel):
@@ -88,7 +87,7 @@ class ToolCallOutput(BaseModel):
 
 class RequiredAction(BaseModel):
     type: str = "submit_tool_outputs"
-    submit_tool_outputs: List[ToolCall]
+    submit_tool_outputs: list[ToolCall]
 
 
 class OpenAIError(BaseModel):
@@ -109,7 +108,7 @@ class OpenAIMessageCreationStep(BaseModel):
 
 class OpenAIToolCallsStep(BaseModel):
     type: str = "tool_calls"
-    tool_calls: List[ToolCall] = Field(..., description="The tool calls.")
+    tool_calls: list[ToolCall] = Field(..., description="The tool calls.")
 
 
 class OpenAIRun(BaseModel):
@@ -119,19 +118,19 @@ class OpenAIRun(BaseModel):
     thread_id: str = Field(..., description="The unique identifier of the thread.")
     assistant_id: str = Field(..., description="The unique identifier of the assistant.")
     status: str = Field(..., description="The status of the run.")
-    required_action: Optional[RequiredAction] = Field(None, description="The required action of the run.")
-    last_error: Optional[OpenAIError] = Field(None, description="The last error of the run.")
+    required_action: RequiredAction | None = Field(None, description="The required action of the run.")
+    last_error: OpenAIError | None = Field(None, description="The last error of the run.")
     expires_at: int = Field(..., description="The unix timestamp of when the run expires.")
-    started_at: Optional[int] = Field(None, description="The unix timestamp of when the run started.")
-    cancelled_at: Optional[int] = Field(None, description="The unix timestamp of when the run was cancelled.")
-    failed_at: Optional[int] = Field(None, description="The unix timestamp of when the run failed.")
-    completed_at: Optional[int] = Field(None, description="The unix timestamp of when the run completed.")
+    started_at: int | None = Field(None, description="The unix timestamp of when the run started.")
+    cancelled_at: int | None = Field(None, description="The unix timestamp of when the run was cancelled.")
+    failed_at: int | None = Field(None, description="The unix timestamp of when the run failed.")
+    completed_at: int | None = Field(None, description="The unix timestamp of when the run completed.")
     model: str = Field(..., description="The model used by the run.")
     instructions: str = Field(..., description="The instructions for the run.")
-    tools: Optional[List[ToolCall]] = Field(None, description="The tools used by the run.")  # TODO: also add code interpreter / retrieval
-    file_ids: Optional[List[str]] = Field(None, description="List of file IDs associated with the run.")
-    metadata: Optional[dict] = Field(None, description="Metadata associated with the run.")
-    usage: Optional[OpenAIUsage] = Field(None, description="The usage of the run.")
+    tools: list[ToolCall] | None = Field(None, description="The tools used by the run.")  # TODO: also add code interpreter / retrieval
+    file_ids: list[str] | None = Field(None, description="List of file IDs associated with the run.")
+    metadata: dict | None = Field(None, description="Metadata associated with the run.")
+    usage: OpenAIUsage | None = Field(None, description="The usage of the run.")
 
 
 class OpenAIRunStep(BaseModel):
@@ -143,9 +142,9 @@ class OpenAIRunStep(BaseModel):
     run_id: str = Field(..., description="The unique identifier of the run.")
     type: str = Field(..., description="The type of the run step.")  # message_creation, tool_calls
     status: str = Field(..., description="The status of the run step.")
-    step_defaults: Union[OpenAIToolCallsStep, OpenAIMessageCreationStep] = Field(..., description="The step defaults.")
-    last_error: Optional[OpenAIError] = Field(None, description="The last error of the run step.")
-    expired_at: Optional[int] = Field(None, description="The unix timestamp of when the run step expired.")
-    failed_at: Optional[int] = Field(None, description="The unix timestamp of when the run failed.")
-    completed_at: Optional[int] = Field(None, description="The unix timestamp of when the run completed.")
-    usage: Optional[OpenAIUsage] = Field(None, description="The usage of the run.")
+    step_defaults: OpenAIToolCallsStep | OpenAIMessageCreationStep = Field(..., description="The step defaults.")
+    last_error: OpenAIError | None = Field(None, description="The last error of the run step.")
+    expired_at: int | None = Field(None, description="The unix timestamp of when the run step expired.")
+    failed_at: int | None = Field(None, description="The unix timestamp of when the run failed.")
+    completed_at: int | None = Field(None, description="The unix timestamp of when the run completed.")
+    usage: OpenAIUsage | None = Field(None, description="The usage of the run.")

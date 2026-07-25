@@ -3,12 +3,14 @@ import mimetypes
 import os
 import tempfile
 from pathlib import Path
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile
 from starlette import status
 
-import letta.constants as constants
+from letta import constants
+from letta.growthbook.constants import GrowthBookFeatureKeys
+from letta.growthbook.experiments_service import ExperimentsService
+from letta.growthbook.setup import get_experiments_service
 from letta.log import get_logger
 from letta.schemas.agent import AgentState
 from letta.schemas.file import FileMetadata
@@ -20,11 +22,12 @@ from letta.server.server import SyncServer
 from letta.services.file_processor.chunker.llama_index_chunker import LlamaIndexChunker
 from letta.services.file_processor.embedder.openai_embedder import OpenAIEmbedder
 from letta.services.file_processor.file_processor import FileProcessor
-from letta.services.file_processor.file_types import get_allowed_media_types, get_extension_to_mime_type_map, register_mime_types
+from letta.services.file_processor.file_types import (
+    get_allowed_media_types,
+    get_extension_to_mime_type_map,
+    register_mime_types,
+)
 from letta.services.file_processor.parser.mistral_parser import MistralFileParser
-from letta.growthbook.constants import GrowthBookFeatureKeys
-from letta.growthbook.experiments_service import ExperimentsService
-from letta.growthbook.setup import get_experiments_service
 from letta.settings import model_settings, settings
 from letta.utils import safe_create_task, sanitize_filename
 
@@ -40,7 +43,7 @@ router = APIRouter(prefix="/sources", tags=["sources"])
 @router.get("/count", response_model=int, operation_id="count_sources")
 async def count_sources(
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     Count all data sources created by a user.
@@ -53,7 +56,7 @@ async def count_sources(
 async def retrieve_source(
     source_id: str,
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     Get all sources
@@ -70,7 +73,7 @@ async def retrieve_source(
 async def get_source_id_by_name(
     source_name: str,
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     Get a source by name
@@ -83,10 +86,10 @@ async def get_source_id_by_name(
     return source.id
 
 
-@router.get("/", response_model=List[Source], operation_id="list_sources")
+@router.get("/", response_model=list[Source], operation_id="list_sources")
 async def list_sources(
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     List all data sources created by a user.
@@ -99,7 +102,7 @@ async def list_sources(
 async def create_source(
     source_create: SourceCreate,
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     Create a new data source.
@@ -131,7 +134,7 @@ async def modify_source(
     source_id: str,
     source: SourceUpdate,
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     Update the name or documentation of an existing data source.
@@ -147,7 +150,7 @@ async def modify_source(
 async def delete_source(
     source_id: str,
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     Delete a data source.
@@ -175,8 +178,8 @@ async def upload_file_to_source(
     file: UploadFile,
     source_id: str,
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
-    gb_user_id: Optional[str] = Header(None, alias="x_gb_user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
+    gb_user_id: str | None = Header(None, alias="x_gb_user_id"),
 ):
     """
     Upload a file to a data source.
@@ -250,14 +253,14 @@ async def upload_file_to_source(
     return job
 
 
-@router.get("/{source_id}/files", response_model=List[FileMetadata], operation_id="list_source_files")
+@router.get("/{source_id}/files", response_model=list[FileMetadata], operation_id="list_source_files")
 async def list_source_files(
     source_id: str,
     limit: int = Query(1000, description="Number of files to return"),
-    after: Optional[str] = Query(None, description="Pagination cursor to fetch the next set of results"),
+    after: str | None = Query(None, description="Pagination cursor to fetch the next set of results"),
     include_content: bool = Query(False, description="Whether to include full file content"),
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
 ):
     """
     List paginated files associated with a data source.
@@ -279,7 +282,7 @@ async def delete_file_from_source(
     source_id: str,
     file_id: str,
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     Delete a data source.
@@ -318,13 +321,13 @@ async def sleeptime_document_ingest_async(server: SyncServer, source_id: str, ac
 
 async def load_file_to_source_cloud(
     server: SyncServer,
-    agent_states: List[AgentState],
+    agent_states: list[AgentState],
     content: bytes,
     file: UploadFile,
     job: Job,
     source_id: str,
     actor: User,
-    gb_user_id: Optional[str] = None,
+    gb_user_id: str | None = None,
 ):
     file_processor = MistralFileParser()
     text_chunker = LlamaIndexChunker()

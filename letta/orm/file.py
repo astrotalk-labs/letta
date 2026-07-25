@@ -1,5 +1,5 @@
 import uuid
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import ForeignKey, Index, Integer, String, Text, UniqueConstraint, desc
 from sqlalchemy.ext.asyncio import AsyncAttrs
@@ -48,25 +48,25 @@ class FileMetadata(SqlalchemyBase, OrganizationMixin, SourceMixin, AsyncAttrs):
         Index("ix_files_processing_status", "processing_status"),
     )
 
-    file_name: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="The name of the file.")
-    file_path: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="The file path on the system.")
-    file_type: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="The type of the file.")
-    file_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, doc="The size of the file in bytes.")
-    file_creation_date: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="The creation date of the file.")
-    file_last_modified_date: Mapped[Optional[str]] = mapped_column(String, nullable=True, doc="The last modified date of the file.")
+    file_name: Mapped[str | None] = mapped_column(String, nullable=True, doc="The name of the file.")
+    file_path: Mapped[str | None] = mapped_column(String, nullable=True, doc="The file path on the system.")
+    file_type: Mapped[str | None] = mapped_column(String, nullable=True, doc="The type of the file.")
+    file_size: Mapped[int | None] = mapped_column(Integer, nullable=True, doc="The size of the file in bytes.")
+    file_creation_date: Mapped[str | None] = mapped_column(String, nullable=True, doc="The creation date of the file.")
+    file_last_modified_date: Mapped[str | None] = mapped_column(String, nullable=True, doc="The last modified date of the file.")
     processing_status: Mapped[FileProcessingStatus] = mapped_column(
         String, default=FileProcessingStatus.PENDING, nullable=False, doc="The current processing status of the file."
     )
 
-    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True, doc="Any error message encountered during processing.")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True, doc="Any error message encountered during processing.")
 
     # relationships
     organization: Mapped["Organization"] = relationship("Organization", back_populates="files", lazy="selectin")
     source: Mapped["Source"] = relationship("Source", back_populates="files", lazy="selectin")
-    source_passages: Mapped[List["SourcePassage"]] = relationship(
+    source_passages: Mapped[list["SourcePassage"]] = relationship(
         "SourcePassage", back_populates="file", lazy="selectin", cascade="all, delete-orphan"
     )
-    file_agents: Mapped[List["FileAgent"]] = relationship(
+    file_agents: Mapped[list["FileAgent"]] = relationship(
         "FileAgent",
         back_populates="file",
         lazy="selectin",

@@ -2,9 +2,9 @@ import asyncio
 
 import websockets
 
-import letta.server.ws_api.protocol as protocol
 from letta.server.constants import WS_CLIENT_TIMEOUT, WS_DEFAULT_PORT
 from letta.server.utils import condition_to_stop_receiving, print_server_response
+from letta.server.ws_api import protocol
 
 # CLEAN_RESPONSES = False  # print the raw server responses (JSON)
 CLEAN_RESPONSES = True  # make the server responses cleaner

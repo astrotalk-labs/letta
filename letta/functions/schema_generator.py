@@ -1,11 +1,16 @@
 import inspect
 import warnings
-from typing import Any, Dict, List, Optional, Tuple, Type, Union, get_args, get_origin
+from typing import (
+    Any,
+    Literal,
+    Union,
+    get_args,
+    get_origin,
+)
 
 from composio.client.collections import ActionParametersModel
 from docstring_parser import parse
 from pydantic import BaseModel
-from typing_extensions import Literal
 
 from letta.constants import REQUEST_HEARTBEAT_DESCRIPTION, REQUEST_HEARTBEAT_PARAM
 from letta.functions.mcp_client.types import MCPTool
@@ -48,7 +53,7 @@ def type_to_json_schema_type(py_type) -> dict:
 
     # Handle array types
     origin = get_origin(py_type)
-    if py_type == list or origin in (list, List):
+    if py_type == list or origin in (list, list):
         args = get_args(py_type)
         if len(args) == 0:
             # is this correct
@@ -77,7 +82,7 @@ def type_to_json_schema_type(py_type) -> dict:
         return {"type": "string", "enum": get_args(py_type)}
 
     # Handle tuple types (specifically fixed-length like Tuple[int, int])
-    if origin in (tuple, Tuple):
+    if origin in (tuple, tuple):
         args = get_args(py_type)
         if len(args) == 0:
             raise ValueError("Tuple type must have at least one element")
@@ -94,7 +99,7 @@ def type_to_json_schema_type(py_type) -> dict:
         }
 
     # Handle object types
-    if py_type == dict or origin in (dict, Dict):
+    if py_type == dict or origin in (dict, dict):
         args = get_args(py_type)
         if not args:
             # Generic dict without type arguments
@@ -146,7 +151,7 @@ def type_to_json_schema_type(py_type) -> dict:
         return {"type": type_map[py_type]}
 
 
-def pydantic_model_to_open_ai(model: Type[BaseModel]) -> dict:
+def pydantic_model_to_open_ai(model: type[BaseModel]) -> dict:
     """
     Converts a Pydantic model as a singular arg to a JSON schema object for use in OpenAI function calling.
     """
@@ -176,7 +181,7 @@ def pydantic_model_to_open_ai(model: Type[BaseModel]) -> dict:
     }
 
 
-def pydantic_model_to_json_schema(model: Type[BaseModel]) -> dict:
+def pydantic_model_to_json_schema(model: type[BaseModel]) -> dict:
     """
     Converts a Pydantic model (as an arg that already is annotated) to a JSON schema object for use in OpenAI function calling.
 
@@ -344,7 +349,7 @@ def pydantic_model_to_json_schema(model: Type[BaseModel]) -> dict:
     return clean_schema(schema_part=schema, full_schema=schema)
 
 
-def generate_schema(function, name: Optional[str] = None, description: Optional[str] = None) -> dict:
+def generate_schema(function, name: str | None = None, description: str | None = None) -> dict:
     # Get the signature of the function
     sig = inspect.signature(function)
 
@@ -444,8 +449,8 @@ def generate_schema(function, name: Optional[str] = None, description: Optional[
 
 
 def generate_schema_from_args_schema_v2(
-    args_schema: Type[BaseModel], name: Optional[str] = None, description: Optional[str] = None, append_heartbeat: bool = True
-) -> Dict[str, Any]:
+    args_schema: type[BaseModel], name: str | None = None, description: str | None = None, append_heartbeat: bool = True
+) -> dict[str, Any]:
     properties = {}
     required = []
     for field_name, field in args_schema.model_fields.items():
@@ -475,7 +480,7 @@ def generate_tool_schema_for_mcp(
     mcp_tool: MCPTool,
     append_heartbeat: bool = True,
     strict: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
 
     # MCP tool.inputSchema is a JSON schema
     # https://github.com/modelcontextprotocol/python-sdk/blob/775f87981300660ee957b63c2a14b448ab9c3675/src/mcp/types.py#L678
@@ -526,7 +531,7 @@ def generate_tool_schema_for_composio(
     description: str,
     append_heartbeat: bool = True,
     strict: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     properties_json = {}
     required_fields = parameters_model.required or []
 

@@ -1,7 +1,22 @@
-from typing import TYPE_CHECKING, List, Optional, Type
+from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import JSON, BigInteger, ForeignKey, Index, Integer, String, UniqueConstraint, event
-from sqlalchemy.orm import Mapped, attributes, declared_attr, mapped_column, relationship
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    event,
+)
+from sqlalchemy.orm import (
+    Mapped,
+    attributes,
+    declared_attr,
+    mapped_column,
+    relationship,
+)
 
 from letta.constants import CORE_MEMORY_BLOCK_CHAR_LIMIT
 from letta.orm.block_history import BlockHistory
@@ -27,24 +42,24 @@ class Block(OrganizationMixin, SqlalchemyBase):
         Index("created_at_label_idx", "created_at", "label"),
     )
 
-    template_name: Mapped[Optional[str]] = mapped_column(
+    template_name: Mapped[str | None] = mapped_column(
         nullable=True, doc="the unique name that identifies a block in a human-readable way"
     )
-    description: Mapped[Optional[str]] = mapped_column(nullable=True, doc="a description of the block for context")
+    description: Mapped[str | None] = mapped_column(nullable=True, doc="a description of the block for context")
     label: Mapped[str] = mapped_column(doc="the type of memory block in use, ie 'human', 'persona', 'system'")
     is_template: Mapped[bool] = mapped_column(
         doc="whether the block is a template (e.g. saved human/persona options as baselines for other templates)", default=False
     )
-    preserve_on_migration: Mapped[Optional[bool]] = mapped_column(doc="preserve the block on template migration", default=False)
+    preserve_on_migration: Mapped[bool | None] = mapped_column(doc="preserve the block on template migration", default=False)
     value: Mapped[str] = mapped_column(doc="Text content of the block for the respective section of core memory.")
     limit: Mapped[BigInteger] = mapped_column(Integer, default=CORE_MEMORY_BLOCK_CHAR_LIMIT, doc="Character limit of the block.")
-    metadata_: Mapped[Optional[dict]] = mapped_column(JSON, default={}, doc="arbitrary information related to the block.")
+    metadata_: Mapped[dict | None] = mapped_column(JSON, default={}, doc="arbitrary information related to the block.")
 
     # permissions of the agent
     read_only: Mapped[bool] = mapped_column(doc="whether the agent has read-only access to the block", default=False)
 
     # history pointers / locking mechanisms
-    current_history_entry_id: Mapped[Optional[str]] = mapped_column(
+    current_history_entry_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("block_history.id", name="fk_block_current_history_entry", use_alter=True), nullable=True, index=True
     )
     version: Mapped[int] = mapped_column(
@@ -56,7 +71,7 @@ class Block(OrganizationMixin, SqlalchemyBase):
 
     # relationships
     organization: Mapped[Optional["Organization"]] = relationship("Organization")
-    agents: Mapped[List["Agent"]] = relationship(
+    agents: Mapped[list["Agent"]] = relationship(
         "Agent",
         secondary="blocks_agents",
         lazy="selectin",
@@ -64,14 +79,14 @@ class Block(OrganizationMixin, SqlalchemyBase):
         back_populates="core_memory",
         doc="Agents associated with this block.",
     )
-    identities: Mapped[List["Identity"]] = relationship(
+    identities: Mapped[list["Identity"]] = relationship(
         "Identity",
         secondary="identities_blocks",
         lazy="selectin",
         back_populates="blocks",
         passive_deletes=True,
     )
-    groups: Mapped[List["Group"]] = relationship(
+    groups: Mapped[list["Group"]] = relationship(
         "Group",
         secondary="groups_blocks",
         lazy="selectin",
@@ -79,7 +94,7 @@ class Block(OrganizationMixin, SqlalchemyBase):
         passive_deletes=True,
     )
 
-    def to_pydantic(self) -> Type:
+    def to_pydantic(self) -> type:
         match self.label:
             case "human":
                 Schema = Human

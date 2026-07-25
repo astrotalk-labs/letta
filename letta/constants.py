@@ -1,6 +1,6 @@
 import os
 import re
-from logging import CRITICAL, DEBUG, ERROR, INFO, NOTSET, WARN, WARNING
+from logging import CRITICAL, DEBUG, ERROR, INFO, NOTSET, WARNING
 
 LETTA_DIR = os.path.join(os.path.expanduser("~"), ".letta")
 LETTA_TOOL_EXECUTION_DIR = os.path.join(LETTA_DIR, "tool_execution_dir")
@@ -165,7 +165,15 @@ REQUEST_HEARTBEAT_DESCRIPTION = "Request an immediate heartbeat after function e
 STRUCTURED_OUTPUT_MODELS = {"gpt-4o", "gpt-4o-mini"}
 
 # LOGGER_LOG_LEVEL is use to convert Text to Logging level value for logging mostly for Cli input to setting level
-LOGGER_LOG_LEVELS = {"CRITICAL": CRITICAL, "ERROR": ERROR, "WARN": WARN, "WARNING": WARNING, "INFO": INFO, "DEBUG": DEBUG, "NOTSET": NOTSET}
+LOGGER_LOG_LEVELS = {
+    "CRITICAL": CRITICAL,
+    "ERROR": ERROR,
+    "WARN": WARNING,
+    "WARNING": WARNING,
+    "INFO": INFO,
+    "DEBUG": DEBUG,
+    "NOTSET": NOTSET,
+}
 
 FIRST_MESSAGE_ATTEMPTS = 10
 

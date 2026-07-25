@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Annotated, List, Literal, Optional, Union
+from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field, field_serializer, field_validator
 
@@ -44,11 +44,11 @@ class LettaMessage(BaseModel):
 
     id: str
     date: datetime
-    name: Optional[str] = None
+    name: str | None = None
     message_type: MessageType = Field(..., description="The type of the message.")
-    otid: Optional[str] = None
-    sender_id: Optional[str] = None
-    step_id: Optional[str] = None
+    otid: str | None = None
+    sender_id: str | None = None
+    step_id: str | None = None
 
     @field_serializer("date")
     def serialize_datetime(self, dt: datetime, _info):
@@ -88,7 +88,7 @@ class UserMessage(LettaMessage):
     """
 
     message_type: Literal[MessageType.user_message] = Field(MessageType.user_message, description="The type of the message.")
-    content: Union[str, List[LettaUserMessageContentUnion]] = Field(
+    content: str | list[LettaUserMessageContentUnion] = Field(
         ...,
         description="The message content sent by the user (can be a string or an array of multi-modal content parts)",
         json_schema_extra=get_letta_user_message_content_union_str_json_schema(),
@@ -112,7 +112,7 @@ class ReasoningMessage(LettaMessage):
     message_type: Literal[MessageType.reasoning_message] = Field(MessageType.reasoning_message, description="The type of the message.")
     source: Literal["reasoner_model", "non_reasoner_model"] = "non_reasoner_model"
     reasoning: str
-    signature: Optional[str] = None
+    signature: str | None = None
 
 
 class HiddenReasoningMessage(LettaMessage):
@@ -133,7 +133,7 @@ class HiddenReasoningMessage(LettaMessage):
         MessageType.hidden_reasoning_message, description="The type of the message."
     )
     state: Literal["redacted", "omitted"]
-    hidden_reasoning: Optional[str] = None
+    hidden_reasoning: str | None = None
 
 
 class ToolCall(BaseModel):
@@ -143,9 +143,9 @@ class ToolCall(BaseModel):
 
 
 class ToolCallDelta(BaseModel):
-    name: Optional[str] = None
-    arguments: Optional[str] = None
-    tool_call_id: Optional[str] = None
+    name: str | None = None
+    arguments: str | None = None
+    tool_call_id: str | None = None
 
     def model_dump(self, *args, **kwargs):
         """
@@ -171,7 +171,7 @@ class ToolCallMessage(LettaMessage):
     """
 
     message_type: Literal[MessageType.tool_call_message] = Field(MessageType.tool_call_message, description="The type of the message.")
-    tool_call: Union[ToolCall, ToolCallDelta]
+    tool_call: ToolCall | ToolCallDelta
 
     def model_dump(self, *args, **kwargs):
         """
@@ -226,8 +226,8 @@ class ToolReturnMessage(LettaMessage):
     tool_return: str
     status: Literal["success", "error"]
     tool_call_id: str
-    stdout: Optional[List[str]] = None
-    stderr: Optional[List[str]] = None
+    stdout: list[str] | None = None
+    stderr: list[str] | None = None
 
 
 class AssistantMessage(LettaMessage):
@@ -242,7 +242,7 @@ class AssistantMessage(LettaMessage):
     """
 
     message_type: Literal[MessageType.assistant_message] = Field(MessageType.assistant_message, description="The type of the message.")
-    content: Union[str, List[LettaAssistantMessageContentUnion]] = Field(
+    content: str | list[LettaAssistantMessageContentUnion] = Field(
         ...,
         description="The message content sent by the agent (can be a string or an array of content parts)",
         json_schema_extra=get_letta_assistant_message_content_union_str_json_schema(),
@@ -251,7 +251,7 @@ class AssistantMessage(LettaMessage):
 
 # NOTE: use Pydantic's discriminated unions feature: https://docs.pydantic.dev/latest/concepts/unions/#discriminated-unions
 LettaMessageUnion = Annotated[
-    Union[SystemMessage, UserMessage, ReasoningMessage, HiddenReasoningMessage, ToolCallMessage, ToolReturnMessage, AssistantMessage],
+    SystemMessage | UserMessage | ReasoningMessage | HiddenReasoningMessage | ToolCallMessage | ToolReturnMessage | AssistantMessage,
     Field(discriminator="message_type"),
 ]
 
@@ -296,7 +296,7 @@ class UpdateSystemMessage(BaseModel):
 
 class UpdateUserMessage(BaseModel):
     message_type: Literal["user_message"] = "user_message"
-    content: Union[str, List[LettaUserMessageContentUnion]] = Field(
+    content: str | list[LettaUserMessageContentUnion] = Field(
         ...,
         description="The message content sent by the user (can be a string or an array of multi-modal content parts)",
         json_schema_extra=get_letta_user_message_content_union_str_json_schema(),
@@ -310,7 +310,7 @@ class UpdateReasoningMessage(BaseModel):
 
 class UpdateAssistantMessage(BaseModel):
     message_type: Literal["assistant_message"] = "assistant_message"
-    content: Union[str, List[LettaAssistantMessageContentUnion]] = Field(
+    content: str | list[LettaAssistantMessageContentUnion] = Field(
         ...,
         description="The message content sent by the assistant (can be a string or an array of content parts)",
         json_schema_extra=get_letta_assistant_message_content_union_str_json_schema(),
@@ -318,7 +318,7 @@ class UpdateAssistantMessage(BaseModel):
 
 
 LettaMessageUpdateUnion = Annotated[
-    Union[UpdateSystemMessage, UpdateUserMessage, UpdateReasoningMessage, UpdateAssistantMessage],
+    UpdateSystemMessage | UpdateUserMessage | UpdateReasoningMessage | UpdateAssistantMessage,
     Field(discriminator="message_type"),
 ]
 
@@ -350,8 +350,8 @@ class LegacyFunctionReturn(LettaMessage):
     function_return: str
     status: Literal["success", "error"]
     function_call_id: str
-    stdout: Optional[List[str]] = None
-    stderr: Optional[List[str]] = None
+    stdout: list[str] | None = None
+    stderr: list[str] | None = None
 
 
 class LegacyInternalMonologue(LettaMessage):

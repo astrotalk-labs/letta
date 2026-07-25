@@ -91,9 +91,9 @@ class ConfigurableJSONWrapper(LLMChatCompletionWrapper):
         func_str = ""
         func_str += f"{schema['name']}:"
         func_str += f"\n  description: {schema['description']}"
-        func_str += f"\n  params:"
+        func_str += "\n  params:"
         if add_inner_thoughts:
-            func_str += f"\n    inner_thoughts: Deep inner monologue private to you only."
+            func_str += "\n    inner_thoughts: Deep inner monologue private to you only."
         for param_k, param_v in schema["parameters"]["properties"].items():
             # TODO we're ignoring type
             func_str += f"\n    {param_k}: {param_v['description']}"
@@ -105,8 +105,8 @@ class ConfigurableJSONWrapper(LLMChatCompletionWrapper):
         prompt = ""
 
         # prompt += f"\nPlease select the most suitable function and parameters from the list of available functions below, based on the user's input. Provide your response in JSON format."
-        prompt += f"Please select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
-        prompt += f"\nAvailable functions:"
+        prompt += "Please select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
+        prompt += "\nAvailable functions:"
         for function_dict in functions:
             prompt += f"\n{self._compile_function_description(function_dict)}"
 
@@ -117,8 +117,8 @@ class ConfigurableJSONWrapper(LLMChatCompletionWrapper):
         prompt = system_message
         prompt += "\n"
         if function_documentation is not None:
-            prompt += f"Please select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
-            prompt += f"\nAvailable functions:"
+            prompt += "Please select the most suitable function and parameters from the list of available functions below, based on the ongoing conversation. Provide your response in JSON format."
+            prompt += "\nAvailable functions:"
             prompt += function_documentation
         else:
             prompt += self._compile_function_block(functions)
@@ -141,9 +141,9 @@ class ConfigurableJSONWrapper(LLMChatCompletionWrapper):
 
         # need to add the function call if there was one
         inner_thoughts = message["content"]
-        if "function_call" in message and message["function_call"]:
+        if message.get("function_call"):
             prompt += f"\n{self._compile_function_call(message['function_call'], inner_thoughts=inner_thoughts)}"
-        elif "tool_calls" in message and message["tool_calls"]:
+        elif message.get("tool_calls"):
             for tool_call in message["tool_calls"]:
                 prompt += f"\n{self._compile_function_call(tool_call['function'], inner_thoughts=inner_thoughts)}"
         else:
@@ -275,7 +275,7 @@ class ConfigurableJSONWrapper(LLMChatCompletionWrapper):
         try:
             function_json_output = clean_json(raw_llm_output)
         except Exception as e:
-            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{str(e)}")
+            raise Exception(f"Failed to decode JSON from LLM output:\n{raw_llm_output} - error\n{e!s}")
         try:
             # NOTE: weird bug can happen where 'function' gets nested if the prefix in the prompt isn't abided by
             if isinstance(function_json_output["function"], dict):
@@ -292,7 +292,7 @@ class ConfigurableJSONWrapper(LLMChatCompletionWrapper):
                     inner_thoughts = ""
         except KeyError as e:
             raise LLMJSONParsingError(
-                f"Received valid JSON from LLM, but JSON was missing fields: {str(e)}. JSON result was:\n{function_json_output}"
+                f"Received valid JSON from LLM, but JSON was missing fields: {e!s}. JSON result was:\n{function_json_output}"
             )
 
         if self.clean_func_args:

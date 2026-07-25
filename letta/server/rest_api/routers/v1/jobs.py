@@ -1,4 +1,3 @@
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
@@ -11,11 +10,11 @@ from letta.server.server import SyncServer
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
-@router.get("/", response_model=List[Job], operation_id="list_jobs")
+@router.get("/", response_model=list[Job], operation_id="list_jobs")
 async def list_jobs(
     server: "SyncServer" = Depends(get_letta_server),
-    source_id: Optional[str] = Query(None, description="Only list jobs associated with the source."),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    source_id: str | None = Query(None, description="Only list jobs associated with the source."),
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
 ):
     """
     List all jobs.
@@ -29,11 +28,11 @@ async def list_jobs(
     )
 
 
-@router.get("/active", response_model=List[Job], operation_id="list_active_jobs")
+@router.get("/active", response_model=list[Job], operation_id="list_active_jobs")
 async def list_active_jobs(
     server: "SyncServer" = Depends(get_letta_server),
-    actor_id: Optional[str] = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
-    source_id: Optional[str] = Query(None, description="Only list jobs associated with the source."),
+    actor_id: str | None = Header(None, alias="user_id"),  # Extract user_id from header, default to None if not present
+    source_id: str | None = Query(None, description="Only list jobs associated with the source."),
 ):
     """
     List all active jobs.
@@ -45,7 +44,7 @@ async def list_active_jobs(
 @router.get("/{job_id}", response_model=Job, operation_id="retrieve_job")
 async def retrieve_job(
     job_id: str,
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
     server: "SyncServer" = Depends(get_letta_server),
 ):
     """
@@ -62,7 +61,7 @@ async def retrieve_job(
 @router.delete("/{job_id}", response_model=Job, operation_id="delete_job")
 async def delete_job(
     job_id: str,
-    actor_id: Optional[str] = Header(None, alias="user_id"),
+    actor_id: str | None = Header(None, alias="user_id"),
     server: "SyncServer" = Depends(get_letta_server),
 ):
     """

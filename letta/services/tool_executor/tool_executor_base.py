@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any
 
 from letta.schemas.agent import AgentState
 from letta.schemas.sandbox_config import SandboxConfig
@@ -22,7 +22,7 @@ class ToolExecutor(ABC):
         block_manager: BlockManager,
         passage_manager: PassageManager,
         actor: User,
-        task_id: Optional[str] = None,
+        task_id: str | None = None,
     ):
         self.message_manager = message_manager
         self.agent_manager = agent_manager
@@ -38,8 +38,8 @@ class ToolExecutor(ABC):
         function_args: dict,
         tool: Tool,
         actor: User,
-        agent_state: Optional[AgentState] = None,
-        sandbox_config: Optional[SandboxConfig] = None,
-        sandbox_env_vars: Optional[Dict[str, Any]] = None,
+        agent_state: AgentState | None = None,
+        sandbox_config: SandboxConfig | None = None,
+        sandbox_env_vars: dict[str, Any] | None = None,
     ) -> ToolExecutionResult:
         """Execute the tool and return the result."""

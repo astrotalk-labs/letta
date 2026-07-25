@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Union
 
 from pydantic import BaseModel, Field
 
@@ -9,26 +9,26 @@ from letta.schemas.llm_config import LLMConfig
 
 class CoreMemoryBlockSchema(BaseModel):
     created_at: str
-    description: Optional[str]
+    description: str | None
     is_template: bool
     label: str
     limit: int
-    metadata_: Optional[Dict] = None
-    template_name: Optional[str]
+    metadata_: dict | None = None
+    template_name: str | None
     updated_at: str
     value: str
 
 
 class MessageSchema(BaseModel):
     created_at: str
-    group_id: Optional[str]
-    model: Optional[str]
-    name: Optional[str]
+    group_id: str | None
+    model: str | None
+    name: str | None
     role: str
-    content: List[TextContent]  # TODO: Expand to more in the future
-    tool_call_id: Optional[str]
-    tool_calls: List[Any]
-    tool_returns: List[Any]
+    content: list[TextContent]  # TODO: Expand to more in the future
+    tool_call_id: str | None
+    tool_calls: list[Any]
+    tool_returns: list[Any]
     updated_at: str
 
 
@@ -38,7 +38,7 @@ class TagSchema(BaseModel):
 
 class ToolEnvVarSchema(BaseModel):
     created_at: str
-    description: Optional[str]
+    description: str | None
     key: str
     updated_at: str
     value: str
@@ -53,7 +53,7 @@ class BaseToolRuleSchema(BaseModel):
 
 
 class ChildToolRuleSchema(BaseToolRuleSchema):
-    children: List[str]
+    children: list[str]
 
 
 class MaxCountPerStepToolRuleSchema(BaseToolRuleSchema):
@@ -61,8 +61,8 @@ class MaxCountPerStepToolRuleSchema(BaseToolRuleSchema):
 
 
 class ConditionalToolRuleSchema(BaseToolRuleSchema):
-    default_child: Optional[str]
-    child_output_mapping: Dict[Any, str]
+    default_child: str | None
+    child_output_mapping: dict[Any, str]
     require_output_mapping: bool
 
 
@@ -71,55 +71,55 @@ ToolRuleSchema = Union[BaseToolRuleSchema, ChildToolRuleSchema, MaxCountPerStepT
 
 class ParameterProperties(BaseModel):
     type: str
-    description: Optional[str] = None
+    description: str | None = None
 
 
 class ParametersSchema(BaseModel):
-    type: Optional[str] = "object"
-    properties: Dict[str, ParameterProperties]
-    required: List[str] = Field(default_factory=list)
+    type: str | None = "object"
+    properties: dict[str, ParameterProperties]
+    required: list[str] = Field(default_factory=list)
 
 
 class ToolJSONSchema(BaseModel):
     name: str
     description: str
     parameters: ParametersSchema  # <— nested strong typing
-    type: Optional[str] = None  # top-level 'type' if it exists
-    required: Optional[List[str]] = Field(default_factory=list)
+    type: str | None = None  # top-level 'type' if it exists
+    required: list[str] | None = Field(default_factory=list)
 
 
 class ToolSchema(BaseModel):
-    args_json_schema: Optional[Any]
+    args_json_schema: Any | None
     created_at: str
     description: str
     json_schema: ToolJSONSchema
     name: str
     return_char_limit: int
-    source_code: Optional[str]
+    source_code: str | None
     source_type: str
-    tags: List[str]
+    tags: list[str]
     tool_type: str
     updated_at: str
-    metadata_: Optional[Dict] = None
+    metadata_: dict | None = None
 
 
 class AgentSchema(BaseModel):
     agent_type: str
-    core_memory: List[CoreMemoryBlockSchema]
+    core_memory: list[CoreMemoryBlockSchema]
     created_at: str
-    description: Optional[str]
+    description: str | None
     embedding_config: EmbeddingConfig
     llm_config: LLMConfig
     message_buffer_autoclear: bool
-    in_context_message_indices: List[int]
-    messages: List[MessageSchema]
-    metadata_: Optional[Dict] = None
-    multi_agent_group: Optional[Any]
+    in_context_message_indices: list[int]
+    messages: list[MessageSchema]
+    metadata_: dict | None = None
+    multi_agent_group: Any | None
     name: str
     system: str
-    tags: List[TagSchema]
-    tool_exec_environment_variables: List[ToolEnvVarSchema]
-    tool_rules: List[ToolRuleSchema]
-    tools: List[ToolSchema]
+    tags: list[TagSchema]
+    tool_exec_environment_variables: list[ToolEnvVarSchema]
+    tool_rules: list[ToolRuleSchema]
+    tools: list[ToolSchema]
     updated_at: str
     version: str

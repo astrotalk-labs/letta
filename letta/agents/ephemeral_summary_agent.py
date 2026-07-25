@@ -1,14 +1,13 @@
 import asyncio
 from pathlib import Path
-from typing import List, Optional
 
 import anthropic
 from openai import AzureOpenAI
 from sqlalchemy.exc import IntegrityError
 
 from letta.agents.base_agent import BaseAgent
-from letta.debug_util import debug_log
 from letta.constants import DEFAULT_MAX_STEPS
+from letta.debug_util import debug_log
 from letta.log import get_logger
 from letta.orm.errors import NoResultFound
 from letta.schemas.block import Block, BlockUpdate
@@ -39,7 +38,7 @@ class EphemeralSummaryAgent(BaseAgent):
         agent_manager: AgentManager,
         block_manager: BlockManager,
         actor: User,
-        at_user_id: Optional[str] = None,
+        at_user_id: str | None = None,
     ):
         super().__init__(
             agent_id=agent_id,
@@ -52,7 +51,7 @@ class EphemeralSummaryAgent(BaseAgent):
         self.block_manager = block_manager
         self.at_user_id = at_user_id
 
-    async def step(self, input_messages: List[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS) -> List[Message]:
+    async def step(self, input_messages: list[MessageCreate], max_steps: int = DEFAULT_MAX_STEPS) -> list[Message]:
         if len(input_messages) > 1:
             raise ValueError("Can only invoke EphemeralSummaryAgent with a single summarization message.")
 
