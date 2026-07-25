@@ -1,44 +1,22 @@
-import re
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from datetime import timezone as dt_timezone
 from time import strftime
+from typing import Any
 
 import pytz
 
-
-def parse_formatted_time(formatted_time):
-    # parse times returned by letta.utils.get_formatted_time()
-    return datetime.strptime(formatted_time, "%Y-%m-%d %I:%M:%S %p %Z%z")
-
-
-def datetime_to_timestamp(dt):
-    # convert datetime object to integer timestamp
-    return int(dt.timestamp())
-
-
-def get_local_time_military():
-    # Get the current time in UTC
-    current_time_utc = datetime.now(pytz.utc)
-
-    # Convert to San Francisco's time zone (PST/PDT)
-    sf_time_zone = pytz.timezone("America/Los_Angeles")
-    local_time = current_time_utc.astimezone(sf_time_zone)
-
-    # You may format it as you desire
-    formatted_time = local_time.strftime("%Y-%m-%d %H:%M:%S %Z%z")
-
-    return formatted_time
+_DATETIME_FORMAT = "%Y-%m-%d %I:%M:%S %p %Z%z"
 
 
 def get_local_time_fast():
-    formatted_time = strftime("%Y-%m-%d %I:%M:%S %p %Z%z")
+    formatted_time = strftime(_DATETIME_FORMAT)
 
     return formatted_time
 
 
-def get_local_time_timezone(timezone="America/Los_Angeles"):
+def get_local_time_timezone(timezone: str = "America/Los_Angeles"):
     # Get the current time in UTC
     current_time_utc = datetime.now(pytz.utc)
 
@@ -47,12 +25,12 @@ def get_local_time_timezone(timezone="America/Los_Angeles"):
     local_time = current_time_utc.astimezone(sf_time_zone)
 
     # You may format it as you desire, including AM/PM
-    formatted_time = local_time.strftime("%Y-%m-%d %I:%M:%S %p %Z%z")
+    formatted_time = local_time.strftime(_DATETIME_FORMAT)
 
     return formatted_time
 
 
-def get_local_time(timezone=None):
+def get_local_time(timezone: str | None = None):
     if timezone is not None:
         time_str = get_local_time_timezone(timezone)
     else:
@@ -60,14 +38,13 @@ def get_local_time(timezone=None):
         local_time = datetime.now().astimezone()
 
         # You may format it as you desire, including AM/PM
-        time_str = local_time.strftime("%Y-%m-%d %I:%M:%S %p %Z%z")
+        time_str = local_time.strftime(_DATETIME_FORMAT)
 
     return time_str.strip()
 
 
 def get_utc_time() -> datetime:
     """Get the current UTC time"""
-    # return datetime.now(pytz.utc)
     return datetime.now(dt_timezone.utc)
 
 
@@ -89,26 +66,6 @@ def timestamp_to_datetime(timestamp_seconds: int) -> datetime:
     return datetime.fromtimestamp(timestamp_seconds, tz=dt_timezone.utc)
 
 
-def format_datetime(dt):
-    return dt.strftime("%Y-%m-%d %I:%M:%S %p %Z%z")
-
-
-def validate_date_format(date_str):
-    """Validate the given date string in the format 'YYYY-MM-DD'."""
-    try:
-        datetime.strptime(date_str, "%Y-%m-%d")
-        return True
-    except (ValueError, TypeError):
-        return False
-
-
-def extract_date_from_timestamp(timestamp):
-    """Extracts and returns the date from the given timestamp."""
-    # Extracts the date (ignoring the time and timezone)
-    match = re.match(r"(\d{4}-\d{2}-\d{2})", timestamp)
-    return match.group(1) if match else None
-
-
 def is_utc_datetime(dt: datetime) -> bool:
     return dt.tzinfo is not None and dt.tzinfo.utcoffset(dt) == timedelta(0)
 
@@ -122,17 +79,17 @@ class AsyncTimer:
     Do not use the start and end times outside of this function as they are relative.
     """
 
-    def __init__(self, callback_func: Callable | None = None):
-        self._start_time_ns = None
-        self._end_time_ns = None
-        self.elapsed_ns = None
-        self.callback_func = callback_func
+    def __init__(self, callback_func: Callable[..., Any] | None = None):
+        self._start_time_ns: int = 0
+        self._end_time_ns: int = 0
+        self.elapsed_ns: int = 0
+        self.callback_func: Callable[..., Any] | None = callback_func
 
     async def __aenter__(self):
         self._start_time_ns = time.perf_counter_ns()
         return self
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: object) -> bool:
         self._end_time_ns = time.perf_counter_ns()
         self.elapsed_ns = self._end_time_ns - self._start_time_ns
         if self.callback_func:
@@ -146,6 +103,4 @@ class AsyncTimer:
 
     @property
     def elapsed_ms(self):
-        if self.elapsed_ns is not None:
-            return ns_to_ms(self.elapsed_ns)
-        return None
+        return ns_to_ms(self.elapsed_ns)
