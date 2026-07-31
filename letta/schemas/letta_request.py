@@ -60,6 +60,11 @@ class LettaRequest(BaseModel):
         description="Raw business ID from the order (1=AstroTalk, 10=Panditji, 12=Lumus). 0 when unavailable.",
     )
 
+    chat_order_id: Optional[int] = Field(
+        default=None,
+        description="Chat order ID from the upstream order system. Used for debug log correlation.",
+    )
+
     llm_provider: Optional[str] = Field(
         default=None,
         description="Override the LLM provider for this request. Use 'google' to route to Google AI (Gemini) regardless of the agent's configured endpoint.",
