@@ -27,7 +27,7 @@ from letta.errors import (
 from letta.helpers.datetime_helpers import get_utc_time_int
 from letta.llm_api.bedrock_inference_profiles import COHORT_INFERENCE_PROFILES, MODEL_INFERENCE_PROFILES
 from letta.llm_api.helpers import add_inner_thoughts_to_functions, unpack_all_inner_thoughts_from_kwargs
-from letta.debug_util import _DEBUG_USER_ID, debug_log
+from letta.debug_util import _DEBUG_USER_ID, debug_log, get_debug_chat_order_id
 from letta.llm_api.llm_client_base import LLMClientBase
 from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION
 from letta.log import get_logger
@@ -419,6 +419,17 @@ class AnthropicClient(LLMClientBase):
                 endpoint_type=llm_config.model_endpoint_type,
                 model=request_data.get("model"),
             )
+            _bedrock_usage = response_dict.get("usage", {})
+            debug_log(
+                _at_uid,
+                lambda _u=_bedrock_usage, _m=model_id: (
+                    f"request_async: TOKEN_USAGE(bedrock) chat_order_id={get_debug_chat_order_id()} "
+                    f"provider=anthropic_bedrock model={_m} "
+                    f"input_tokens={_u.get('input_tokens')} output_tokens={_u.get('output_tokens')} "
+                    f"cache_creation_tokens={_u.get('cache_creation_input_tokens')} "
+                    f"cache_read_tokens={_u.get('cache_read_input_tokens')}"
+                ),
+            )
             debug_log(_at_uid, lambda _r=response_dict: f"request_async: BEDROCK LLM_RESPONSE body={json.dumps(_r, default=str)}")
             return response_dict
         else:
@@ -443,6 +454,16 @@ class AnthropicClient(LLMClientBase):
             response.usage,
             endpoint_type=llm_config.model_endpoint_type,
             model=request_data.get("model"),
+        )
+        debug_log(
+            _at_uid,
+            lambda _u=response.usage, _ep=llm_config.model_endpoint_type, _m=request_data.get("model"): (
+                f"request_async: TOKEN_USAGE chat_order_id={get_debug_chat_order_id()} "
+                f"provider={_ep} model={_m} "
+                f"input_tokens={_u.input_tokens} output_tokens={_u.output_tokens} "
+                f"cache_creation_tokens={getattr(_u, 'cache_creation_input_tokens', None)} "
+                f"cache_read_tokens={getattr(_u, 'cache_read_input_tokens', None)}"
+            ),
         )
         debug_log(_at_uid, lambda _r=response: f"request_async: LLM_RESPONSE body={json.dumps(_r.model_dump(), default=str)}")
         return response.model_dump()

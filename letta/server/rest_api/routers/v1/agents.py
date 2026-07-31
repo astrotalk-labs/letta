@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from starlette.responses import Response
 
 from letta.agents.letta_agent import LettaAgent
-from letta.debug_util import debug_log, new_debug_request_id
+from letta.debug_util import debug_log, new_debug_request_id, set_debug_chat_order_id
 from letta.constants import DEFAULT_MAX_STEPS, DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG
 from letta.groups.sleeptime_multi_agent_v2 import SleeptimeMultiAgentV2
 from letta.helpers.datetime_helpers import get_utc_timestamp_ns, ns_to_ms
@@ -702,6 +702,7 @@ async def send_message(
     request_start_timestamp_ns = get_utc_timestamp_ns()
     MetricRegistry().user_message_counter.add(1, get_ctx_attributes())
     new_debug_request_id(at_user_id)
+    set_debug_chat_order_id(at_user_id, request.chat_order_id)
 
     # Tag the OTel request context with the flow flag so it propagates DOWN into
     # the agent loop and labels every nested metric (step / llm / ttft / tokens /

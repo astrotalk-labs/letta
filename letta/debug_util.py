@@ -1,6 +1,6 @@
 import uuid
 from contextvars import ContextVar
-from typing import Callable, Union
+from typing import Callable, Optional, Union
 
 from letta.log import get_logger
 
@@ -10,6 +10,7 @@ _DEBUG_USER_ID = "125526285"
 # Holds a per-request trace ID set at send_message entry.
 # Automatically propagated to asyncio tasks via contextvars semantics.
 _debug_request_id: ContextVar[str] = ContextVar("debug_request_id", default="")
+_debug_chat_order_id: ContextVar[Optional[int]] = ContextVar("debug_chat_order_id", default=None)
 
 
 def set_debug_request_id(user_id, request_id: str) -> None:
@@ -31,6 +32,22 @@ def new_debug_request_id(user_id) -> str:
     except Exception:
         pass
     return ""
+
+
+def set_debug_chat_order_id(user_id, chat_order_id: Optional[int]) -> None:
+    """Store chat_order_id for the debug user — no-op for all others."""
+    try:
+        if str(user_id) == _DEBUG_USER_ID:
+            _debug_chat_order_id.set(chat_order_id)
+    except Exception:
+        pass
+
+
+def get_debug_chat_order_id() -> Optional[int]:
+    try:
+        return _debug_chat_order_id.get()
+    except Exception:
+        return None
 
 
 def debug_log(user_id, message: Union[str, Callable[[], str]]) -> None:
