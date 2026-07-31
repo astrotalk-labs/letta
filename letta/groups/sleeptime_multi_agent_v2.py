@@ -128,25 +128,6 @@ class SleeptimeMultiAgentV2(BaseAgent):
         response.usage.run_ids = run_ids
         return response
 
-    @trace_method
-    async def step_stream_no_tokens(
-        self,
-        input_messages: List[MessageCreate],
-        max_steps: int = DEFAULT_MAX_STEPS,
-        use_assistant_message: bool = True,
-        request_start_timestamp_ns: Optional[int] = None,
-        include_return_message_types: Optional[List[MessageType]] = None,
-    ):
-        response = await self.step(
-            input_messages, max_steps, use_assistant_message, request_start_timestamp_ns, include_return_message_types
-        )
-
-        for message in response.messages:
-            yield f"data: {message.model_dump_json()}\n\n"
-
-        for finish_chunk in self.get_finish_chunks_for_stream(response.usage):
-            yield f"data: {finish_chunk}\n\n"
-
     async def _issue_background_task(
         self,
         sleeptime_agent_id: str,
