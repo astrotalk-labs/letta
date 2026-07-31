@@ -5,7 +5,7 @@ from typing import Callable, Optional, Union
 from letta.log import get_logger
 
 logger = get_logger(__name__)
-_DEBUG_USER_ID = "125526285"
+_DEBUG_USER_ID = "128025464"
 
 # Holds a per-request trace ID set at send_message entry.
 # Automatically propagated to asyncio tasks via contextvars semantics.
