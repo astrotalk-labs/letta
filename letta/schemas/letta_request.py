@@ -65,6 +65,11 @@ class LettaRequest(BaseModel):
         description="Chat order ID from the upstream order system. Used for debug log correlation.",
     )
 
+    consultant_id: int | None = Field(
+        default=None,
+        description="Consultant identifier from the upstream order. When provided alongside llm_provider='bedrock', pins the call to the dedicated consultant Bedrock inference profile.",
+    )
+
     llm_provider: Optional[str] = Field(
         default=None,
         description="Override the LLM provider for this request. Use 'google' to route to Google AI (Gemini) regardless of the agent's configured endpoint.",
