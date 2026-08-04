@@ -150,6 +150,10 @@ _HAIKU_MODEL_BY_PROVIDER: dict = {
     "anthropic_bedrock": _HAIKU_MODEL_BEDROCK_ARN,
 }
 
+# Dedicated application inference profile for consultant-routed requests.
+_CONSULTANT_BEDROCK_ARN_FOR_COST_TRACKING: str = "arn:aws:bedrock:ap-south-1:441618926843:application-inference-profile/opn9kjb11b8j"
+_CONSULTANT_ID_FOR_COST_TACKING: int = 52019
+
 # Hard cap on how long we'll wait for a Haiku LLM call before falling back to primary.
 # When Bedrock degrades (observed: p95 >24s during ap-south-1 service event Jun 2026),
 # the timeout bounds the damage to ≤8s per step instead of 24s+ per step.
@@ -223,6 +227,7 @@ class LettaAgent(BaseAgent):
         use_bedrock_experiment: bool,
         model_override: Optional[str] = None,
         llm_provider: Optional[str] = None,
+        consultant_id: int | None = None,
     ):
         """Apply dynamic provider switching based on experiment flags."""
         # Runtime model override: swap the model name before any endpoint-type remapping
@@ -235,6 +240,11 @@ class LettaAgent(BaseAgent):
         # Also auto-detect Gemini models by name so callers don't need to set llm_provider explicitly.
         if llm_provider == "google" or (agent_state.llm_config.model or "").startswith("gemini"):
             agent_state.llm_config.model_endpoint_type = "google_ai"
+            return
+
+        if consultant_id == _CONSULTANT_ID_FOR_COST_TACKING:
+            agent_state.llm_config.model_endpoint_type = "anthropic_bedrock"
+            agent_state.llm_config.model = _CONSULTANT_BEDROCK_ARN_FOR_COST_TRACKING
             return
 
         original_endpoint_type = agent_state.llm_config.model_endpoint_type
@@ -273,6 +283,7 @@ class LettaAgent(BaseAgent):
         task_id: Optional[str] = None,
         latency_optimisation_flow: bool = False,
         llm_provider: Optional[str] = None,
+        consultant_id: int | None = None,
     ) -> LettaResponse:
         _t_agent_load_start = get_utc_timestamp_ns() if task_id else None
         agent_state = await self.agent_manager.get_agent_by_id_async(
@@ -297,6 +308,7 @@ class LettaAgent(BaseAgent):
             task_id=task_id,
             latency_optimisation_flow=latency_optimisation_flow,
             llm_provider=llm_provider,
+            consultant_id=consultant_id,
         )
         return _create_letta_response(
             new_in_context_messages=new_in_context_messages,
@@ -572,6 +584,7 @@ class LettaAgent(BaseAgent):
         task_id: Optional[str] = None,
         latency_optimisation_flow: bool = False,
         llm_provider: Optional[str] = None,
+        consultant_id: int | None = None,
     ) -> Tuple[List[Message], List[Message], Optional[LettaStopReason], LettaUsageStatistics]:
         """
         Carries out an invocation of the agent loop. In each step, the agent
@@ -582,7 +595,12 @@ class LettaAgent(BaseAgent):
         """
         # Handle provider switching based on experiment flags
         self._apply_provider_switching(
-            agent_state, use_vertex_experiment, use_bedrock_experiment, model_override=model_override, llm_provider=llm_provider
+            agent_state,
+            use_vertex_experiment,
+            use_bedrock_experiment,
+            model_override=model_override,
+            llm_provider=llm_provider,
+            consultant_id=consultant_id,
         )
 
         # Stash task_id on the instance so agent-internal helpers (_rebuild_memory_async,
