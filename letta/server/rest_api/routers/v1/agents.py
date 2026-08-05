@@ -9,7 +9,7 @@ from marshmallow import ValidationError
 from orjson import orjson
 from pydantic import Field
 from sqlalchemy.exc import IntegrityError, OperationalError
-from starlette.responses import Response
+from starlette.responses import Response, StreamingResponse
 
 from letta.agents.letta_agent import LettaAgent
 from letta.debug_util import debug_log, new_debug_request_id, set_debug_chat_order_id
@@ -25,7 +25,7 @@ from letta.schemas.block import Block, BlockUpdate
 from letta.schemas.group import Group
 from letta.schemas.job import JobStatus, JobUpdate, LettaRequestConfig
 from letta.schemas.letta_message import LettaMessageUnion, LettaMessageUpdateUnion, MessageType
-from letta.schemas.letta_request import LettaRequest
+from letta.schemas.letta_request import LettaRequest, LettaStreamingRequest
 from letta.schemas.letta_response import LettaResponse
 from letta.schemas.memory import ContextWindowOverview, CreateArchivalMemory, Memory
 from letta.schemas.message import MessageCreate
@@ -811,6 +811,74 @@ async def send_message(
             )
         except Exception as metric_exc:
             logger.warning(f"Failed to record messages endpoint e2e metric: {metric_exc}")
+
+
+@router.post(
+    "/{agent_id}/messages/stream",
+    response_model=None,
+    operation_id="create_agent_message_stream",
+    responses={
+        200: {
+            "description": "Successful response",
+            "content": {
+                "text/event-stream": {"description": "Server-Sent Events stream"},
+            },
+        }
+    },
+)
+async def send_message_streaming(
+    agent_id: str,
+    server: SyncServer = Depends(get_letta_server),
+    request: LettaStreamingRequest = Body(...),
+    actor_id: Optional[str] = Header(None, alias="user_id"),
+    at_user_id: Optional[str] = Header(None, alias="x_gb_user_id"),
+) -> StreamingResponse:
+    """
+    Process a user message and return the agent's response as a Server-Sent Events stream.
+    Streams tokens if 'stream_tokens' is set to True and the model supports it.
+    """
+    request_start_timestamp_ns = get_utc_timestamp_ns()
+    MetricRegistry().user_message_counter.add(1, get_ctx_attributes())
+
+    logger.warning(
+        f"[SEND_MESSAGE_STREAMING] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}, model_override={request.model_override}, llm_provider={request.llm_provider}"
+    )
+
+    actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
+    agent_loop = LettaAgent(
+        agent_id=agent_id,
+        message_manager=server.message_manager,
+        agent_manager=server.agent_manager,
+        block_manager=server.block_manager,
+        passage_manager=server.passage_manager,
+        actor=actor,
+        step_manager=server.step_manager,
+        telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
+        at_user_id=at_user_id,
+    )
+
+    async def _sse_generator():
+        response = await agent_loop.step(
+            input_messages=request.messages,
+            max_steps=request.max_steps,
+            use_assistant_message=request.use_assistant_message,
+            request_start_timestamp_ns=request_start_timestamp_ns,
+            include_return_message_types=request.include_return_message_types,
+            use_vertex_experiment=request.use_vertex_experiment,
+            use_bedrock_experiment=request.use_bedrock_experiment,
+            model_override=request.model_override,
+            user_cohort=request.user_cohort,
+            thinking=request.thinking,
+            thinking_config=request.thinking_config,
+            output_config=request.output_config,
+            llm_provider=request.llm_provider,
+        )
+        for msg in response.messages:
+            yield f"data: {msg.model_dump_json()}\n\n"
+        for finish_chunk in agent_loop.get_finish_chunks_for_stream(response.usage, response.stop_reason):
+            yield f"data: {finish_chunk}\n\n"
+
+    return StreamingResponse(_sse_generator(), media_type="text/event-stream")
 
 
 async def process_message_background(
