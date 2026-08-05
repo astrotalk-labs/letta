@@ -345,7 +345,7 @@ class LettaAgent(BaseAgent):
         )
 
         async with AsyncTimer() as _t:
-            current_in_context_messages, new_in_context_messages = await _prepare_in_context_messages_no_persist_async(
+            current_in_context_messages, new_in_context_messages = await prepare_in_context_messages_no_persist_async(
                 input_messages, agent_state, self.message_manager, self.actor
             )
         _log_step_timing(
