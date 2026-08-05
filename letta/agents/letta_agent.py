@@ -154,6 +154,10 @@ _HAIKU_MODEL_BY_PROVIDER: dict = {
 _CONSULTANT_BEDROCK_ARN_FOR_COST_TRACKING: str = "arn:aws:bedrock:ap-south-1:441618926843:application-inference-profile/opn9kjb11b8j"
 _CONSULTANT_ID_FOR_COST_TACKING: int = 52019
 
+_CONSULTANT_BEDROCK_ARN_FOR_COST_TRACKING_2: str = "arn:aws:bedrock:ap-south-1:441618926843:application-inference-profile/q76vve6qchkj"
+_CONSULTANT_ID_FOR_COST_TACKING_2: int = 52037
+
+
 # Hard cap on how long we'll wait for a Haiku LLM call before falling back to primary.
 # When Bedrock degrades (observed: p95 >24s during ap-south-1 service event Jun 2026),
 # the timeout bounds the damage to ≤8s per step instead of 24s+ per step.
@@ -245,6 +249,11 @@ class LettaAgent(BaseAgent):
         if consultant_id == _CONSULTANT_ID_FOR_COST_TACKING:
             agent_state.llm_config.model_endpoint_type = "anthropic_bedrock"
             agent_state.llm_config.model = _CONSULTANT_BEDROCK_ARN_FOR_COST_TRACKING
+            return
+
+        if consultant_id == _CONSULTANT_ID_FOR_COST_TACKING_2:
+            agent_state.llm_config.model_endpoint_type = "anthropic_bedrock"
+            agent_state.llm_config.model = _CONSULTANT_BEDROCK_ARN_FOR_COST_TRACKING_2
             return
 
         original_endpoint_type = agent_state.llm_config.model_endpoint_type
