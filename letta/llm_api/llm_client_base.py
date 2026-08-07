@@ -36,6 +36,7 @@ class LLMClientBase:
         self.actor = actor
         self.at_user_id = at_user_id
         self.user_cohort = user_cohort
+        self.consultant_id: Optional[int] = None
         self.put_inner_thoughts_first = put_inner_thoughts_first
         self.use_tool_naming = use_tool_naming
 

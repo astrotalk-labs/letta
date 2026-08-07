@@ -129,6 +129,9 @@ _COHORT_TO_KEY_ENV: dict = {
 
 _COHORT_TO_BEDROCK_ARN = COHORT_INFERENCE_PROFILES
 
+# Consultant IDs for which the Bedrock timeout + fallback logic is active.
+_BEDROCK_TIMEOUT_FALLBACK_CONSULTANT_IDS: frozenset = frozenset({46760, 46906, 47051, 47360, 47407, 49805, _DEBUG_USER_ID})
+
 
 def _build_bedrock_arn(profile_id: str) -> str:
     """Construct a full Bedrock ARN by taking the prefix from BEDROCK_INFERENCE_PROFILE_ARN
@@ -400,13 +403,13 @@ class AnthropicClient(LLMClientBase):
                 )
                 return json.loads(resp["body"].read())
 
-            if _at_uid and _at_uid == _DEBUG_USER_ID:
+            if self.consultant_id in _BEDROCK_TIMEOUT_FALLBACK_CONSULTANT_IDS:
                 _timeout = model_settings.anthropic_request_timeout
                 try:
                     result = await asyncio.wait_for(asyncio.to_thread(_invoke), timeout=_timeout)
                 except asyncio.TimeoutError:
-                    logger.warning(  # TEMP
-                        "[BEDROCK_TIMEOUT_TEST] user=%s model=%s timed out after %ss — entering fallback",
+                    logger.warning(
+                        "[BEDROCK_TIMEOUT] user=%s model=%s timed out after %ss — entering fallback",
                         _at_uid,
                         model_id,
                         _timeout,
@@ -416,11 +419,6 @@ class AnthropicClient(LLMClientBase):
                         at_uid=_at_uid,
                         bedrock_model_id=model_id,
                         bedrock_timeout=_timeout,
-                    )
-                    logger.warning(  # TEMP
-                        "[BEDROCK_TIMEOUT_TEST] user=%s fallback succeeded stop_reason=%s",
-                        _at_uid,
-                        _fallback_result.get("stop_reason"),
                     )
                     return _fallback_result
             else:

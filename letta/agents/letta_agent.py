@@ -661,6 +661,8 @@ class LettaAgent(BaseAgent):
             at_user_id=self.at_user_id,
             user_cohort=user_cohort,
         )
+        if llm_client is not None:
+            llm_client.consultant_id = consultant_id
 
         # Resolve the Haiku model name for this provider (used when latency_optimisation_flow=True).
         # Hardcoded provider→model mapping; Bedrock uses an ARN application inference profile.
