@@ -6,6 +6,9 @@ in anthropic_client.py), so these IDs are portable across environments without
 touching this file.
 """
 
+# Profile used as the fallback target when the primary Bedrock call times out.
+FALLBACK_INFERENCE_PROFILE = "gp9qehu2kfz1"
+
 # Model-name based routing: matched by substring against the requested model name.
 MODEL_INFERENCE_PROFILES: dict = {
     "sonnet-5": "yfsj0hvyx1ls",

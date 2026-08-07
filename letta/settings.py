@@ -100,6 +100,9 @@ class ModelSettings(BaseSettings):
     # anthropic
     anthropic_api_key: Optional[str] = None
     anthropic_max_retries: int = 3
+    anthropic_request_timeout: float = 5.0  # TEMP: lowered for timeout test
+    bedrock_timeout_fallback_max_retries: int = 3
+    bedrock_timeout_fallback_request_timeout: float = 15.0
 
     # ollama
     ollama_base_url: Optional[str] = None
