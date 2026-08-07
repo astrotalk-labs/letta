@@ -26,6 +26,7 @@ class LLMConfig(BaseModel):
 
     model: str = Field(..., description="LLM model name. ")
     model_endpoint_type: Literal[
+        "anthropic_bedrock",
         "openai",
         "anthropic",
         "cohere",

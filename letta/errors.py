@@ -72,6 +72,10 @@ class LLMConnectionError(LLMError):
     """Error when unable to connect to LLM service"""
 
 
+class LLMTimeoutError(LLMError):
+    """Error when LLM service request times out after all retries"""
+
+
 class LLMRateLimitError(LLMError):
     """Error when rate limited by LLM service"""
 

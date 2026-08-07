@@ -22,10 +22,11 @@ from letta.errors import (
     LLMPermissionDeniedError,
     LLMRateLimitError,
     LLMServerError,
+    LLMTimeoutError,
     LLMUnprocessableEntityError,
 )
 from letta.helpers.datetime_helpers import get_utc_time_int
-from letta.llm_api.bedrock_inference_profiles import COHORT_INFERENCE_PROFILES, MODEL_INFERENCE_PROFILES
+from letta.llm_api.bedrock_inference_profiles import COHORT_INFERENCE_PROFILES, FALLBACK_INFERENCE_PROFILE, MODEL_INFERENCE_PROFILES
 from letta.llm_api.helpers import add_inner_thoughts_to_functions, unpack_all_inner_thoughts_from_kwargs
 from letta.debug_util import _DEBUG_USER_ID, debug_log, get_debug_chat_order_id
 from letta.llm_api.llm_client_base import LLMClientBase
@@ -399,7 +400,31 @@ class AnthropicClient(LLMClientBase):
                 )
                 return json.loads(resp["body"].read())
 
-            result = await asyncio.to_thread(_invoke)
+            if _at_uid and _at_uid == _DEBUG_USER_ID:
+                _timeout = model_settings.anthropic_request_timeout
+                try:
+                    result = await asyncio.wait_for(asyncio.to_thread(_invoke), timeout=_timeout)
+                except asyncio.TimeoutError:
+                    logger.warning(  # TEMP
+                        "[BEDROCK_TIMEOUT_TEST] user=%s model=%s timed out after %ss — entering fallback",
+                        _at_uid,
+                        model_id,
+                        _timeout,
+                    )
+                    _fallback_result = await self._bedrock_timeout_fallback(
+                        request_data=request_data,
+                        at_uid=_at_uid,
+                        bedrock_model_id=model_id,
+                        bedrock_timeout=_timeout,
+                    )
+                    logger.warning(  # TEMP
+                        "[BEDROCK_TIMEOUT_TEST] user=%s fallback succeeded stop_reason=%s",
+                        _at_uid,
+                        _fallback_result.get("stop_reason"),
+                    )
+                    return _fallback_result
+            else:
+                result = await asyncio.to_thread(_invoke)
 
             # Convert Bedrock response to match Anthropic SDK response format
             # Bedrock returns the same format as Anthropic Messages API
@@ -564,7 +589,7 @@ class AnthropicClient(LLMClientBase):
 
     @trace_method
     async def _get_anthropic_client_async(
-        self, llm_config: LLMConfig, async_client: bool = False
+        self, llm_config: LLMConfig, async_client: bool = False, max_retries: Optional[int] = None
     ) -> Union[anthropic.AsyncAnthropic, anthropic.Anthropic]:
         override_key = None
         if llm_config.provider_category == ProviderCategory.byok:
@@ -576,17 +601,111 @@ class AnthropicClient(LLMClientBase):
             logger.info("[GEO_KEY] _get_anthropic_client_async at_user_id=%s user_cohort=%s", at_uid, cohort)
             override_key = _resolve_key_from_cohort(at_uid, cohort)
 
+        _max_retries = max_retries if max_retries is not None else model_settings.anthropic_max_retries
         if async_client:
             return (
-                anthropic.AsyncAnthropic(api_key=override_key, max_retries=model_settings.anthropic_max_retries)
+                anthropic.AsyncAnthropic(api_key=override_key, max_retries=_max_retries)
                 if override_key
-                else anthropic.AsyncAnthropic(max_retries=model_settings.anthropic_max_retries)
+                else anthropic.AsyncAnthropic(max_retries=_max_retries)
             )
         return (
-            anthropic.Anthropic(api_key=override_key, max_retries=model_settings.anthropic_max_retries)
+            anthropic.Anthropic(api_key=override_key, max_retries=_max_retries)
             if override_key
-            else anthropic.Anthropic(max_retries=model_settings.anthropic_max_retries)
+            else anthropic.Anthropic(max_retries=_max_retries)
         )
+
+    async def _bedrock_timeout_fallback(
+        self,
+        request_data: dict,
+        at_uid: Optional[str],
+        bedrock_model_id: Optional[str],
+        bedrock_timeout: float,
+    ) -> dict:
+        """Fall back to a dedicated Bedrock inference profile after the primary Bedrock call times out."""
+        import asyncio
+        import json
+        import os
+
+        import boto3
+
+        max_retries = model_settings.bedrock_timeout_fallback_max_retries
+        fb_timeout = model_settings.bedrock_timeout_fallback_request_timeout
+        fb_model_id = _build_bedrock_arn(FALLBACK_INFERENCE_PROFILE)
+
+        aws_region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or model_settings.aws_region or "ap-south-1"
+        aws_access_key = os.getenv("AWS_ACCESS_KEY_ID") or model_settings.aws_access_key
+        aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY") or model_settings.aws_secret_access_key
+        aws_session_token = os.getenv("AWS_SESSION_TOKEN")
+
+        client_kwargs: dict = {"service_name": "bedrock-runtime", "region_name": aws_region}
+        if aws_access_key and aws_secret_key:
+            client_kwargs["aws_access_key_id"] = aws_access_key
+            client_kwargs["aws_secret_access_key"] = aws_secret_key
+        if aws_session_token:
+            client_kwargs["aws_session_token"] = aws_session_token
+        fb_bedrock_client = boto3.client(**client_kwargs)
+
+        bedrock_body: dict = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": request_data.get("max_tokens", 4096),
+            "messages": request_data.get("messages", []),
+        }
+        for field in ("system", "tools", "tool_choice", "temperature", "top_p", "top_k", "stop_sequences"):
+            if field in request_data:
+                bedrock_body[field] = request_data[field]
+
+        for attempt in range(1, max_retries + 1):
+            logger.warning(
+                "[BEDROCK_TIMEOUT] user=%s bedrock_model=%s timed out after %ss — fallback attempt %d/%d with %s (timeout=%ss)",
+                at_uid,
+                bedrock_model_id,
+                bedrock_timeout,
+                attempt,
+                max_retries,
+                fb_model_id,
+                fb_timeout,
+            )
+
+            def _fallback_invoke():
+                resp = fb_bedrock_client.invoke_model(
+                    modelId=fb_model_id,
+                    contentType="application/json",
+                    accept="application/json",
+                    body=json.dumps(bedrock_body),
+                )
+                return json.loads(resp["body"].read())
+
+            try:
+                fb_result = await asyncio.wait_for(asyncio.to_thread(_fallback_invoke), timeout=fb_timeout)
+                fb_usage = fb_result.get("usage", {})
+                logger.info("[BEDROCK_TIMEOUT_FALLBACK] attempt=%d usage=%s", attempt, fb_usage)
+                self._log_cache_observation_usage(fb_usage, endpoint_type="anthropic_bedrock", model=fb_model_id)
+                return {
+                    "id": fb_result.get("id", "msg_bedrock_fallback"),
+                    "type": "message",
+                    "role": fb_result.get("role", "assistant"),
+                    "content": fb_result.get("content", []),
+                    "model": fb_result.get("model", fb_model_id),
+                    "stop_reason": fb_result.get("stop_reason", "end_turn"),
+                    "stop_sequence": fb_result.get("stop_sequence"),
+                    "usage": fb_usage,
+                }
+            except asyncio.TimeoutError:
+                if attempt == max_retries:
+                    logger.error(
+                        "[BEDROCK_TIMEOUT_FALLBACK] all %d fallback attempts timed out user=%s",
+                        max_retries,
+                        at_uid,
+                    )
+                    raise LLMTimeoutError(
+                        message=f"Bedrock timed out after {bedrock_timeout}s and {max_retries} fallback attempts with {fb_model_id} also timed out after {fb_timeout}s each",
+                        code=ErrorCode.INTERNAL_SERVER_ERROR,
+                    )
+            except Exception as fb_e:
+                raise self.handle_llm_error(fb_e)
+
+        # unreachable — loop always returns or raises, but satisfies type checkers
+        raise LLMTimeoutError(message="Bedrock fallback exhausted", code=ErrorCode.INTERNAL_SERVER_ERROR)
 
     @trace_method
     def build_request_data(
