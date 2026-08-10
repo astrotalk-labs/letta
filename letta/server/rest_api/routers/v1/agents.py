@@ -11,7 +11,7 @@ from pydantic import Field
 from sqlalchemy.exc import IntegrityError, OperationalError
 from starlette.responses import Response, StreamingResponse
 
-from letta.agents.letta_agent import LettaAgent
+from letta.agents.letta_agent import LettaAgent, TASK_LATENCY_CONSULTANT_IDS
 from letta.debug_util import debug_log, new_debug_request_id, set_debug_chat_order_id
 from letta.constants import DEFAULT_MAX_STEPS, DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG
 from letta.groups.sleeptime_multi_agent_v2 import SleeptimeMultiAgentV2
@@ -747,7 +747,7 @@ async def send_message(
         # TODO: This is redundant, remove soon
         _t_agent = get_utc_timestamp_ns()
         agent = await server.agent_manager.get_agent_by_id_async(agent_id, actor, include_relationships=["multi_agent_group"])
-        if request.task_id:
+        if request.task_id or request.consultant_id in TASK_LATENCY_CONSULTANT_IDS:
             logger.warning(f"[TASK_LATENCY] task_id={request.task_id} phase=actor_load duration_ms={ns_to_ms(_t_agent - _t_actor)}")
             logger.warning(
                 f"[TASK_LATENCY] task_id={request.task_id} phase=agent_load duration_ms={ns_to_ms(get_utc_timestamp_ns() - _t_agent)}"

@@ -154,6 +154,7 @@ _HAIKU_MODEL_BY_PROVIDER: dict = {
 _CONSULTANT_BEDROCK_ARN_FOR_COST_TRACKING_2: str = "arn:aws:bedrock:ap-south-1:441618926843:application-inference-profile/qnufi6v65yh3"
 _HAIKU_BEDROCK_ARN_FOR_COST_TRACKING_2: str = "arn:aws:bedrock:ap-south-1:441618926843:application-inference-profile/76k0mv89vfhi"
 _CONSULTANT_ID_FOR_COST_TACKING_2: int = 52037
+TASK_LATENCY_CONSULTANT_IDS: frozenset[int] = frozenset({46760, 46906, 47051, 47360, 47407, 49805})
 
 
 # Hard cap on how long we'll wait for a Haiku LLM call before falling back to primary.
@@ -287,11 +288,12 @@ class LettaAgent(BaseAgent):
         llm_provider: Optional[str] = None,
         consultant_id: int | None = None,
     ) -> LettaResponse:
-        _t_agent_load_start = get_utc_timestamp_ns() if task_id else None
+        _log_latency = bool(task_id or consultant_id in TASK_LATENCY_CONSULTANT_IDS)
+        _t_agent_load_start = get_utc_timestamp_ns() if _log_latency else None
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
         )
-        if task_id and _t_agent_load_start is not None:
+        if _log_latency and _t_agent_load_start is not None:
             logger.warning(
                 f"[TASK_LATENCY] task_id={task_id} phase=agent_load duration_ms={ns_to_ms(get_utc_timestamp_ns() - _t_agent_load_start)}"
             )
@@ -608,6 +610,8 @@ class LettaAgent(BaseAgent):
         # Stash task_id on the instance so agent-internal helpers (_rebuild_memory_async,
         # _rebuild_context_window) can tag their latency logs. Agent is per-request, so safe.
         self._task_id = task_id
+        self._consultant_id = consultant_id
+        _log_latency = bool(task_id or consultant_id in TASK_LATENCY_CONSULTANT_IDS)
 
         # Cascade rollout gate: honor latencyOptimisationFlow only for the rolled-out
         # percentage of users (_CASCADE_ROLLOUT_PCT, keyed on user_id % 100). Ramp up as
@@ -622,7 +626,7 @@ class LettaAgent(BaseAgent):
         else:
             debug_log(self.at_user_id, f"_step: cascade gate passed latency_optimisation_flow={latency_optimisation_flow}")
 
-        _ctx_prep_start = get_utc_timestamp_ns() if task_id else None
+        _ctx_prep_start = get_utc_timestamp_ns() if _log_latency else None
         _raw_msg_ids = agent_state.message_ids or []
         _unique_msg_ids = set(_raw_msg_ids)
         debug_log(
@@ -634,7 +638,7 @@ class LettaAgent(BaseAgent):
             current_in_context_messages, new_in_context_messages = await prepare_in_context_messages_no_persist_async(
                 input_messages, agent_state, self.message_manager, self.actor
             )
-        if task_id and _ctx_prep_start:
+        if _log_latency and _ctx_prep_start:
             logger.warning(
                 f"[TASK_LATENCY] task_id={task_id} phase=context_prep duration_ms={ns_to_ms(get_utc_timestamp_ns() - _ctx_prep_start)}"
             )
@@ -819,7 +823,7 @@ class LettaAgent(BaseAgent):
             # to max_steps (prod task 323737721: 42+ archival_memory_insert steps, ~150s).
             _excluded_for_haiku: Optional[frozenset] = None
 
-            _llm_start = get_utc_timestamp_ns() if task_id else None
+            _llm_start = get_utc_timestamp_ns() if _log_latency else None
             _haiku_timed_out: bool = False
             response = None  # always initialised — assigned in try block or timeout fallback
             try:
@@ -859,7 +863,7 @@ class LettaAgent(BaseAgent):
 
                 if result is not None:
                     request_data, response_data, current_in_context_messages, new_in_context_messages, valid_tool_names = result
-                    if task_id and _llm_start:
+                    if _log_latency and _llm_start:
                         logger.warning(
                             f"[TASK_LATENCY] task_id={task_id} step_id={step_id} step={i} phase=llm_call duration_ms={ns_to_ms(get_utc_timestamp_ns() - _llm_start)}"
                         )
@@ -877,7 +881,7 @@ class LettaAgent(BaseAgent):
                 _haiku_timeout_step_count += 1
                 _step_used_haiku = False
                 debug_log(self.at_user_id, f"_step: step={i} HAIKU_TIMED_OUT retrying on primary model={agent_state.llm_config.model}")
-                _llm_timeout_retry_start = get_utc_timestamp_ns() if task_id else None
+                _llm_timeout_retry_start = get_utc_timestamp_ns() if _log_latency else None
                 request_data, response_data, current_in_context_messages, new_in_context_messages, valid_tool_names = (
                     await self._build_and_request_from_llm(
                         _pre_call_current_messages,
@@ -895,7 +899,7 @@ class LettaAgent(BaseAgent):
                         step_id=step_id,
                     )
                 )
-                if task_id and _llm_timeout_retry_start:
+                if _log_latency and _llm_timeout_retry_start:
                     logger.warning(
                         f"[TASK_LATENCY] task_id={task_id} step_id={step_id} step={i} phase=llm_call_timeout_fallback "
                         f"duration_ms={ns_to_ms(get_utc_timestamp_ns() - _llm_timeout_retry_start)}"
@@ -956,7 +960,7 @@ class LettaAgent(BaseAgent):
                     # Re-run on the primary model.
                     # The model is already restored above; the pre-call message snapshot avoids
                     # double-processing the in-context history the discarded call mutated.
-                    _llm_retry_start = get_utc_timestamp_ns() if task_id else None
+                    _llm_retry_start = get_utc_timestamp_ns() if _log_latency else None
                     request_data, response_data, current_in_context_messages, new_in_context_messages, valid_tool_names = (
                         await self._build_and_request_from_llm(
                             _pre_call_current_messages,
@@ -974,7 +978,7 @@ class LettaAgent(BaseAgent):
                             step_id=step_id,
                         )
                     )
-                    if task_id and _llm_retry_start:
+                    if _log_latency and _llm_retry_start:
                         logger.warning(
                             f"[TASK_LATENCY] task_id={task_id} step_id={step_id} step={i} phase=llm_call_retry "
                             f"duration_ms={ns_to_ms(get_utc_timestamp_ns() - _llm_retry_start)}"
@@ -1038,7 +1042,7 @@ class LettaAgent(BaseAgent):
                 logger.info("No reasoning content found.")
                 reasoning = None
 
-            _tool_start = get_utc_timestamp_ns() if task_id else None
+            _tool_start = get_utc_timestamp_ns() if _log_latency else None
             persisted_messages, should_continue, stop_reason = await self._handle_ai_response(
                 tool_call,
                 valid_tool_names,
@@ -1051,7 +1055,7 @@ class LettaAgent(BaseAgent):
                 agent_step_span=agent_step_span,
                 is_final_step=(i == max_steps - 1),
             )
-            if task_id and _tool_start:
+            if _log_latency and _tool_start:
                 logger.warning(
                     f"[TASK_LATENCY] task_id={task_id} step_id={step_id} step={i} phase=tool_exec duration_ms={ns_to_ms(get_utc_timestamp_ns() - _tool_start)}"
                 )
@@ -1093,7 +1097,7 @@ class LettaAgent(BaseAgent):
             now = get_utc_timestamp_ns()
             step_ns = now - step_start
             agent_step_span.add_event(name="step_ms", attributes={"duration_ms": ns_to_ms(step_ns)})
-            if task_id:
+            if _log_latency:
                 logger.warning(
                     f"[TASK_LATENCY] task_id={task_id} step_id={step_id} step={i} phase=total_step duration_ms={ns_to_ms(step_ns)}"
                 )
@@ -1198,7 +1202,7 @@ class LettaAgent(BaseAgent):
         request_span.end()
 
         # Extend the in context message ids
-        _ctx_rebuild_start = get_utc_timestamp_ns() if task_id else None
+        _ctx_rebuild_start = get_utc_timestamp_ns() if _log_latency else None
         if not agent_state.message_buffer_autoclear:
             await self._rebuild_context_window(
                 in_context_messages=current_in_context_messages,
@@ -1207,11 +1211,11 @@ class LettaAgent(BaseAgent):
                 total_tokens=usage.total_tokens,
                 force=False,
             )
-        if task_id and _ctx_rebuild_start:
+        if _log_latency and _ctx_rebuild_start:
             logger.warning(
                 f"[TASK_LATENCY] task_id={task_id} phase=ctx_rebuild duration_ms={ns_to_ms(get_utc_timestamp_ns() - _ctx_rebuild_start)}"
             )
-        if task_id and request_start_timestamp_ns:
+        if _log_latency and request_start_timestamp_ns:
             logger.warning(
                 f"[TASK_LATENCY] task_id={task_id} phase=total_request duration_ms={ns_to_ms(get_utc_timestamp_ns() - request_start_timestamp_ns)}"
             )
@@ -1653,9 +1657,10 @@ class LettaAgent(BaseAgent):
         step_id: Optional[str] = None,
     ) -> Tuple[dict, List[str]]:
         async def _timed_message_size():
-            _t0 = get_utc_timestamp_ns() if self._task_id else None
+            _log = self._task_id or self._consultant_id in TASK_LATENCY_CONSULTANT_IDS
+            _t0 = get_utc_timestamp_ns() if _log else None
             result = await self.message_manager.size_async(actor=self.actor, agent_id=agent_state.id)
-            if self._task_id and _t0:
+            if _log and _t0:
                 logger.warning(
                     f"[TASK_LATENCY] task_id={self._task_id} step_id={step_id} step={step_index} "
                     f"phase=message_size_async duration_ms={ns_to_ms(get_utc_timestamp_ns() - _t0)}"
@@ -1663,9 +1668,10 @@ class LettaAgent(BaseAgent):
             return result
 
         async def _timed_passage_size():
-            _t0 = get_utc_timestamp_ns() if self._task_id else None
+            _log = self._task_id or self._consultant_id in TASK_LATENCY_CONSULTANT_IDS
+            _t0 = get_utc_timestamp_ns() if _log else None
             result = await self.passage_manager.agent_passage_size_async(actor=self.actor, agent_id=agent_state.id)
-            if self._task_id and _t0:
+            if _log and _t0:
                 logger.warning(
                     f"[TASK_LATENCY] task_id={self._task_id} step_id={step_id} step={step_index} "
                     f"phase=passage_size_async duration_ms={ns_to_ms(get_utc_timestamp_ns() - _t0)}"
