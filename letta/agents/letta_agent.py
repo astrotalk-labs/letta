@@ -151,10 +151,8 @@ _HAIKU_MODEL_BY_PROVIDER: dict = {
 }
 
 # Dedicated application inference profile for consultant-routed requests.
-_CONSULTANT_BEDROCK_ARN_FOR_COST_TRACKING: str = "arn:aws:bedrock:ap-south-1:441618926843:application-inference-profile/opn9kjb11b8j"
-_CONSULTANT_ID_FOR_COST_TACKING: int = 52019
-
-_CONSULTANT_BEDROCK_ARN_FOR_COST_TRACKING_2: str = "arn:aws:bedrock:ap-south-1:441618926843:application-inference-profile/q76vve6qchkj"
+_CONSULTANT_BEDROCK_ARN_FOR_COST_TRACKING_2: str = "arn:aws:bedrock:ap-south-1:441618926843:application-inference-profile/qnufi6v65yh3"
+_HAIKU_BEDROCK_ARN_FOR_COST_TRACKING_2: str = "arn:aws:bedrock:ap-south-1:441618926843:application-inference-profile/76k0mv89vfhi"
 _CONSULTANT_ID_FOR_COST_TACKING_2: int = 52037
 
 
@@ -244,11 +242,6 @@ class LettaAgent(BaseAgent):
         # Also auto-detect Gemini models by name so callers don't need to set llm_provider explicitly.
         if llm_provider == "google" or (agent_state.llm_config.model or "").startswith("gemini"):
             agent_state.llm_config.model_endpoint_type = "google_ai"
-            return
-
-        if consultant_id == _CONSULTANT_ID_FOR_COST_TACKING:
-            agent_state.llm_config.model_endpoint_type = "anthropic_bedrock"
-            agent_state.llm_config.model = _CONSULTANT_BEDROCK_ARN_FOR_COST_TRACKING
             return
 
         if consultant_id == _CONSULTANT_ID_FOR_COST_TACKING_2:
@@ -693,6 +686,8 @@ class LettaAgent(BaseAgent):
                 latency_optimisation_flow = False
             else:
                 _haiku_model = _HAIKU_MODEL_BY_PROVIDER.get(agent_state.llm_config.model_endpoint_type)
+                if consultant_id == _CONSULTANT_ID_FOR_COST_TACKING_2 and _haiku_model is not None:
+                    _haiku_model = _HAIKU_BEDROCK_ARN_FOR_COST_TRACKING_2
                 if _haiku_model:
                     logger.warning(
                         f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} ENABLED "
@@ -1590,7 +1585,7 @@ class LettaAgent(BaseAgent):
                 in_context_messages=in_context_messages, new_letta_messages=new_letta_messages, force=True, clear=True
             )
         else:
-            debug_log(self.at_user_id, f"_rebuild_context_window: SOFT_SUMMARIZE path")
+            debug_log(self.at_user_id, "_rebuild_context_window: SOFT_SUMMARIZE path")
             new_in_context_messages, updated = self.summarizer.summarize(
                 in_context_messages=in_context_messages, new_letta_messages=new_letta_messages
             )
