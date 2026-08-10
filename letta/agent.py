@@ -223,7 +223,7 @@ class Agent(BaseAgent):
             self.agent_state.memory = Memory(
                 blocks=[self.block_manager.get_block_by_id(block.id, actor=self.user) for block in self.agent_state.memory.get_blocks()],
                 file_blocks=self.agent_state.memory.file_blocks,
-                prompt_template=get_prompt_template_for_agent_type(self.agent_state.agent_type),
+                prompt_template=get_prompt_template_for_agent_type(self.agent_state.agent_type, user_id=getattr(self, "at_user_id", None)),
             )
 
             # NOTE: don't do this since re-buildin the memory is handled at the start of the step
@@ -878,7 +878,7 @@ class Agent(BaseAgent):
             current_persisted_memory = Memory(
                 blocks=[self.block_manager.get_block_by_id(block.id, actor=self.user) for block in self.agent_state.memory.get_blocks()],
                 file_blocks=self.agent_state.memory.file_blocks,
-                prompt_template=get_prompt_template_for_agent_type(self.agent_state.agent_type),
+                prompt_template=get_prompt_template_for_agent_type(self.agent_state.agent_type, user_id=getattr(self, "at_user_id", None)),
             )  # read blocks from DB
             self.update_memory_if_changed(current_persisted_memory)
 

@@ -4,6 +4,7 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from letta.constants import CORE_MEMORY_LINE_NUMBER_WARNING, DEFAULT_EMBEDDING_CHUNK_SIZE
+from letta.debug_util import _DEBUG_USER_ID
 from letta.helpers import ToolRulesSolver
 from letta.schemas.block import CreateBlock
 from letta.schemas.embedding_config import EmbeddingConfig
@@ -299,11 +300,68 @@ class AgentStepState(BaseModel):
     tool_rules_solver: ToolRulesSolver = Field(..., description="The current state of the ToolRulesSolver")
 
 
-def get_prompt_template_for_agent_type(agent_type: Optional[AgentType] = None):
+def get_prompt_template_for_agent_type(agent_type: Optional[AgentType] = None, user_id: Optional[str] = None):
+    hide_files = str(user_id) == _DEBUG_USER_ID
+
+    files_block = (
+        ""
+        if hide_files
+        else (
+            "<files>\nThe following memory files are currently accessible:\n\n"
+            "{% for block in file_blocks %}"
+            f"<file status=\"{{{{ '{FileStatus.open.value}' if block.value else '{FileStatus.closed.value}' }}}}\">\n"
+            "<{{ block.label }}>\n"
+            "<description>\n"
+            "{{ block.description }}\n"
+            "</description>\n"
+            "<metadata>"
+            "{% if block.read_only %}\n- read_only=true{% endif %}\n"
+            "- chars_current={{ block.value|length }}\n"
+            "- chars_limit={{ block.limit }}\n"
+            "</metadata>\n"
+            "<value>\n"
+            "{{ block.value }}\n"
+            "</value>\n"
+            "</{{ block.label }}>\n"
+            "</file>\n"
+            "{% if not loop.last %}\n{% endif %}"
+            "{% endfor %}"
+            "\n</files>"
+        )
+    )
 
     # Sleeptime agents use the MemGPT v2 memory tools (line numbers)
     # MemGPT v2 tools use line-number, so core memory blocks should have line numbers
     if agent_type == AgentType.sleeptime_agent or agent_type == AgentType.memgpt_v2_agent:
+        files_block_with_line_numbers = (
+            ""
+            if hide_files
+            else (
+                "<files>\nThe following memory files are currently accessible:\n\n"
+                "{% for block in file_blocks %}"
+                f"<file status=\"{{{{ '{FileStatus.open.value}' if block.value else '{FileStatus.closed.value}' }}}}\">\n"
+                "<{{ block.label }}>\n"
+                "<description>\n"
+                "{{ block.description }}\n"
+                "</description>\n"
+                "<metadata>"
+                "{% if block.read_only %}\n- read_only=true{% endif %}\n"
+                "- chars_current={{ block.value|length }}\n"
+                "- chars_limit={{ block.limit }}\n"
+                "</metadata>\n"
+                "<value>\n"
+                f"{CORE_MEMORY_LINE_NUMBER_WARNING}\n"
+                "{% for line in block.value.split('\\n') %}"
+                "Line {{ loop.index }}: {{ line }}\n"
+                "{% endfor %}"
+                "</value>\n"
+                "</{{ block.label }}>\n"
+                "</file>\n"
+                "{% if not loop.last %}\n{% endif %}"
+                "{% endfor %}"
+                "\n</files>"
+            )
+        )
         return (
             "<memory_blocks>\nThe following memory blocks are currently engaged in your core memory unit:\n\n"
             "{% for block in blocks %}"
@@ -325,30 +383,7 @@ def get_prompt_template_for_agent_type(agent_type: Optional[AgentType] = None):
             "</{{ block.label }}>\n"
             "{% if not loop.last %}\n{% endif %}"
             "{% endfor %}"
-            "\n</memory_blocks>"
-            "<files>\nThe following memory files are currently accessible:\n\n"
-            "{% for block in file_blocks %}"
-            f"<file status=\"{{{{ '{FileStatus.open.value}' if block.value else '{FileStatus.closed.value}' }}}}\">\n"
-            "<{{ block.label }}>\n"
-            "<description>\n"
-            "{{ block.description }}\n"
-            "</description>\n"
-            "<metadata>"
-            "{% if block.read_only %}\n- read_only=true{% endif %}\n"
-            "- chars_current={{ block.value|length }}\n"
-            "- chars_limit={{ block.limit }}\n"
-            "</metadata>\n"
-            "<value>\n"
-            f"{CORE_MEMORY_LINE_NUMBER_WARNING}\n"
-            "{% for line in block.value.split('\\n') %}"
-            "Line {{ loop.index }}: {{ line }}\n"
-            "{% endfor %}"
-            "</value>\n"
-            "</{{ block.label }}>\n"
-            "</file>\n"
-            "{% if not loop.last %}\n{% endif %}"
-            "{% endfor %}"
-            "\n</files>"
+            "\n</memory_blocks>" + files_block_with_line_numbers
         )
 
     # Default setup (MemGPT), no line numbers
@@ -371,25 +406,5 @@ def get_prompt_template_for_agent_type(agent_type: Optional[AgentType] = None):
             "</{{ block.label }}>\n"
             "{% if not loop.last %}\n{% endif %}"
             "{% endfor %}"
-            "\n</memory_blocks>"
-            "<files>\nThe following memory files are currently accessible:\n\n"
-            "{% for block in file_blocks %}"
-            f"<file status=\"{{{{ '{FileStatus.open.value}' if block.value else '{FileStatus.closed.value}' }}}}\">\n"
-            "<{{ block.label }}>\n"
-            "<description>\n"
-            "{{ block.description }}\n"
-            "</description>\n"
-            "<metadata>"
-            "{% if block.read_only %}\n- read_only=true{% endif %}\n"
-            "- chars_current={{ block.value|length }}\n"
-            "- chars_limit={{ block.limit }}\n"
-            "</metadata>\n"
-            "<value>\n"
-            "{{ block.value }}\n"
-            "</value>\n"
-            "</{{ block.label }}>\n"
-            "</file>\n"
-            "{% if not loop.last %}\n{% endif %}"
-            "{% endfor %}"
-            "\n</files>"
+            "\n</memory_blocks>" + files_block
         )
