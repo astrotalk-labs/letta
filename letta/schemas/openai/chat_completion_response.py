@@ -105,6 +105,9 @@ class UsageStatistics(BaseModel):
     prompt_tokens_details: Optional[UsageStatisticsPromptTokenDetails] = None
     completion_tokens_details: Optional[UsageStatisticsCompletionTokenDetails] = None
 
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+
     def __add__(self, other: "UsageStatistics") -> "UsageStatistics":
 
         if self.prompt_tokens_details is None and other.prompt_tokens_details is None:
@@ -131,6 +134,8 @@ class UsageStatistics(BaseModel):
             total_tokens=self.total_tokens + other.total_tokens,
             prompt_tokens_details=total_prompt_tokens_details,
             completion_tokens_details=total_completion_tokens_details,
+            cache_read_input_tokens=self.cache_read_input_tokens + other.cache_read_input_tokens,
+            cache_creation_input_tokens=self.cache_creation_input_tokens + other.cache_creation_input_tokens,
         )
 
 
