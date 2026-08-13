@@ -1,4 +1,4 @@
-from typing import List, Literal, Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -21,6 +21,7 @@ class LettaUsageStatistics(BaseModel):
     prompt_tokens: int = Field(0, description="The number of tokens in the prompt.")
     total_tokens: int = Field(0, description="The total number of tokens processed by the agent.")
     step_count: int = Field(0, description="The number of steps taken by the agent.")
-    # TODO: Optional for now. This field makes everyone's lives easier
-    steps_messages: Optional[List[List[Message]]] = Field(None, description="The messages generated per step")
-    run_ids: Optional[List[str]] = Field(None, description="The background task run IDs associated with the agent interaction")
+    cache_read_tokens: int = Field(0, description="Prompt tokens served from Anthropic prompt cache (cache_read_input_tokens).")
+    cache_creation_tokens: int = Field(0, description="Prompt tokens written to Anthropic prompt cache (cache_creation_input_tokens).")
+    steps_messages: Optional[list[list[Message]]] = Field(None, description="The messages generated per step")
+    run_ids: Optional[list[str]] = Field(None, description="The background task run IDs associated with the agent interaction")

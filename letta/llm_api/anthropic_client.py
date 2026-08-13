@@ -2,7 +2,7 @@ import hashlib
 import json
 import logging
 import re
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import anthropic
 from anthropic import AsyncStream
@@ -1316,13 +1316,11 @@ class AnthropicClient(LLMClientBase):
 
         return super().handle_llm_error(e)
 
-    # TODO: Input messages doesn't get used here
-    # TODO: Clean up this interface
     @trace_method
     def convert_response_to_chat_completion(
         self,
-        response_data: dict,
-        input_messages: List[PydanticMessage],
+        response_data: dict[str, Any],
+        input_messages: list[PydanticMessage],
         llm_config: LLMConfig,
     ) -> ChatCompletionResponse:
         """
@@ -1362,6 +1360,8 @@ class AnthropicClient(LLMClientBase):
         response = AnthropicMessage(**response_data)
         prompt_tokens = response.usage.input_tokens
         completion_tokens = response.usage.output_tokens
+        cache_read_input_tokens = response.usage.cache_read_input_tokens or 0
+        cache_creation_input_tokens = response.usage.cache_creation_input_tokens or 0
         finish_reason = remap_finish_reason(str(response.stop_reason))
 
         content = None
@@ -1494,6 +1494,8 @@ class AnthropicClient(LLMClientBase):
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=prompt_tokens + completion_tokens,
+                cache_read_input_tokens=cache_read_input_tokens,
+                cache_creation_input_tokens=cache_creation_input_tokens,
             ),
         )
         if llm_config.put_inner_thoughts_in_kwargs:

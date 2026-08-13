@@ -992,11 +992,12 @@ class LettaAgent(BaseAgent):
                         lambda _i=i, _r=response: f"_step: step={_i} PRIMARY_RETRY complete tool={_r.choices[0].message.tool_calls[0].function.name if _r.choices[0].message.tool_calls else 'text'}",
                     )
 
-            # TODO: add run_id
             usage.step_count += 1
             usage.completion_tokens += response.usage.completion_tokens
             usage.prompt_tokens += response.usage.prompt_tokens
             usage.total_tokens += response.usage.total_tokens
+            usage.cache_read_tokens += response.usage.cache_read_input_tokens
+            usage.cache_creation_tokens += response.usage.cache_creation_input_tokens
             MetricRegistry().message_output_tokens.record(
                 response.usage.completion_tokens, dict(get_ctx_attributes(), **{"model.name": agent_state.llm_config.model})
             )
@@ -1271,6 +1272,20 @@ class LettaAgent(BaseAgent):
             if request_start_timestamp_ns:
                 _request_ms = ns_to_ms(get_utc_timestamp_ns() - request_start_timestamp_ns)
                 MetricRegistry().haiku_cascade_request_ms_histogram.record(_request_ms, _summary_attrs)
+
+        if self._consultant_id in TASK_LATENCY_CONSULTANT_IDS:
+            logger.warning(
+                "[STEP_USAGE] consultant_id=%s steps=%d prompt_tokens=%d completion_tokens=%d "
+                "total_tokens=%d cache_read_tokens=%d cache_creation_tokens=%d stop_reason=%s",
+                self._consultant_id,
+                usage.step_count,
+                usage.prompt_tokens,
+                usage.completion_tokens,
+                usage.total_tokens,
+                usage.cache_read_tokens,
+                usage.cache_creation_tokens,
+                stop_reason.stop_reason if stop_reason else None,
+            )
 
         return current_in_context_messages, new_in_context_messages, usage, stop_reason
 
