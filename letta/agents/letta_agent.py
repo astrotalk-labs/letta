@@ -221,6 +221,7 @@ class LettaAgent(BaseAgent):
             # TODO: Make this configurable
             message_buffer_limit=message_buffer_limit,
             message_buffer_min=message_buffer_min,
+            user_id=at_user_id,
         )
 
     def _apply_provider_switching(
@@ -1601,12 +1602,20 @@ class LettaAgent(BaseAgent):
                 f"_rebuild_context_window: FORCE_CLEAR path total_tokens={total_tokens} context_window={llm_config.context_window}",
             )
             new_in_context_messages, updated = self.summarizer.summarize(
-                in_context_messages=in_context_messages, new_letta_messages=new_letta_messages, force=True, clear=True
+                in_context_messages=in_context_messages,
+                new_letta_messages=new_letta_messages,
+                force=True,
+                clear=True,
+                total_tokens=total_tokens,
+                context_window=llm_config.context_window,
             )
         else:
             debug_log(self.at_user_id, "_rebuild_context_window: SOFT_SUMMARIZE path")
             new_in_context_messages, updated = self.summarizer.summarize(
-                in_context_messages=in_context_messages, new_letta_messages=new_letta_messages
+                in_context_messages=in_context_messages,
+                new_letta_messages=new_letta_messages,
+                total_tokens=total_tokens,
+                context_window=llm_config.context_window,
             )
         debug_log(
             self.at_user_id, f"_rebuild_context_window: summarize complete updated={updated} new_msg_count={len(new_in_context_messages)}"
