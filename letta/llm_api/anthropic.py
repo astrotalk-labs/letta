@@ -51,6 +51,12 @@ logger = get_logger(__name__)
 
 BASE_URL = "https://api.anthropic.com/v1"
 
+# Models Anthropic has retired; map to their successors so agents with stale DB configs keep working.
+_DEPRECATED_MODEL_ALIASES: dict[str, str] = {
+    "claude-sonnet-4-20250514": "claude-sonnet-4-5-20250929",
+    "claude-opus-4-20250514": "claude-opus-4-5-20251101",
+}
+
 
 def ensure_correct_provider(agent_id: str, use_vertex_experiment: bool) -> None:
     """Ensure agent's llm_config.model_endpoint_type matches the experiment flag.
@@ -727,6 +733,11 @@ def _prepare_anthropic_request(
 
     # convert the tools to Anthropic's payload format
     anthropic_tools = None if data.tools is None else convert_tools_to_anthropic_format(data.tools)
+
+    # Remap retired model IDs before sending to the API.
+    if data.model in _DEPRECATED_MODEL_ALIASES:
+        logger.warning(f"[ANTHROPIC] model '{data.model}' is retired; remapping to '{_DEPRECATED_MODEL_ALIASES[data.model]}'")
+        data.model = _DEPRECATED_MODEL_ALIASES[data.model]
 
     # pydantic -> dict
     data = data.model_dump(exclude_none=True)
