@@ -52,7 +52,7 @@ logger = get_logger(__name__)
 BASE_URL = "https://api.anthropic.com/v1"
 
 # Models Anthropic has retired; map to their successors so agents with stale DB configs keep working.
-_DEPRECATED_MODEL_ALIASES: dict[str, str] = {
+DEPRECATED_MODEL_ALIASES: dict[str, str] = {
     "claude-sonnet-4-20250514": "claude-sonnet-4-5-20250929",
     "claude-opus-4-20250514": "claude-opus-4-5-20251101",
 }
@@ -60,23 +60,21 @@ _DEPRECATED_MODEL_ALIASES: dict[str, str] = {
 
 def ensure_correct_provider(agent_id: str, use_vertex_experiment: bool) -> None:
     """Ensure agent's llm_config.model_endpoint_type matches the experiment flag.
-    
+
     Args:
         agent_id: The agent ID to check/update
         use_vertex_experiment: If True, ensure endpoint is "anthropic_vertex", else "anthropic"
     """
     from letta.services.agent_manager import AgentManager
-    
+
     agent_manager = AgentManager()
     agent_state = agent_manager.get_agent_by_id(agent_id=agent_id)
-    
+
     expected_endpoint_type = "anthropic_vertex" if use_vertex_experiment else "anthropic"
     current_endpoint_type = agent_state.llm_config.model_endpoint_type
-    
+
     if current_endpoint_type != expected_endpoint_type:
-        logger.info(
-            f"Updating agent {agent_id} model_endpoint_type from '{current_endpoint_type}' to '{expected_endpoint_type}'"
-        )
+        logger.info(f"Updating agent {agent_id} model_endpoint_type from '{current_endpoint_type}' to '{expected_endpoint_type}'")
         agent_state.llm_config.model_endpoint_type = expected_endpoint_type
         agent_manager.update_agent(agent_state)
 
@@ -737,9 +735,9 @@ def _prepare_anthropic_request(
     anthropic_tools = None if data.tools is None else convert_tools_to_anthropic_format(data.tools)
 
     # Remap retired model IDs before sending to the API.
-    if data.model in _DEPRECATED_MODEL_ALIASES:
-        logger.warning(f"[ANTHROPIC] model '{data.model}' is retired; remapping to '{_DEPRECATED_MODEL_ALIASES[data.model]}'")
-        data.model = _DEPRECATED_MODEL_ALIASES[data.model]
+    if data.model in DEPRECATED_MODEL_ALIASES:
+        logger.warning(f"[ANTHROPIC] model '{data.model}' is retired; remapping to '{DEPRECATED_MODEL_ALIASES[data.model]}'")
+        data.model = DEPRECATED_MODEL_ALIASES[data.model]
 
     # pydantic -> dict
     data = data.model_dump(exclude_none=True)
@@ -770,13 +768,7 @@ def _prepare_anthropic_request(
 
     # Add cache control to system message
     if isinstance(system_content, str):
-        data["system"] = [
-            {
-                "type": "text",
-                "text": system_content,
-                "cache_control": {"type": "ephemeral"}
-            }
-        ]
+        data["system"] = [{"type": "text", "text": system_content, "cache_control": {"type": "ephemeral"}}]
     else:
         data["system"] = system_content
 
@@ -815,7 +807,9 @@ def _prepare_anthropic_request(
     # NOTE: cannot prefill with tools for opus or Claude 4.6+:
     # Prefilling assistant messages is NOT supported on Claude 4.6 models (returns 400 error)
     model_name = data["model"]
-    prefill_blocked = "opus" in model_name or "claude-sonnet-4-6" in model_name or "claude-opus-4-6" in model_name or "sonnet-5" in model_name
+    prefill_blocked = (
+        "opus" in model_name or "claude-sonnet-4-6" in model_name or "claude-opus-4-6" in model_name or "sonnet-5" in model_name
+    )
     if prefix_fill and not put_inner_thoughts_in_kwargs and not prefill_blocked:
         if not bedrock:  # not support for bedrock
             data["messages"].append(
@@ -834,18 +828,18 @@ def _prepare_anthropic_request(
 
 
 def anthropic_chat_completions_request(
-        data: ChatCompletionRequest,
-        inner_thoughts_xml_tag: Optional[str] = "thinking",
-        put_inner_thoughts_in_kwargs: bool = False,
-        extended_thinking: bool = False,
-        max_reasoning_tokens: Optional[int] = None,
-        provider_name: Optional[str] = None,
-        provider_category: Optional[ProviderCategory] = None,
-        betas: List[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
-        user_id: Optional[str] = None,
-        anthropic_client: Optional[Any] = None,
-        use_vertex_experiment: bool = False,
-)  -> ChatCompletionResponse:
+    data: ChatCompletionRequest,
+    inner_thoughts_xml_tag: Optional[str] = "thinking",
+    put_inner_thoughts_in_kwargs: bool = False,
+    extended_thinking: bool = False,
+    max_reasoning_tokens: Optional[int] = None,
+    provider_name: Optional[str] = None,
+    provider_category: Optional[ProviderCategory] = None,
+    betas: List[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
+    user_id: Optional[str] = None,
+    anthropic_client: Optional[Any] = None,
+    use_vertex_experiment: bool = False,
+) -> ChatCompletionResponse:
     """https://docs.anthropic.com/claude/docs/tool-use
 
     Args:
@@ -861,6 +855,7 @@ def anthropic_chat_completions_request(
             logger.info(log_msg)
             print(f"DEBUG: {log_msg}")
             from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
+
             anthropic_client = AnthropicVertexClient()._get_client()
             log_msg = f"[VERTEX_EXPERIMENT] Successfully created AnthropicVertex client"
             logger.info(log_msg)
@@ -891,7 +886,7 @@ def anthropic_chat_completions_request(
     )
     log_event(name="llm_request_sent", attributes=data)
     is_vertex = isinstance(anthropic_client, AnthropicVertex)
-    
+
     log_msg = f"[ANTHROPIC] Client type determined: is_vertex={is_vertex}, client_type={type(anthropic_client).__name__}"
     logger.info(log_msg)
     print(f"DEBUG: {log_msg}")
@@ -941,23 +936,23 @@ def anthropic_bedrock_chat_completions_request(
 
 
 def anthropic_chat_completions_request_stream(
-        data: ChatCompletionRequest,
-        inner_thoughts_xml_tag: Optional[str] = "thinking",
-        put_inner_thoughts_in_kwargs: bool = False,
-        extended_thinking: bool = False,
-        max_reasoning_tokens: Optional[int] = None,
-        provider_name: Optional[str] = None,
-        provider_category: Optional[ProviderCategory] = None,
-        betas: List[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
-        user_id: Optional[str] = None,
-        anthropic_client: Optional[Any] = None,
-        use_vertex_experiment: bool = False,
+    data: ChatCompletionRequest,
+    inner_thoughts_xml_tag: Optional[str] = "thinking",
+    put_inner_thoughts_in_kwargs: bool = False,
+    extended_thinking: bool = False,
+    max_reasoning_tokens: Optional[int] = None,
+    provider_name: Optional[str] = None,
+    provider_category: Optional[ProviderCategory] = None,
+    betas: List[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
+    user_id: Optional[str] = None,
+    anthropic_client: Optional[Any] = None,
+    use_vertex_experiment: bool = False,
 ) -> Generator[ChatCompletionChunkResponse, None, None]:
     """Stream chat completions from Anthropic API.
 
     Similar to OpenAI's streaming, but using Anthropic's native streaming support.
     See: https://docs.anthropic.com/claude/reference/messages-streaming
-    
+
     Args:
         use_vertex_experiment: If True, use Anthropic Vertex AI instead of direct API
     """
@@ -973,6 +968,7 @@ def anthropic_chat_completions_request_stream(
         if use_vertex_experiment:
             logger.info(f"[VERTEX_EXPERIMENT] [STREAM] Creating AnthropicVertex client (use_vertex_experiment=True)")
             from letta.llm_api.anthropic_vertex_client import AnthropicVertexClient
+
             anthropic_client = AnthropicVertexClient()._get_client()
             logger.info(f"[VERTEX_EXPERIMENT] [STREAM] Successfully created AnthropicVertex client")
         elif provider_category == ProviderCategory.byok:
@@ -988,10 +984,9 @@ def anthropic_chat_completions_request_stream(
     else:
         logger.info(f"[ANTHROPIC] [STREAM] Using pre-configured client: {type(anthropic_client).__name__}")
 
-
     # Check if using Vertex AI (doesn't support beta features)
     is_vertex = isinstance(anthropic_client, AnthropicVertex)
-    
+
     logger.info(f"[ANTHROPIC] [STREAM] Client type determined: is_vertex={is_vertex}, client_type={type(anthropic_client).__name__}")
 
     if is_vertex:
@@ -1037,21 +1032,21 @@ def anthropic_chat_completions_request_stream(
 
 
 def anthropic_chat_completions_process_stream(
-        chat_completion_request: ChatCompletionRequest,
-        stream_interface: Optional[Union[AgentChunkStreamingInterface, AgentRefreshStreamingInterface]] = None,
-        inner_thoughts_xml_tag: Optional[str] = "thinking",
-        put_inner_thoughts_in_kwargs: bool = False,
-        extended_thinking: bool = False,
-        max_reasoning_tokens: Optional[int] = None,
-        provider_name: Optional[str] = None,
-        provider_category: Optional[ProviderCategory] = None,
-        create_message_id: bool = True,
-        create_message_datetime: bool = True,
-        betas: List[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
-        name: Optional[str] = None,
-        user_id: Optional[str] = None,
-        anthropic_client: Optional[Any] = None,
-        use_vertex_experiment: bool = False,
+    chat_completion_request: ChatCompletionRequest,
+    stream_interface: Optional[Union[AgentChunkStreamingInterface, AgentRefreshStreamingInterface]] = None,
+    inner_thoughts_xml_tag: Optional[str] = "thinking",
+    put_inner_thoughts_in_kwargs: bool = False,
+    extended_thinking: bool = False,
+    max_reasoning_tokens: Optional[int] = None,
+    provider_name: Optional[str] = None,
+    provider_category: Optional[ProviderCategory] = None,
+    create_message_id: bool = True,
+    create_message_datetime: bool = True,
+    betas: List[str] = ["tools-2024-04-04", "prompt-caching-2024-07-31"],
+    name: Optional[str] = None,
+    user_id: Optional[str] = None,
+    anthropic_client: Optional[Any] = None,
+    use_vertex_experiment: bool = False,
 ) -> ChatCompletionResponse:
     """Process a streaming completion response from Anthropic, similar to OpenAI's streaming.
 
@@ -1127,19 +1122,19 @@ def anthropic_chat_completions_process_stream(
     message_idx = 0
     try:
         for chunk_idx, chat_completion_chunk in enumerate(
-                anthropic_chat_completions_request_stream(
-                    data=chat_completion_request,
-                    inner_thoughts_xml_tag=inner_thoughts_xml_tag,
-                    put_inner_thoughts_in_kwargs=put_inner_thoughts_in_kwargs,
-                    extended_thinking=extended_thinking,
-                    max_reasoning_tokens=max_reasoning_tokens,
-                    provider_name=provider_name,
-                    provider_category=provider_category,
-                    betas=betas,
-                    user_id=user_id,
-                    anthropic_client=anthropic_client,
-                    use_vertex_experiment=use_vertex_experiment,
-                )
+            anthropic_chat_completions_request_stream(
+                data=chat_completion_request,
+                inner_thoughts_xml_tag=inner_thoughts_xml_tag,
+                put_inner_thoughts_in_kwargs=put_inner_thoughts_in_kwargs,
+                extended_thinking=extended_thinking,
+                max_reasoning_tokens=max_reasoning_tokens,
+                provider_name=provider_name,
+                provider_category=provider_category,
+                betas=betas,
+                user_id=user_id,
+                anthropic_client=anthropic_client,
+                use_vertex_experiment=use_vertex_experiment,
+            )
         ):
             assert isinstance(chat_completion_chunk, ChatCompletionChunkResponse), type(chat_completion_chunk)
 

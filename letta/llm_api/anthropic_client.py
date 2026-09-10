@@ -25,6 +25,7 @@ from letta.errors import (
     LLMUnprocessableEntityError,
 )
 from letta.helpers.datetime_helpers import get_utc_time_int
+from letta.llm_api.anthropic import DEPRECATED_MODEL_ALIASES
 from letta.llm_api.bedrock_inference_profiles import COHORT_INFERENCE_PROFILES, MODEL_INFERENCE_PROFILES
 from letta.llm_api.helpers import add_inner_thoughts_to_functions, unpack_all_inner_thoughts_from_kwargs
 from letta.llm_api.llm_client_base import LLMClientBase
@@ -84,6 +85,7 @@ def _is_user_in_cache_obs_sample(at_user_id):
     except (ValueError, TypeError):
         return False
 
+
 # v2 cache-layout rollout: reverted to 0% after May 14 graduation regression.
 # Per-order cost rose from $0.314 (v1 baseline May 11) to $0.366 (+17%) on
 # May 14 when v2 went 100%. Anthropic API analysis: cache_creation share for
@@ -117,11 +119,11 @@ def _is_user_in_v2_cache_bucket(at_user_id):
 
 # --- Geography / business-based API key routing ---
 _COHORT_TO_KEY_ENV: dict = {
-    "AT_NATIVE":  "ABC2_AT_NATIVE_ANTHROPIC_KEY",
+    "AT_NATIVE": "ABC2_AT_NATIVE_ANTHROPIC_KEY",
     "AT_FOREIGN": "ABC2_AT_FOREIGN_ANTHROPIC_KEY",
-    "INDIAN_AT":  "ABC2_AT_INDIA_ANTHROPIC_KEY",
-    "PANDITJI":   "ABC2_PANDITJI_ANTHROPIC_KEY",
-    "LUMUS":      "ABC2_LUMUS_ANTHROPIC_KEY",
+    "INDIAN_AT": "ABC2_AT_INDIA_ANTHROPIC_KEY",
+    "PANDITJI": "ABC2_PANDITJI_ANTHROPIC_KEY",
+    "LUMUS": "ABC2_LUMUS_ANTHROPIC_KEY",
 }
 
 _COHORT_TO_BEDROCK_ARN = COHORT_INFERENCE_PROFILES
@@ -131,6 +133,7 @@ def _build_bedrock_arn(profile_id: str) -> str:
     """Construct a full Bedrock ARN by taking the prefix from BEDROCK_INFERENCE_PROFILE_ARN
     and replacing its profile ID with the given one. Falls back to the raw ID if env var unset."""
     import os
+
     base = os.getenv("BEDROCK_INFERENCE_PROFILE_ARN", "")
     if "/" in base:
         prefix = base.rsplit("/", 1)[0]
@@ -157,6 +160,7 @@ def _resolve_key_from_cohort(at_user_id: Optional[str], user_cohort: Optional[st
     """Return the Anthropic API key value for the given cohort, or None to use the default.
     UNKNOWN cohort and unrecognised values fall back to default."""
     import os
+
     if not user_cohort or user_cohort == "UNKNOWN":
         get_logger(__name__).warning("[GEO_KEY] user=%s cohort=UNKNOWN/missing, using default key", at_user_id)
         return None
@@ -184,7 +188,9 @@ class AnthropicClient(LLMClientBase):
         return response.model_dump()
 
     @trace_method
-    async def request_async(self, request_data: dict, llm_config: LLMConfig, use_vertex_experiment: bool = False, use_bedrock_experiment: bool = False) -> dict:
+    async def request_async(
+        self, request_data: dict, llm_config: LLMConfig, use_vertex_experiment: bool = False, use_bedrock_experiment: bool = False
+    ) -> dict:
         # Check if we should use Vertex AI based on model_endpoint_type
         # (This happens when use_vertex_experiment changes the endpoint type in _step)
         if llm_config.model_endpoint_type == "anthropic_vertex":
@@ -195,7 +201,7 @@ class AnthropicClient(LLMClientBase):
             # Create async Vertex client with proper configuration
             project_id = model_settings.google_cloud_project
             # Use 'global' region for newer Claude models
-            region = os.getenv('GOOGLE_CLOUD_LOCATION') or os.getenv('ANTHROPIC_VERTEX_REGION') or 'global'
+            region = os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("ANTHROPIC_VERTEX_REGION") or "global"
 
             if not project_id:
                 raise ValueError("GOOGLE_CLOUD_PROJECT must be set for Vertex AI")
@@ -218,7 +224,9 @@ class AnthropicClient(LLMClientBase):
                     _vertex_extra_body["output_config"] = v
                 else:
                     _vertex_sdk_data[k] = v
-            response = await client.messages.create(**_vertex_sdk_data, **({"extra_body": _vertex_extra_body} if _vertex_extra_body else {}))
+            response = await client.messages.create(
+                **_vertex_sdk_data, **({"extra_body": _vertex_extra_body} if _vertex_extra_body else {})
+            )
         elif llm_config.model_endpoint_type == "anthropic_bedrock":
             import os
             import json
@@ -226,10 +234,10 @@ class AnthropicClient(LLMClientBase):
             import boto3
             from letta.settings import model_settings
 
-            aws_region = os.getenv('AWS_REGION') or os.getenv('AWS_DEFAULT_REGION') or model_settings.aws_region or 'ap-south-1'
-            aws_access_key = os.getenv('AWS_ACCESS_KEY_ID') or model_settings.aws_access_key
-            aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY') or model_settings.aws_secret_access_key
-            aws_session_token = os.getenv('AWS_SESSION_TOKEN')
+            aws_region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or model_settings.aws_region or "ap-south-1"
+            aws_access_key = os.getenv("AWS_ACCESS_KEY_ID") or model_settings.aws_access_key
+            aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY") or model_settings.aws_secret_access_key
+            aws_session_token = os.getenv("AWS_SESSION_TOKEN")
 
             # Determine model ID priority order:
             #   1. Full Bedrock ARN or AWS system inference profile ID — use verbatim.
@@ -241,9 +249,13 @@ class AnthropicClient(LLMClientBase):
             #   2. Cohort-based ARN for gated users
             #   3. Model-name → env-var lookup (existing substring matching)
             #   4. Raw model name as last resort
-            requested_model_raw = request_data.get('model') or llm_config.model or ""
+            requested_model_raw = request_data.get("model") or llm_config.model or ""
             requested_model = requested_model_raw.lower()
-            logger.info("[GEO_KEY_BEDROCK] request_async at_user_id=%s user_cohort=%s", getattr(self, "at_user_id", None), getattr(self, "user_cohort", None))
+            logger.info(
+                "[GEO_KEY_BEDROCK] request_async at_user_id=%s user_cohort=%s",
+                getattr(self, "at_user_id", None),
+                getattr(self, "user_cohort", None),
+            )
 
             _BEDROCK_DIRECT_PREFIXES = ("arn:aws:bedrock:", "global.", "apac.", "us.", "eu.")
             if requested_model_raw.startswith(_BEDROCK_DIRECT_PREFIXES):
@@ -257,16 +269,16 @@ class AnthropicClient(LLMClientBase):
                 if cohort_arn:
                     bedrock_inference_profile = cohort_arn
                 else:
-                    default_arn = os.getenv('BEDROCK_INFERENCE_PROFILE_ARN')
+                    default_arn = os.getenv("BEDROCK_INFERENCE_PROFILE_ARN")
                     if "haiku" in requested_model:
-                        bedrock_inference_profile = os.getenv('BEDROCK_HAIKU_INFERENCE_PROFILE_ARN') or default_arn
+                        bedrock_inference_profile = os.getenv("BEDROCK_HAIKU_INFERENCE_PROFILE_ARN") or default_arn
                     elif "sonnet-4-6" in requested_model or "sonnet-4.6" in requested_model:
-                        bedrock_inference_profile = os.getenv('BEDROCK_SONNET_4_6_INFERENCE_PROFILE_ARN') or default_arn
+                        bedrock_inference_profile = os.getenv("BEDROCK_SONNET_4_6_INFERENCE_PROFILE_ARN") or default_arn
                     elif "sonnet-5" in requested_model:
                         bedrock_inference_profile = _build_bedrock_arn(MODEL_INFERENCE_PROFILES["sonnet-5"])
                     else:
                         bedrock_inference_profile = default_arn
-            model_id = bedrock_inference_profile if bedrock_inference_profile else request_data.get('model')
+            model_id = bedrock_inference_profile if bedrock_inference_profile else request_data.get("model")
 
             client_kwargs = {
                 "service_name": "bedrock-runtime",
@@ -305,13 +317,17 @@ class AnthropicClient(LLMClientBase):
                 # Sonnet 5 rejects budget_tokens outright (400) on every endpoint, including Bedrock —
                 # thinking must stay adaptive-only and must never be downgraded to enabled+budget_tokens.
                 _adaptive_only_model = "sonnet-5" in _requested_model
-                _supports_thinking = _adaptive_only_model or "claude-sonnet-4-6" in _requested_model or "claude-opus-4-6" in _requested_model
+                _supports_thinking = (
+                    _adaptive_only_model or "claude-sonnet-4-6" in _requested_model or "claude-opus-4-6" in _requested_model
+                )
                 if _supports_thinking:
                     _thinking_val = request_data["thinking"]
                     if isinstance(_thinking_val, dict) and _thinking_val.get("type") == "adaptive" and not _adaptive_only_model:
                         # Bedrock does not support {"type": "adaptive"} on these older models — convert to enabled with a budget
                         _thinking_val = {"type": "enabled", "budget_tokens": 8000}
-                        logger.warning("[BEDROCK] Converted adaptive thinking to enabled (budget_tokens=8000) — Bedrock does not support adaptive type")
+                        logger.warning(
+                            "[BEDROCK] Converted adaptive thinking to enabled (budget_tokens=8000) — Bedrock does not support adaptive type"
+                        )
                     bedrock_body["thinking"] = _thinking_val
                 else:
                     logger.warning(
@@ -375,7 +391,9 @@ class AnthropicClient(LLMClientBase):
                     _extra_body["output_config"] = v
                 else:
                     _sdk_data[k] = v
-            response = await client.beta.messages.create(**_sdk_data, betas=["tools-2024-04-04", "prompt-caching-2024-07-31"], **({"extra_body": _extra_body} if _extra_body else {}))
+            response = await client.beta.messages.create(
+                **_sdk_data, betas=["tools-2024-04-04", "prompt-caching-2024-07-31"], **({"extra_body": _extra_body} if _extra_body else {})
+            )
         logger.info("This is the usage response from claude %s", response.usage)
         self._log_cache_observation_usage(
             response.usage,
@@ -395,7 +413,11 @@ class AnthropicClient(LLMClientBase):
                 _stream_extra_body["output_config"] = v
             else:
                 _stream_sdk_data[k] = v
-        return await client.beta.messages.create(**_stream_sdk_data, betas=["tools-2024-04-04", "prompt-caching-2024-07-31"], **({"extra_body": _stream_extra_body} if _stream_extra_body else {}))
+        return await client.beta.messages.create(
+            **_stream_sdk_data,
+            betas=["tools-2024-04-04", "prompt-caching-2024-07-31"],
+            **({"extra_body": _stream_extra_body} if _stream_extra_body else {}),
+        )
 
     @trace_method
     async def send_llm_batch_request_async(
@@ -517,8 +539,11 @@ class AnthropicClient(LLMClientBase):
         if not llm_config.max_tokens:
             raise ValueError("Max  tokens must be set for anthropic")
 
+        _model = DEPRECATED_MODEL_ALIASES.get(llm_config.model, llm_config.model)
+        if _model != llm_config.model:
+            logger.warning(f"[ANTHROPIC] model '{llm_config.model}' is retired; remapping to '{_model}'")
         data = {
-            "model": llm_config.model,
+            "model": _model,
             "max_tokens": llm_config.max_tokens,
             "temperature": llm_config.temperature,
         }
@@ -533,17 +558,11 @@ class AnthropicClient(LLMClientBase):
             # always get adaptive thinking regardless of endpoint.
             adaptive_only_model = "sonnet-5" in model_name
             # Bedrock supports adaptive thinking on Sonnet/Opus 4.6 (no `effort` field accepted)
-            supports_adaptive_model = (
-                adaptive_only_model
-                or "claude-sonnet-4-6" in model_name
-                or "claude-opus-4-6" in model_name
-            )
+            supports_adaptive_model = adaptive_only_model or "claude-sonnet-4-6" in model_name or "claude-opus-4-6" in model_name
             if adaptive_only_model or (is_bedrock and supports_adaptive_model):
                 # Bedrock does not support the `effort` field yet — adaptive only
                 data["thinking"] = {"type": "adaptive"}
-                logger.warning(
-                    f"[THINKING] model={model_name} endpoint={endpoint_type} mode=adaptive (effort not supported on Bedrock)"
-                )
+                logger.warning(f"[THINKING] model={model_name} endpoint={endpoint_type} mode=adaptive (effort not supported on Bedrock)")
             else:
                 data["thinking"] = {
                     "type": "enabled",
@@ -660,7 +679,6 @@ class AnthropicClient(LLMClientBase):
             for m in messages[1:]
         ]
 
-
         # Ensure first message is user
         if not data["messages"] or data["messages"][0]["role"] != "user":
             data["messages"] = [{"role": "user", "content": DUMMY_FIRST_USER_MESSAGE}] + data["messages"]
@@ -682,7 +700,9 @@ class AnthropicClient(LLMClientBase):
         # NOTE: cannot prefill with tools for opus or Claude 4.6+:
         # Prefilling assistant messages is NOT supported on Claude 4.6 models (returns 400 error)
         model_name = data["model"]
-        prefill_blocked = "opus" in model_name or "claude-sonnet-4-6" in model_name or "claude-opus-4-6" in model_name or "sonnet-5" in model_name
+        prefill_blocked = (
+            "opus" in model_name or "claude-sonnet-4-6" in model_name or "claude-opus-4-6" in model_name or "sonnet-5" in model_name
+        )
         if prefix_fill and not llm_config.put_inner_thoughts_in_kwargs and not prefill_blocked:
             data["messages"].append(
                 # Start the thinking process for the assistant
@@ -695,8 +715,6 @@ class AnthropicClient(LLMClientBase):
 
     def _split_system_message_for_caching(self, system_content: str) -> tuple:
 
-
-
         persona_end = system_content.find("</persona>")
         memory_blocks_end = system_content.find("</memory_blocks>")
         memory_metadata_start = system_content.find("<memory_metadata>")
@@ -707,7 +725,7 @@ class AnthropicClient(LLMClientBase):
             memory_blocks_end += len("</memory_blocks>")
 
             # Split into 4 parts
-            static_part_1 = system_content[:persona_end].strip()        # Base + persona
+            static_part_1 = system_content[:persona_end].strip()  # Base + persona
             dynamic_part_1 = system_content[persona_end:memory_blocks_end].strip()  # human + conversation
 
             if memory_metadata_start != -1 and memory_metadata_start > memory_blocks_end:
@@ -736,33 +754,19 @@ class AnthropicClient(LLMClientBase):
 
         # Add first static part with cache control (base instructions + persona)
         if static_part_1:
-            system_parts.append({
-                "type": "text",
-                "text": static_part_1,
-                "cache_control": {"type": "ephemeral"}
-            })
+            system_parts.append({"type": "text", "text": static_part_1, "cache_control": {"type": "ephemeral"}})
 
         # Add first dynamic part without cache control (human + conversation_summary)
         if dynamic_part_1:
-            system_parts.append({
-                "type": "text",
-                "text": dynamic_part_1
-            })
+            system_parts.append({"type": "text", "text": dynamic_part_1})
 
         # Add second static part with cache control (tool_usage_rules + files)
         if static_part_2:
-            system_parts.append({
-                "type": "text",
-                "text": static_part_2,
-                "cache_control": {"type": "ephemeral"}
-            })
+            system_parts.append({"type": "text", "text": static_part_2, "cache_control": {"type": "ephemeral"}})
 
         # Add second dynamic part without cache control (memory_metadata)
         if dynamic_part_2:
-            system_parts.append({
-                "type": "text",
-                "text": dynamic_part_2
-            })
+            system_parts.append({"type": "text", "text": dynamic_part_2})
 
         return system_parts
 
@@ -829,6 +833,7 @@ class AnthropicClient(LLMClientBase):
         # gets a coarse time reference and a reminder that recall tools exist; it never acts
         # on exact recall/archival counts.
         import datetime as _dt
+
         now = _dt.datetime.now(_dt.timezone.utc)
         hour_stamp = now.strftime("%Y-%m-%d %H UTC")
         return (
@@ -874,6 +879,7 @@ class AnthropicClient(LLMClientBase):
         if not _is_user_in_cache_obs_sample(at_user_id):
             return
         try:
+
             def _hash_short(text: str) -> str:
                 return hashlib.sha1(text.encode("utf-8", errors="replace")).hexdigest()[:8]
 
@@ -887,14 +893,16 @@ class AnthropicClient(LLMClientBase):
                 else:
                     text = str(blk)
                     cached = False
-                sys_summary.append({
-                    "idx": i,
-                    "chars": len(text),
-                    "approx_tokens": len(text) // 4,
-                    "cache_control": cached,
-                    "prefix": text[:80].replace("\n", " "),
-                    "hash": _hash_short(text),
-                })
+                sys_summary.append(
+                    {
+                        "idx": i,
+                        "chars": len(text),
+                        "approx_tokens": len(text) // 4,
+                        "cache_control": cached,
+                        "prefix": text[:80].replace("\n", " "),
+                        "hash": _hash_short(text),
+                    }
+                )
             # Log the trailing block in full when uncached - this is the prime suspect
             # for invalidating downstream cache lookups (memory_metadata).
             if system_blocks:
@@ -941,14 +949,16 @@ class AnthropicClient(LLMClientBase):
                     messages_tail_cache_idx = i
                     messages_tail_prefix_chars = running_prefix_chars
                 preview = ctext[:80].replace("\n", " ")
-                msg_summary.append({
-                    "idx": i,
-                    "role": role,
-                    "chars": len(ctext),
-                    "hash": _hash_short(ctext),
-                    "cache_control": has_cache_ctrl,
-                    "prefix": preview,
-                })
+                msg_summary.append(
+                    {
+                        "idx": i,
+                        "role": role,
+                        "chars": len(ctext),
+                        "hash": _hash_short(ctext),
+                        "cache_control": has_cache_ctrl,
+                        "prefix": preview,
+                    }
+                )
 
             # Sum the chars/tokens of cached system blocks. Together with the
             # messages-tail cached prefix, this is the theoretical maximum
