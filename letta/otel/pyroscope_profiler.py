@@ -56,8 +56,12 @@ def setup_profiling(service_name: str = "letta-server") -> bool:
         )
         return False
 
-    # Tags let us filter flame graphs by deployment/pod in Grafana. k8s exposes the pod name via
-    # HOSTNAME; ENV_NAME / AWS_REGION mirror the tags used for OTLP tracing.
+    # Tags let us filter flame graphs by deployment/pod in Grafana, matching the cluster/env/
+    # namespace/pod labels go-ai-chat gets for free from Alloy's relabeling — a push-mode SDK has
+    # to supply these itself. k8s exposes the pod name via HOSTNAME automatically; cluster has no
+    # standard source (no k8s downward-API field for it), so it's read from an explicit env var.
+    # namespace falls back through the common downward-API convention (POD_NAMESPACE) to an
+    # explicit override. ENV_NAME / AWS_REGION mirror the tags used for OTLP tracing.
     tags = {"service_name": service_name}
     env_name = os.getenv("ENV_NAME")
     if env_name:
@@ -68,6 +72,12 @@ def setup_profiling(service_name: str = "letta-server") -> bool:
     pod = os.getenv("HOSTNAME")
     if pod:
         tags["pod"] = pod
+    cluster = os.getenv("CLUSTER_NAME") or os.getenv("LETTA_PYROSCOPE_CLUSTER")
+    if cluster:
+        tags["cluster"] = cluster
+    namespace = os.getenv("POD_NAMESPACE") or os.getenv("NAMESPACE") or os.getenv("LETTA_PYROSCOPE_NAMESPACE")
+    if namespace:
+        tags["namespace"] = namespace
 
     try:
         pyroscope.configure(

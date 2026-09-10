@@ -259,9 +259,13 @@ def create_application() -> "FastAPI":
 
     # Continuous profiling (Grafana Pyroscope) — independent of OTLP tracing/metrics, opt-in via
     # settings.pyroscope_enabled. No-ops safely if disabled or if pyroscope-io isn't installed.
+    # Deliberately a fixed name, not the per-env-suffixed `service_name` used for OTLP tracing above:
+    # go-ai-chat's Pyroscope data uses a plain service_name=go-ai-chat with env as a separate label,
+    # so Grafana Profiles Drilldown groups one service across environments. Matching that here means
+    # env differentiation happens via the `env` tag (see pyroscope_profiler.py), not the app name.
     from letta.otel.pyroscope_profiler import setup_profiling
 
-    if setup_profiling(service_name=service_name):
+    if setup_profiling(service_name="letta"):
         print(f"▶ Using Pyroscope continuous profiling with endpoint: {settings.pyroscope_server_address}")
 
     if tracing_enabled:
