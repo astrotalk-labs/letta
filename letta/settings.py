@@ -234,6 +234,18 @@ class Settings(BaseSettings):
     disable_tracing: bool = False
     llm_api_logging: bool = True
 
+    # Continuous profiling via Grafana Pyroscope (CPU/wall-clock). Defaults point at the AT-prod
+    # cluster's self-hosted Pyroscope (confirmed reachable, no auth, single anonymous tenant) so it
+    # works with zero deploy-time config; override any of these via LETTA_PYROSCOPE_* env vars for
+    # other environments/clusters (e.g. local dev, CI) where this address doesn't resolve. Requires
+    # the optional `pyroscope-io` dependency; if missing, the profiler is skipped with a warning
+    # rather than failing startup.
+    pyroscope_enabled: bool = True
+    pyroscope_server_address: Optional[str] = "http://pyroscope.monitoring.svc.cluster.local:4040"
+    pyroscope_sample_rate: int = 100  # samples/sec; 100 is the Pyroscope default, low overhead
+    pyroscope_basic_auth_username: Optional[str] = None  # empty: AT-prod Pyroscope has no auth configured
+    pyroscope_basic_auth_password: Optional[str] = None  # empty: AT-prod Pyroscope has no auth configured
+
     # uvicorn settings
     uvicorn_workers: int = 1
     uvicorn_reload: bool = False
