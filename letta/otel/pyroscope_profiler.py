@@ -1,9 +1,10 @@
 """Grafana Pyroscope continuous profiling for the Letta server.
 
-Optional, opt-in CPU/wall-clock profiling. Enabled via ``settings.pyroscope_enabled``
-(``LETTA_PYROSCOPE_ENABLED=true``) and configured through the other ``pyroscope_*`` settings.
-Requires the optional ``pyroscope-io`` package; if it is not installed the profiler is skipped with
-a warning rather than failing server startup.
+CPU/wall-clock profiling, gated by ``settings.pyroscope_enabled``. Defaults to on, pointed at the
+AT-prod cluster's self-hosted Pyroscope (``LETTA_PYROSCOPE_SERVER_ADDRESS``, no auth needed there) —
+override any ``pyroscope_*`` setting via its ``LETTA_PYROSCOPE_*`` env var for environments where
+these defaults don't apply (local dev, CI, another cluster). Requires the optional ``pyroscope-io``
+package; if it is not installed the profiler is skipped with a warning rather than failing startup.
 
 Note: the Pyroscope Python SDK profiles CPU/wall-clock time (via py-spy), not heap allocations — it
 pinpoints hot code paths, not allocation sites directly. For allocation-level OOM debugging,
@@ -58,10 +59,11 @@ def setup_profiling(service_name: str = "letta-server") -> bool:
 
     # Tags let us filter flame graphs by deployment/pod in Grafana, matching the cluster/env/
     # namespace/pod labels go-ai-chat gets for free from Alloy's relabeling — a push-mode SDK has
-    # to supply these itself. k8s exposes the pod name via HOSTNAME automatically; cluster has no
-    # standard source (no k8s downward-API field for it), so it's read from an explicit env var.
-    # namespace falls back through the common downward-API convention (POD_NAMESPACE) to an
-    # explicit override. ENV_NAME / AWS_REGION mirror the tags used for OTLP tracing.
+    # to supply these itself. k8s exposes the pod name via HOSTNAME automatically. cluster/namespace
+    # default to the confirmed AT-prod values (no k8s downward-API field gives cluster name; this
+    # keeps parity with go-ai-chat's cluster=AT-prod/namespace label without needing deploy-time
+    # config) — override via env var for any other cluster/namespace this runs in. ENV_NAME /
+    # AWS_REGION mirror the tags used for OTLP tracing.
     tags = {"service_name": service_name}
     env_name = os.getenv("ENV_NAME")
     if env_name:
@@ -72,12 +74,8 @@ def setup_profiling(service_name: str = "letta-server") -> bool:
     pod = os.getenv("HOSTNAME")
     if pod:
         tags["pod"] = pod
-    cluster = os.getenv("CLUSTER_NAME") or os.getenv("LETTA_PYROSCOPE_CLUSTER")
-    if cluster:
-        tags["cluster"] = cluster
-    namespace = os.getenv("POD_NAMESPACE") or os.getenv("NAMESPACE") or os.getenv("LETTA_PYROSCOPE_NAMESPACE")
-    if namespace:
-        tags["namespace"] = namespace
+    tags["cluster"] = os.getenv("CLUSTER_NAME") or os.getenv("LETTA_PYROSCOPE_CLUSTER") or "AT-prod"
+    tags["namespace"] = os.getenv("POD_NAMESPACE") or os.getenv("NAMESPACE") or os.getenv("LETTA_PYROSCOPE_NAMESPACE") or "letta"
 
     try:
         pyroscope.configure(
