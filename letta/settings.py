@@ -234,20 +234,6 @@ class Settings(BaseSettings):
     disable_tracing: bool = False
     llm_api_logging: bool = True
 
-    # Continuous profiling via Grafana Pyroscope (CPU/wall-clock). Off by default: the sampler is a
-    # native (Rust/rbspy) extension that segfaulted the interpreter in AT-prod on 2026-09-10 (exit
-    # 139, ~20% of pods within minutes of rollout), so it is opted into per-environment via
-    # LETTA_PYROSCOPE_ENABLED=true rather than shipped on. `pyroscope_server_address` still points at
-    # the AT-prod cluster's self-hosted Pyroscope (no auth, single anonymous tenant); override any of
-    # these via LETTA_PYROSCOPE_* env vars for other environments/clusters. Requires the optional
-    # `pyroscope-io` dependency; if missing, the profiler is skipped with a warning rather than
-    # failing startup.
-    pyroscope_enabled: bool = False
-    pyroscope_server_address: Optional[str] = "http://pyroscope.monitoring.svc.cluster.local:4040"
-    pyroscope_sample_rate: int = 100  # samples/sec; 100 is the Pyroscope default, low overhead
-    pyroscope_basic_auth_username: Optional[str] = None  # empty: AT-prod Pyroscope has no auth configured
-    pyroscope_basic_auth_password: Optional[str] = None  # empty: AT-prod Pyroscope has no auth configured
-
     # uvicorn settings
     uvicorn_workers: int = 1
     uvicorn_reload: bool = False
