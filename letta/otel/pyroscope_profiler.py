@@ -34,7 +34,13 @@ def setup_profiling(service_name: str = "letta-server") -> bool:
     """Start Pyroscope continuous profiling if enabled and configured.
 
     Returns True if profiling was started, False otherwise. Idempotent, and never raises — any
-    failure is logged and swallowed so profiling can never take down the server.
+    failure *during setup* is logged and swallowed.
+
+    This is not a guarantee that profiling cannot take down the server: once configured, the SDK
+    samples from a native background thread, and a fault there (SIGSEGV) kills the process with no
+    Python exception for this try/except to catch. That is exactly what happened in AT-prod on
+    2026-09-10. Treat enabling this as a change that can crash the server, and roll it out to a
+    canary before a whole fleet.
     """
     global _is_profiling_initialized
 
@@ -82,7 +88,10 @@ def setup_profiling(service_name: str = "letta-server") -> bool:
             application_name=service_name,
             server_address=settings.pyroscope_server_address,
             sample_rate=settings.pyroscope_sample_rate,
-            detect_subprocesses=True,  # also profile uvicorn worker subprocesses
+            # Must stay False: the fork hooks this installs race uvicorn's forked workers
+            # (LETTA_UVICORN_WORKERS=4 in AT-prod) and segfault the interpreter. Only the
+            # parent process is profiled.
+            detect_subprocesses=False,
             oncpu=True,  # on-CPU time only — lower overhead than wall-clock
             gil_only=True,  # only sample threads holding the GIL
             tags=tags,
