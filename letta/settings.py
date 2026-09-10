@@ -234,6 +234,16 @@ class Settings(BaseSettings):
     disable_tracing: bool = False
     llm_api_logging: bool = True
 
+    # Continuous profiling via Grafana Pyroscope (CPU/wall-clock). Disabled by default; enable in
+    # prod by setting LETTA_PYROSCOPE_ENABLED=true and pointing LETTA_PYROSCOPE_SERVER_ADDRESS at
+    # the Pyroscope ingest URL. Requires the optional `pyroscope-io` dependency to be installed;
+    # if it is missing the profiler is skipped with a warning rather than failing startup.
+    pyroscope_enabled: bool = False
+    pyroscope_server_address: Optional[str] = None
+    pyroscope_sample_rate: int = 100  # samples/sec; 100 is the Pyroscope default, low overhead
+    pyroscope_basic_auth_username: Optional[str] = None  # Grafana Cloud tenant/user id
+    pyroscope_basic_auth_password: Optional[str] = None  # Grafana Cloud API token
+
     # uvicorn settings
     uvicorn_workers: int = 1
     uvicorn_reload: bool = False

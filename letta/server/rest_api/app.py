@@ -257,6 +257,13 @@ def create_application() -> "FastAPI":
     env_name_suffix = os.getenv("ENV_NAME")
     service_name = f"letta-server-{env_name_suffix.lower()}" if env_name_suffix else "letta-server"
 
+    # Continuous profiling (Grafana Pyroscope) — independent of OTLP tracing/metrics, opt-in via
+    # settings.pyroscope_enabled. No-ops safely if disabled or if pyroscope-io isn't installed.
+    from letta.otel.pyroscope_profiler import setup_profiling
+
+    if setup_profiling(service_name=service_name):
+        print(f"▶ Using Pyroscope continuous profiling with endpoint: {settings.pyroscope_server_address}")
+
     if tracing_enabled:
         print(f"▶ Using OTLP tracing with endpoint: {otlp_endpoint}")
         from letta.otel.logging import setup_logging
