@@ -26,6 +26,7 @@ from letta.errors import (
     LLMUnprocessableEntityError,
 )
 from letta.helpers.datetime_helpers import get_utc_time_int
+from letta.llm_api.anthropic import DEPRECATED_MODEL_ALIASES
 from letta.llm_api.bedrock_inference_profiles import COHORT_INFERENCE_PROFILES, FALLBACK_INFERENCE_PROFILE, MODEL_INFERENCE_PROFILES
 from letta.llm_api.helpers import add_inner_thoughts_to_functions, unpack_all_inner_thoughts_from_kwargs
 from letta.debug_util import _DEBUG_USER_ID, debug_log, get_debug_chat_order_id
@@ -722,8 +723,11 @@ class AnthropicClient(LLMClientBase):
         if not llm_config.max_tokens:
             raise ValueError("Max  tokens must be set for anthropic")
 
+        _model = DEPRECATED_MODEL_ALIASES.get(llm_config.model, llm_config.model)
+        if _model != llm_config.model:
+            logger.warning(f"[ANTHROPIC] model '{llm_config.model}' is retired; remapping to '{_model}'")
         data = {
-            "model": llm_config.model,
+            "model": _model,
             "max_tokens": llm_config.max_tokens,
             "temperature": llm_config.temperature,
         }
