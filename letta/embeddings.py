@@ -1,3 +1,4 @@
+import time
 import uuid
 from typing import Any, List, Optional
 
@@ -6,6 +7,8 @@ import tiktoken
 from openai import OpenAI
 
 from letta.constants import EMBEDDING_TO_TOKENIZER_DEFAULT, EMBEDDING_TO_TOKENIZER_MAP, MAX_EMBEDDING_DIM
+from letta.otel.context import get_ctx_attributes
+from letta.otel.metric_registry import MetricRegistry
 from letta.schemas.embedding_config import EmbeddingConfig
 from letta.utils import is_valid_url, printd
 
@@ -212,9 +215,20 @@ class OpenAIEmbeddings:
         self.model = model
 
     def get_text_embedding(self, text: str):
-        response = self.client.embeddings.create(input=text, model=self.model)
-
-        return response.data[0].embedding
+        start = time.perf_counter()
+        success = True
+        try:
+            response = self.client.embeddings.create(input=text, model=self.model)
+            return response.data[0].embedding
+        except Exception:
+            success = False
+            raise
+        finally:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            MetricRegistry().openai_embedding_call_ms_histogram.record(
+                elapsed_ms,
+                dict(get_ctx_attributes(), **{"embedding_model": self.model, "success": str(success).lower()}),
+            )
 
 
 def query_embedding(embedding_model, query_text: str):

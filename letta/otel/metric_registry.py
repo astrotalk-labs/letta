@@ -220,6 +220,50 @@ class MetricRegistry:
             ),
         )
 
+    # Latency of a single OpenAI embeddings API call (client.embeddings.create),
+    # recorded around the call in OpenAIEmbeddings.get_text_embedding regardless of
+    # success/failure. This call runs synchronously (blocking) inside async request
+    # paths like archival_memory_search, so provider-side stalls here directly stall
+    # the whole event loop — this metric is what should page/alert on that, instead
+    # of only surfacing after the fact via [STEP_TIMING][tool_execution] log lines.
+    # Attributes (all low cardinality):
+    #   - embedding_model : the configured embedding model (e.g. text-embedding-3-small)
+    #   - success         : "true" | "false"
+    #   plus the base ctx attributes (organization.id, project.id, agent.id, ...)
+    @property
+    def openai_embedding_call_ms_histogram(self) -> Histogram:
+        return self._get_or_create_metric(
+            "hist_openai_embedding_call_ms",
+            partial(
+                self._meter.create_histogram,
+                name="hist_openai_embedding_call_ms",
+                description="Latency (ms) of a single OpenAI embeddings API call, partitioned by success.",
+                unit="ms",
+                # Healthy calls land well under 1s; the known failure mode is
+                # unbounded retries against a stalled/rate-limited provider (no
+                # timeout is set on the client), which has been observed running
+                # into multiple minutes — so the tail buckets need to go far past
+                # the 10s ceiling of the OTel defaults.
+                explicit_bucket_boundaries_advisory=[
+                    50,
+                    100,
+                    250,
+                    500,
+                    1000,
+                    2000,
+                    3000,
+                    5000,
+                    10000,
+                    20000,
+                    30000,
+                    60000,
+                    120000,
+                    300000,
+                    600000,
+                ],
+            ),
+        )
+
     # --- Haiku cascade (latencyOptimisationFlow) metrics ---
     # All attributes use low cardinality:
     #   - provider  : anthropic | anthropic_vertex | anthropic_bedrock
