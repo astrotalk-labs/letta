@@ -124,22 +124,26 @@ class RequestLatencyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         token = request_step_timings.set([])
         start = time.monotonic()
-        response = await call_next(request)
-        duration_ms = int((time.monotonic() - start) * 1000)
-        path = request.url.path
-        m = _AGENT_ID_RE.search(path)
-        agent_id_part = f" agent_id={m.group(1)}" if m else ""
-        steps = request_step_timings.get()
-        request_step_timings.reset(token)
-        steps_part = ""
-        if steps:
-            per_step = " ".join(f"s{i}={ms}ms" for i, ms in enumerate(steps))
-            steps_part = f" total_steps={len(steps)} step_ms=[{per_step}]"
-        logger.warning(
-            f"[REQUEST_LATENCY] method={request.method} path={path}"
-            f" status={response.status_code} duration_ms={duration_ms}{agent_id_part}{steps_part}"
-        )
-        return response
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            return response
+        finally:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            path = request.url.path
+            m = _AGENT_ID_RE.search(path)
+            agent_id_part = f" agent_id={m.group(1)}" if m else ""
+            steps = request_step_timings.get()
+            request_step_timings.reset(token)
+            steps_part = ""
+            if steps:
+                per_step = " ".join(f"s{i}={ms}ms" for i, ms in enumerate(steps))
+                steps_part = f" total_steps={len(steps)} step_ms=[{per_step}]"
+            logger.warning(
+                f"[REQUEST_LATENCY] method={request.method} path={path}"
+                f" status={status_code} duration_ms={duration_ms}{agent_id_part}{steps_part}"
+            )
 
 
 def create_application() -> "FastAPI":
