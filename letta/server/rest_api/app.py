@@ -118,10 +118,10 @@ class CheckPasswordMiddleware(BaseHTTPMiddleware):
 
 
 _AGENT_ID_RE = re.compile(r"/agents/([^/]+)")
-
-
 class RequestLatencyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
+        if request.url.path.endswith("/health/status"):
+            return await call_next(request)
         token = request_step_timings.set([])
         start = time.monotonic()
         status_code = 500
