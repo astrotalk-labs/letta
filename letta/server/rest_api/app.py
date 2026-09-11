@@ -2,7 +2,9 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -38,6 +40,7 @@ from letta.server.rest_api.routers.v1.users import router as users_router  # TOD
 from letta.server.rest_api.static_files import mount_static_files
 from letta.server.server import SyncServer
 from letta.growthbook.setup import init_growthbook, shutdown_growthbook
+from letta.request_context import request_step_timings
 from letta.settings import settings
 
 # TODO(ethan)
@@ -112,6 +115,31 @@ class CheckPasswordMiddleware(BaseHTTPMiddleware):
             content={"detail": "Unauthorized"},
             status_code=401,
         )
+
+
+_AGENT_ID_RE = re.compile(r"/agents/([^/]+)")
+
+
+class RequestLatencyMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        token = request_step_timings.set([])
+        start = time.monotonic()
+        response = await call_next(request)
+        duration_ms = int((time.monotonic() - start) * 1000)
+        path = request.url.path
+        m = _AGENT_ID_RE.search(path)
+        agent_id_part = f" agent_id={m.group(1)}" if m else ""
+        steps = request_step_timings.get()
+        request_step_timings.reset(token)
+        steps_part = ""
+        if steps:
+            per_step = " ".join(f"s{i}={ms}ms" for i, ms in enumerate(steps))
+            steps_part = f" total_steps={len(steps)} step_ms=[{per_step}]"
+        logger.warning(
+            f"[REQUEST_LATENCY] method={request.method} path={path}"
+            f" status={response.status_code} duration_ms={duration_ms}{agent_id_part}{steps_part}"
+        )
+        return response
 
 
 def create_application() -> "FastAPI":
@@ -238,6 +266,8 @@ def create_application() -> "FastAPI":
         )
 
     settings.cors_origins.append("https://app.letta.com")
+
+    app.add_middleware(RequestLatencyMiddleware)
 
     if (os.getenv("LETTA_SERVER_SECURE") == "true") or "--secure" in sys.argv:
         print(f"▶ Using secure mode with password: {random_password}")

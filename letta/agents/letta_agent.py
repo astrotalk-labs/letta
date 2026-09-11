@@ -20,6 +20,7 @@ from letta.llm_api.llm_client import LLMClient
 from letta.llm_api.llm_client_base import LLMClientBase
 from letta.local_llm.constants import INNER_THOUGHTS_KWARG
 from letta.log import get_logger
+from letta.request_context import request_step_timings
 from letta.orm.enums import ToolType
 from letta.otel.context import get_ctx_attributes
 from letta.otel.metric_registry import MetricRegistry
@@ -1098,6 +1099,9 @@ class LettaAgent(BaseAgent):
             now = get_utc_timestamp_ns()
             step_ns = now - step_start
             agent_step_span.add_event(name="step_ms", attributes={"duration_ms": ns_to_ms(step_ns)})
+            _timings = request_step_timings.get()
+            if _timings is not None:
+                _timings.append(ns_to_ms(step_ns))
             if _log_latency:
                 logger.warning(
                     f"[TASK_LATENCY] task_id={task_id} step_id={step_id} step={i} phase=total_step duration_ms={ns_to_ms(step_ns)}"
