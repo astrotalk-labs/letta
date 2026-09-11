@@ -189,6 +189,28 @@ def setup_metrics(
         45000,
         60000,
     ]
+    # Embedding calls are normally sub-second, but the known failure mode (no
+    # timeout on the client, unbounded retries against a stalled/rate-limited
+    # provider) has been observed running into multiple minutes — mirrors
+    # hist_openai_embedding_call_ms's explicit_bucket_boundaries_advisory in
+    # metric_registry.py, which the SDK doesn't actually honor without this View.
+    _OPENAI_EMBEDDING_CALL_BUCKETS = [
+        50,
+        100,
+        250,
+        500,
+        1000,
+        2000,
+        3000,
+        5000,
+        10000,
+        20000,
+        30000,
+        60000,
+        120000,
+        300000,
+        600000,
+    ]
     views = [
         View(
             instrument_name="hist_messages_endpoint_e2e_ms",
@@ -197,6 +219,10 @@ def setup_metrics(
         View(
             instrument_name="hist_llm_call_ms",
             aggregation=ExplicitBucketHistogramAggregation(_LLM_CALL_BUCKETS),
+        ),
+        View(
+            instrument_name="hist_openai_embedding_call_ms",
+            aggregation=ExplicitBucketHistogramAggregation(_OPENAI_EMBEDDING_CALL_BUCKETS),
         ),
     ]
 
