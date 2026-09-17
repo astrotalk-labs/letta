@@ -7,10 +7,13 @@ import tiktoken
 from openai import OpenAI
 
 from letta.constants import EMBEDDING_TO_TOKENIZER_DEFAULT, EMBEDDING_TO_TOKENIZER_MAP, MAX_EMBEDDING_DIM
+from letta.log import get_logger
 from letta.otel.context import get_ctx_attributes
 from letta.otel.metric_registry import MetricRegistry
 from letta.schemas.embedding_config import EmbeddingConfig
 from letta.utils import is_valid_url, printd
+
+logger = get_logger(__name__)
 
 
 def parse_and_chunk_text(text: str, chunk_size: int) -> List[str]:
@@ -218,8 +221,22 @@ class OpenAIEmbeddings:
         start = time.perf_counter()
         success = True
         try:
-            response = self.client.embeddings.create(input=text, model=self.model)
-            return response.data[0].embedding
+            raw = self.client.embeddings.with_raw_response.create(input=text, model=self.model)
+            headers = raw.headers
+            remaining_req = headers.get("x-ratelimit-remaining-requests")
+            remaining_tok = headers.get("x-ratelimit-remaining-tokens")
+            reset_req = headers.get("x-ratelimit-reset-requests")
+            reset_tok = headers.get("x-ratelimit-reset-tokens")
+            if remaining_req is not None and int(remaining_req) < 10:
+                logger.warning(
+                    "[EMBEDDING_RATELIMIT] requests nearly exhausted: remaining=%s reset=%s remaining_tokens=%s reset_tokens=%s model=%s",
+                    remaining_req,
+                    reset_req,
+                    remaining_tok,
+                    reset_tok,
+                    self.model,
+                )
+            return raw.parse().data[0].embedding
         except Exception:
             success = False
             raise
