@@ -101,6 +101,7 @@ class ModelSettings(BaseSettings):
     anthropic_api_key: Optional[str] = None
     anthropic_max_retries: int = 3
     anthropic_request_timeout: float = 15.0
+    anthropic_llm_request_timeout: float = 15.0
     bedrock_timeout_fallback_max_retries: int = 3
     bedrock_timeout_fallback_request_timeout: float = 30.0
 

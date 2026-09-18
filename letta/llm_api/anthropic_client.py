@@ -1,8 +1,9 @@
+import asyncio
 import hashlib
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Union, cast
 
 import anthropic
 from anthropic import AsyncStream
@@ -206,7 +207,6 @@ class AnthropicClient(LLMClientBase):
         if llm_config.model_endpoint_type == "anthropic_vertex":
             debug_log(_at_uid, f"request_async: VERTEX branch project={model_settings.google_cloud_project}")
             from anthropic import AsyncAnthropicVertex
-            from letta.settings import model_settings
             import os
 
             # Create async Vertex client with proper configuration
@@ -225,6 +225,7 @@ class AnthropicClient(LLMClientBase):
                 project_id=project_id,
                 region=region,
                 base_url=base_url,
+                timeout=model_settings.anthropic_llm_request_timeout,
             )
 
             # Vertex doesn't support beta features
@@ -239,16 +240,27 @@ class AnthropicClient(LLMClientBase):
                 _at_uid,
                 f"request_async: VERTEX FINAL_CALL model={_vertex_sdk_data.get('model')} region={region} extra_body={bool(_vertex_extra_body)} num_messages={len(_vertex_sdk_data.get('messages', []))} num_tools={len(_vertex_sdk_data.get('tools', []))}",
             )
-            response = await client.messages.create(
-                **_vertex_sdk_data, **({"extra_body": _vertex_extra_body} if _vertex_extra_body else {})
-            )
+            _vertex_create = cast(Callable[..., Awaitable[anthropic.types.Message]], client.messages.create)
+            try:
+                response = await _vertex_create(
+                    **_vertex_sdk_data,
+                    **({"extra_body": _vertex_extra_body} if _vertex_extra_body else {}),
+                )
+            except anthropic.APITimeoutError:
+                logger.warning(
+                    "[LLM_TIMEOUT] VERTEX timed out after %ss user=%s model=%s",
+                    model_settings.anthropic_llm_request_timeout,
+                    _at_uid,
+                    _vertex_sdk_data.get("model"),
+                )
+                raise LLMTimeoutError(
+                    message=f"Vertex Anthropic request timed out after {model_settings.anthropic_llm_request_timeout}s",
+                )
         elif llm_config.model_endpoint_type == "anthropic_bedrock":
             debug_log(_at_uid, f"request_async: BEDROCK branch model={llm_config.model}")
             import os
             import json
-            import asyncio
             import boto3
-            from letta.settings import model_settings
 
             aws_region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or model_settings.aws_region or "ap-south-1"
             aws_access_key = os.getenv("AWS_ACCESS_KEY_ID") or model_settings.aws_access_key
@@ -470,9 +482,24 @@ class AnthropicClient(LLMClientBase):
                 _at_uid,
                 lambda: f"request_async: STANDARD_ANTHROPIC FINAL_CALL model={_sdk_data.get('model')} num_messages={len(_sdk_data.get('messages', []))} num_tools={len(_sdk_data.get('tools', []))} thinking={_sdk_data.get('thinking')} max_tokens={_sdk_data.get('max_tokens')} tool_choice={_sdk_data.get('tool_choice')} full_body={json.dumps(_sdk_data, default=str)}",
             )
-            response = await client.beta.messages.create(
-                **_sdk_data, betas=["tools-2024-04-04", "prompt-caching-2024-07-31"], **({"extra_body": _extra_body} if _extra_body else {})
-            )
+            _standard_create = cast(Callable[..., Awaitable[anthropic.types.Message]], client.beta.messages.create)
+            try:
+                response = await _standard_create(
+                    **_sdk_data,
+                    betas=["tools-2024-04-04", "prompt-caching-2024-07-31"],
+                    **({"extra_body": _extra_body} if _extra_body else {}),
+                    timeout=model_settings.anthropic_llm_request_timeout,
+                )
+            except anthropic.APITimeoutError:
+                logger.warning(
+                    "[LLM_TIMEOUT] STANDARD_ANTHROPIC timed out after %ss user=%s model=%s",
+                    model_settings.anthropic_llm_request_timeout,
+                    _at_uid,
+                    _sdk_data.get("model"),
+                )
+                raise LLMTimeoutError(
+                    message=f"Anthropic request timed out after {model_settings.anthropic_llm_request_timeout}s",
+                )
         logger.info("This is the usage response from claude %s", response.usage)
         self._log_cache_observation_usage(
             response.usage,
