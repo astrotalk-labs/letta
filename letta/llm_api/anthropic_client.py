@@ -241,21 +241,27 @@ class AnthropicClient(LLMClientBase):
                 f"request_async: VERTEX FINAL_CALL model={_vertex_sdk_data.get('model')} region={region} extra_body={bool(_vertex_extra_body)} num_messages={len(_vertex_sdk_data.get('messages', []))} num_tools={len(_vertex_sdk_data.get('tools', []))}",
             )
             _vertex_create = cast(Callable[..., Awaitable[anthropic.types.Message]], client.messages.create)
-            try:
-                response = await _vertex_create(
-                    **_vertex_sdk_data,
-                    **({"extra_body": _vertex_extra_body} if _vertex_extra_body else {}),
-                )
-            except anthropic.APITimeoutError:
-                logger.warning(
-                    "[LLM_TIMEOUT] VERTEX timed out after %ss user=%s model=%s",
-                    model_settings.anthropic_llm_request_timeout,
-                    _at_uid,
-                    _vertex_sdk_data.get("model"),
-                )
-                raise LLMTimeoutError(
-                    message=f"Vertex Anthropic request timed out after {model_settings.anthropic_llm_request_timeout}s",
-                )
+            _vertex_max_retries = model_settings.anthropic_llm_timeout_max_retries
+            for _attempt in range(1, _vertex_max_retries + 1):
+                try:
+                    response = await _vertex_create(
+                        **_vertex_sdk_data,
+                        **({"extra_body": _vertex_extra_body} if _vertex_extra_body else {}),
+                    )
+                    break
+                except anthropic.APITimeoutError:
+                    logger.warning(
+                        "[LLM_TIMEOUT] VERTEX timed out after %ss user=%s model=%s attempt=%d/%d",
+                        model_settings.anthropic_llm_request_timeout,
+                        _at_uid,
+                        _vertex_sdk_data.get("model"),
+                        _attempt,
+                        _vertex_max_retries,
+                    )
+                    if _attempt == _vertex_max_retries:
+                        raise LLMTimeoutError(
+                            message=f"Vertex Anthropic request timed out after {model_settings.anthropic_llm_request_timeout}s and {_vertex_max_retries} attempts",
+                        )
         elif llm_config.model_endpoint_type == "anthropic_bedrock":
             debug_log(_at_uid, f"request_async: BEDROCK branch model={llm_config.model}")
             import os
@@ -483,23 +489,29 @@ class AnthropicClient(LLMClientBase):
                 lambda: f"request_async: STANDARD_ANTHROPIC FINAL_CALL model={_sdk_data.get('model')} num_messages={len(_sdk_data.get('messages', []))} num_tools={len(_sdk_data.get('tools', []))} thinking={_sdk_data.get('thinking')} max_tokens={_sdk_data.get('max_tokens')} tool_choice={_sdk_data.get('tool_choice')} full_body={json.dumps(_sdk_data, default=str)}",
             )
             _standard_create = cast(Callable[..., Awaitable[anthropic.types.Message]], client.beta.messages.create)
-            try:
-                response = await _standard_create(
-                    **_sdk_data,
-                    betas=["tools-2024-04-04", "prompt-caching-2024-07-31"],
-                    **({"extra_body": _extra_body} if _extra_body else {}),
-                    timeout=model_settings.anthropic_llm_request_timeout,
-                )
-            except anthropic.APITimeoutError:
-                logger.warning(
-                    "[LLM_TIMEOUT] STANDARD_ANTHROPIC timed out after %ss user=%s model=%s",
-                    model_settings.anthropic_llm_request_timeout,
-                    _at_uid,
-                    _sdk_data.get("model"),
-                )
-                raise LLMTimeoutError(
-                    message=f"Anthropic request timed out after {model_settings.anthropic_llm_request_timeout}s",
-                )
+            _standard_max_retries = model_settings.anthropic_llm_timeout_max_retries
+            for _attempt in range(1, _standard_max_retries + 1):
+                try:
+                    response = await _standard_create(
+                        **_sdk_data,
+                        betas=["tools-2024-04-04", "prompt-caching-2024-07-31"],
+                        **({"extra_body": _extra_body} if _extra_body else {}),
+                        timeout=model_settings.anthropic_llm_request_timeout,
+                    )
+                    break
+                except anthropic.APITimeoutError:
+                    logger.warning(
+                        "[LLM_TIMEOUT] STANDARD_ANTHROPIC timed out after %ss user=%s model=%s attempt=%d/%d",
+                        model_settings.anthropic_llm_request_timeout,
+                        _at_uid,
+                        _sdk_data.get("model"),
+                        _attempt,
+                        _standard_max_retries,
+                    )
+                    if _attempt == _standard_max_retries:
+                        raise LLMTimeoutError(
+                            message=f"Anthropic request timed out after {model_settings.anthropic_llm_request_timeout}s and {_standard_max_retries} attempts",
+                        )
         logger.info("This is the usage response from claude %s", response.usage)
         self._log_cache_observation_usage(
             response.usage,
