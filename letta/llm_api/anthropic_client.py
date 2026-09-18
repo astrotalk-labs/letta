@@ -262,6 +262,8 @@ class AnthropicClient(LLMClientBase):
                         raise LLMTimeoutError(
                             message=f"Vertex Anthropic request timed out after {model_settings.anthropic_llm_request_timeout}s and {_vertex_max_retries} attempts",
                         )
+            else:
+                raise LLMTimeoutError(message="Vertex Anthropic timeout retries exhausted")
         elif llm_config.model_endpoint_type == "anthropic_bedrock":
             debug_log(_at_uid, f"request_async: BEDROCK branch model={llm_config.model}")
             import os
@@ -512,6 +514,8 @@ class AnthropicClient(LLMClientBase):
                         raise LLMTimeoutError(
                             message=f"Anthropic request timed out after {model_settings.anthropic_llm_request_timeout}s and {_standard_max_retries} attempts",
                         )
+            else:
+                raise LLMTimeoutError(message="Standard Anthropic timeout retries exhausted")
         logger.info("This is the usage response from claude %s", response.usage)
         self._log_cache_observation_usage(
             response.usage,
