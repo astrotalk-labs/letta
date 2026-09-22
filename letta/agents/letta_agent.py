@@ -152,9 +152,6 @@ _HAIKU_MODEL_BY_PROVIDER: dict = {
 }
 
 # Dedicated application inference profile for consultant-routed requests.
-_CONSULTANT_BEDROCK_ARN_FOR_COST_TRACKING_2: str = "arn:aws:bedrock:ap-south-1:441618926843:application-inference-profile/qnufi6v65yh3"
-_HAIKU_BEDROCK_ARN_FOR_COST_TRACKING_2: str = "arn:aws:bedrock:ap-south-1:441618926843:application-inference-profile/76k0mv89vfhi"
-_CONSULTANT_ID_FOR_COST_TACKING_2: int = 52037
 TASK_LATENCY_CONSULTANT_IDS: frozenset[int] = frozenset({46760, 46906, 47051, 47360, 47407, 49805})
 
 
@@ -244,11 +241,6 @@ class LettaAgent(BaseAgent):
         # Also auto-detect Gemini models by name so callers don't need to set llm_provider explicitly.
         if llm_provider == "google" or (agent_state.llm_config.model or "").startswith("gemini"):
             agent_state.llm_config.model_endpoint_type = "google_ai"
-            return
-
-        if consultant_id == _CONSULTANT_ID_FOR_COST_TACKING_2:
-            agent_state.llm_config.model_endpoint_type = "anthropic_bedrock"
-            agent_state.llm_config.model = _CONSULTANT_BEDROCK_ARN_FOR_COST_TRACKING_2
             return
 
         original_endpoint_type = agent_state.llm_config.model_endpoint_type
@@ -691,8 +683,6 @@ class LettaAgent(BaseAgent):
                 latency_optimisation_flow = False
             else:
                 _haiku_model = _HAIKU_MODEL_BY_PROVIDER.get(agent_state.llm_config.model_endpoint_type)
-                if consultant_id == _CONSULTANT_ID_FOR_COST_TACKING_2 and _haiku_model is not None:
-                    _haiku_model = _HAIKU_BEDROCK_ARN_FOR_COST_TRACKING_2
                 if _haiku_model:
                     logger.warning(
                         f"[HAIKU_CASCADE] task_id={task_id or 'N/A'} ENABLED "
@@ -826,7 +816,9 @@ class LettaAgent(BaseAgent):
 
             _llm_start = get_utc_timestamp_ns() if _log_latency else None
             _haiku_timed_out: bool = False
+            _step_failed = False
             response = None  # always initialised — assigned in try block or timeout fallback
+            valid_tool_names: list[str] = []  # always overwritten by _build_and_request_from_llm; init silences unbound warning
             try:
                 _haiku_coro = self._build_and_request_from_llm(
                     current_in_context_messages,
@@ -871,6 +863,15 @@ class LettaAgent(BaseAgent):
                     in_context_messages = current_in_context_messages + new_in_context_messages
                     log_event("agent.step.llm_response.received")  # [3^]
                     response = llm_client.convert_response_to_chat_completion(response_data, in_context_messages, agent_state.llm_config)
+            except Exception as _llm_exc:
+                _step_failed = True
+                logger.warning(
+                    f"[STEP_FAILURE] step={i} step_id={step_id} phase=llm_call "
+                    f"model={agent_state.llm_config.model} "
+                    f"provider={agent_state.llm_config.model_endpoint_type} "
+                    f"error={type(_llm_exc).__name__}: {_llm_exc}"
+                )
+                raise
             finally:
                 # Always restore the primary model — even if the LLM call raises.
                 if _original_model is not None:
@@ -1028,35 +1029,49 @@ class LettaAgent(BaseAgent):
                 else:
                     raise ValueError("No tool calls found in response, model must make a tool call")
             tool_call = response.choices[0].message.tool_calls[0]
+            _reasoning_item: Optional[Union[TextContent, ReasoningContent, RedactedReasoningContent, OmittedReasoningContent]]
+            reasoning: Optional[List[Union[TextContent, ReasoningContent, RedactedReasoningContent, OmittedReasoningContent]]]
             if response.choices[0].message.reasoning_content:
-                reasoning = [
-                    ReasoningContent(
-                        reasoning=response.choices[0].message.reasoning_content,
-                        is_native=True,
-                        signature=response.choices[0].message.reasoning_content_signature,
-                    )
-                ]
+                _reasoning_item = ReasoningContent(
+                    reasoning=response.choices[0].message.reasoning_content,
+                    is_native=True,
+                    signature=response.choices[0].message.reasoning_content_signature,
+                )
+                reasoning = [_reasoning_item]
             elif response.choices[0].message.content:
-                reasoning = [TextContent(text=response.choices[0].message.content)]  # reasoning placed into content for legacy reasons
+                _reasoning_item = TextContent(text=response.choices[0].message.content)
+                reasoning = [_reasoning_item]  # reasoning placed into content for legacy reasons
             elif response.choices[0].message.omitted_reasoning_content:
-                reasoning = [OmittedReasoningContent()]
+                _reasoning_item = OmittedReasoningContent()
+                reasoning = [_reasoning_item]
             else:
                 logger.info("No reasoning content found.")
                 reasoning = None
 
             _tool_start = get_utc_timestamp_ns() if _log_latency else None
-            persisted_messages, should_continue, stop_reason = await self._handle_ai_response(
-                tool_call,
-                valid_tool_names,
-                agent_state,
-                tool_rules_solver,
-                response.usage,
-                reasoning_content=reasoning,
-                step_id=step_id,
-                initial_messages=initial_messages,
-                agent_step_span=agent_step_span,
-                is_final_step=(i == max_steps - 1),
-            )
+            try:
+                persisted_messages, should_continue, stop_reason = await self._handle_ai_response(
+                    tool_call,
+                    valid_tool_names,
+                    agent_state,
+                    tool_rules_solver,
+                    response.usage,
+                    reasoning_content=reasoning,
+                    step_id=step_id,
+                    initial_messages=initial_messages,
+                    agent_step_span=agent_step_span,
+                    is_final_step=(i == max_steps - 1),
+                )
+            except Exception as _tool_exc:
+                _step_failed = True
+                logger.warning(
+                    f"[STEP_FAILURE] step={i} step_id={step_id} phase=tool_exec "
+                    f"tool={tool_call.function.name} "
+                    f"model={agent_state.llm_config.model} "
+                    f"provider={agent_state.llm_config.model_endpoint_type} "
+                    f"error={type(_tool_exc).__name__}: {_tool_exc}"
+                )
+                raise
             if _log_latency and _tool_start:
                 logger.warning(
                     f"[TASK_LATENCY] task_id={task_id} step_id={step_id} step={i} phase=tool_exec duration_ms={ns_to_ms(get_utc_timestamp_ns() - _tool_start)}"
@@ -1123,6 +1138,18 @@ class LettaAgent(BaseAgent):
                 MetricRegistry().haiku_cascade_step_ms_histogram.record(ns_to_ms(step_ns), _cascade_attrs(outcome=_step_outcome))
 
             agent_step_span.end()
+
+            logger.warning(
+                f"[STEP_USAGE] step={i} step_id={step_id} "
+                f"model={agent_state.llm_config.model} "
+                f"provider={agent_state.llm_config.model_endpoint_type} "
+                f"tool={_prev_tool_name} used_haiku={_step_used_haiku} failed={_step_failed} "
+                f"input_tokens={response.usage.prompt_tokens} "
+                f"output_tokens={response.usage.completion_tokens} "
+                f"cache_read_tokens={response.usage.cache_read_input_tokens} "
+                f"cache_creation_tokens={response.usage.cache_creation_input_tokens} "
+                f"duration_ms={ns_to_ms(step_ns)}"
+            )
 
             # Log LLM Trace
             async with AsyncTimer() as _t:
@@ -1277,19 +1304,26 @@ class LettaAgent(BaseAgent):
                 _request_ms = ns_to_ms(get_utc_timestamp_ns() - request_start_timestamp_ns)
                 MetricRegistry().haiku_cascade_request_ms_histogram.record(_request_ms, _summary_attrs)
 
-        if self._consultant_id in TASK_LATENCY_CONSULTANT_IDS:
-            logger.warning(
-                "[STEP_USAGE] consultant_id=%s steps=%d prompt_tokens=%d completion_tokens=%d "
-                "total_tokens=%d cache_read_tokens=%d cache_creation_tokens=%d stop_reason=%s",
-                self._consultant_id,
-                usage.step_count,
-                usage.prompt_tokens,
-                usage.completion_tokens,
-                usage.total_tokens,
-                usage.cache_read_tokens,
-                usage.cache_creation_tokens,
-                stop_reason.stop_reason if stop_reason else None,
-            )
+        logger.warning(
+            "[TURN_SUMMARY] agent_id=%s at_user_id=%s task_id=%s "
+            "model=%s provider=%s "
+            "steps=%d "
+            "input_tokens=%d output_tokens=%d total_tokens=%d "
+            "cache_read_tokens=%d cache_creation_tokens=%d "
+            "stop_reason=%s",
+            agent_state.id,
+            self.at_user_id,
+            task_id or "N/A",
+            agent_state.llm_config.model,
+            agent_state.llm_config.model_endpoint_type,
+            usage.step_count,
+            usage.prompt_tokens,
+            usage.completion_tokens,
+            usage.total_tokens,
+            usage.cache_read_tokens,
+            usage.cache_creation_tokens,
+            stop_reason.stop_reason if stop_reason else None,
+        )
 
         return current_in_context_messages, new_in_context_messages, usage, stop_reason
 
