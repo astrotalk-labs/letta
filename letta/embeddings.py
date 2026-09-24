@@ -221,7 +221,7 @@ class OpenAIEmbeddings:
         start = time.perf_counter()
         success = True
         try:
-            raw = self.client.embeddings.with_raw_response.create(input=text, model=self.model)
+            raw = self.client.embeddings.with_raw_response.create(input=text, model=self.model, timeout=3.0)
             headers = raw.headers
             remaining_req = headers.get("x-ratelimit-remaining-requests")
             remaining_tok = headers.get("x-ratelimit-remaining-tokens")
