@@ -189,6 +189,21 @@ def setup_metrics(
         45000,
         60000,
     ]
+    _EMBEDDING_BUCKETS = [
+        50,
+        100,
+        250,
+        500,
+        750,
+        1000,
+        2500,
+        5000,
+        10000,
+        15000,
+        20000,
+        30000,
+        60000,
+    ]
     views = [
         View(
             instrument_name="hist_messages_endpoint_e2e_ms",
@@ -197,6 +212,10 @@ def setup_metrics(
         View(
             instrument_name="hist_llm_call_ms",
             aggregation=ExplicitBucketHistogramAggregation(_LLM_CALL_BUCKETS),
+        ),
+        View(
+            instrument_name="hist_openai_embedding_call_ms",
+            aggregation=ExplicitBucketHistogramAggregation(_EMBEDDING_BUCKETS),
         ),
     ]
 

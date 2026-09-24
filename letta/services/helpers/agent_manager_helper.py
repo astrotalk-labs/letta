@@ -2,6 +2,7 @@ import datetime
 from typing import List, Literal, Optional
 
 import numpy as np
+import openai
 from sqlalchemy import Select, and_, asc, desc, func, literal, or_, select, union_all
 from sqlalchemy.sql.expression import exists
 
@@ -26,8 +27,11 @@ from letta.schemas.memory import Memory
 from letta.schemas.message import Message, MessageCreate
 from letta.schemas.tool_rule import ToolRule
 from letta.schemas.user import User
+from letta.log import get_logger
 from letta.settings import settings
 from letta.system import get_initial_boot_messages, get_login_event, package_function_response
+
+logger = get_logger(__name__)
 
 
 # Static methods
@@ -601,9 +605,12 @@ def build_source_passage_query(
     if embed_query:
         assert embedding_config is not None, "embedding_config must be specified for vector search"
         assert query_text is not None, "query_text must be specified for vector search"
-        embedded_text = embedding_model(embedding_config).get_text_embedding(query_text)
-        embedded_text = np.array(embedded_text)
-        embedded_text = np.pad(embedded_text, (0, MAX_EMBEDDING_DIM - embedded_text.shape[0]), mode="constant").tolist()
+        try:
+            embedded_text = embedding_model(embedding_config).get_text_embedding(query_text)
+            embedded_text = np.array(embedded_text)
+            embedded_text = np.pad(embedded_text, (0, MAX_EMBEDDING_DIM - embedded_text.shape[0]), mode="constant").tolist()
+        except openai.APITimeoutError:
+            logger.warning("[EMBEDDING_TIMEOUT] source passage search embedding timed out, falling back to text search")
 
     # Base query for source passages
     query = select(SourcePassage).where(SourcePassage.organization_id == actor.organization_id)
@@ -697,9 +704,12 @@ def build_agent_passage_query(
     if embed_query:
         assert embedding_config is not None, "embedding_config must be specified for vector search"
         assert query_text is not None, "query_text must be specified for vector search"
-        embedded_text = embedding_model(embedding_config).get_text_embedding(query_text)
-        embedded_text = np.array(embedded_text)
-        embedded_text = np.pad(embedded_text, (0, MAX_EMBEDDING_DIM - embedded_text.shape[0]), mode="constant").tolist()
+        try:
+            embedded_text = embedding_model(embedding_config).get_text_embedding(query_text)
+            embedded_text = np.array(embedded_text)
+            embedded_text = np.pad(embedded_text, (0, MAX_EMBEDDING_DIM - embedded_text.shape[0]), mode="constant").tolist()
+        except openai.APITimeoutError:
+            logger.warning("[EMBEDDING_TIMEOUT] agent passage search embedding timed out, falling back to text search")
 
     # Base query for agent passages
     query = select(AgentPassage).where(AgentPassage.agent_id == agent_id, AgentPassage.organization_id == actor.organization_id)
