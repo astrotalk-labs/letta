@@ -40,7 +40,7 @@ def get_embedding(text: str, model: str, endpoint: str, endpoint_type: str = "op
         )
     else:
         client = OpenAI(api_key=model_settings.openai_api_key, base_url=endpoint, max_retries=0)
-    response = client.embeddings.create(input=text, model=model)
+    response = client.embeddings.create(input=text, model=model, timeout=3.0)
     return response.data[0].embedding
 
 
@@ -58,7 +58,7 @@ async def get_embedding_async(text: str, model: str, endpoint: str, endpoint_typ
         )
     else:
         client = AsyncOpenAI(api_key=model_settings.openai_api_key, base_url=endpoint, max_retries=0)
-    response = await client.embeddings.create(input=text, model=model)
+    response = await client.embeddings.create(input=text, model=model, timeout=3.0)
     return response.data[0].embedding
 
 
