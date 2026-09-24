@@ -4,6 +4,7 @@ from functools import lru_cache
 from typing import List, Optional
 
 from async_lru import alru_cache
+import openai
 from openai import AsyncAzureOpenAI, AsyncOpenAI, AzureOpenAI, OpenAI
 from sqlalchemy import select
 
@@ -40,7 +41,11 @@ def get_embedding(text: str, model: str, endpoint: str, endpoint_type: str = "op
         )
     else:
         client = OpenAI(api_key=model_settings.openai_api_key, base_url=endpoint, max_retries=0)
-    response = client.embeddings.create(input=text, model=model)
+    try:
+        response = client.embeddings.create(input=text, model=model, timeout=3.0)
+    except openai.APITimeoutError:
+        logger.warning("[EMBEDDING_TIMEOUT] sync embedding timed out model=%s endpoint=%s", model, endpoint)
+        raise
     return response.data[0].embedding
 
 
@@ -58,7 +63,11 @@ async def get_embedding_async(text: str, model: str, endpoint: str, endpoint_typ
         )
     else:
         client = AsyncOpenAI(api_key=model_settings.openai_api_key, base_url=endpoint, max_retries=0)
-    response = await client.embeddings.create(input=text, model=model)
+    try:
+        response = await client.embeddings.create(input=text, model=model, timeout=3.0)
+    except openai.APITimeoutError:
+        logger.warning("[EMBEDDING_TIMEOUT] async embedding timed out model=%s endpoint=%s", model, endpoint)
+        raise
     return response.data[0].embedding
 
 

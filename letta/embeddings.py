@@ -4,6 +4,7 @@ from typing import Any, List, Optional
 
 import numpy as np
 import tiktoken
+import openai
 from openai import OpenAI
 
 from letta.constants import EMBEDDING_TO_TOKENIZER_DEFAULT, EMBEDDING_TO_TOKENIZER_MAP, MAX_EMBEDDING_DIM
@@ -139,7 +140,7 @@ class AzureOpenAIEmbedding:
         self.model = model
 
     def get_text_embedding(self, text: str):
-        embeddings = self.client.embeddings.create(input=[text], model=self.model).data[0].embedding
+        embeddings = self.client.embeddings.create(input=[text], model=self.model, timeout=3.0).data[0].embedding
         return embeddings
 
 
@@ -237,6 +238,10 @@ class OpenAIEmbeddings:
                     self.model,
                 )
             return raw.parse().data[0].embedding
+        except openai.APITimeoutError:
+            success = False
+            logger.warning("[EMBEDDING_TIMEOUT] openai embedding timed out model=%s", self.model)
+            raise
         except Exception:
             success = False
             raise

@@ -32,7 +32,7 @@ class OpenAIEmbedder:
 
     async def _embed_batch(self, batch: List[str], batch_indices: List[int]) -> List[Tuple[int, List[float]]]:
         """Embed a single batch and return embeddings with their original indices"""
-        response = await self.client.embeddings.create(model=self.embedding_config.embedding_model, input=batch)
+        response = await self.client.embeddings.create(model=self.embedding_config.embedding_model, input=batch, timeout=3.0)
         return [(idx, res.embedding) for idx, res in zip(batch_indices, response.data)]
 
     async def generate_embedded_passages(self, file_id: str, source_id: str, chunks: List[str], actor: User) -> List[Passage]:
