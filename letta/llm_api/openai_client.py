@@ -319,7 +319,7 @@ class OpenAIClient(LLMClientBase):
             client = AsyncAzureOpenAI(**kwargs)
         else:
             client = AsyncOpenAI(**kwargs)
-        response = await client.embeddings.create(model=embedding_config.embedding_model, input=inputs)
+        response = await client.embeddings.create(model=embedding_config.embedding_model, input=inputs, timeout=3.0)
 
         # TODO: add total usage
         return [r.embedding for r in response.data]
