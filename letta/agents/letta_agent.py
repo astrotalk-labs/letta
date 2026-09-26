@@ -20,11 +20,11 @@ from letta.llm_api.llm_client import LLMClient
 from letta.llm_api.llm_client_base import LLMClientBase
 from letta.local_llm.constants import INNER_THOUGHTS_KWARG
 from letta.log import get_logger
-from letta.request_context import request_step_timings
 from letta.orm.enums import ToolType
 from letta.otel.context import get_ctx_attributes
 from letta.otel.metric_registry import MetricRegistry
 from letta.otel.tracing import log_event, trace_method, tracer
+from letta.request_context import StepTimingEntry, request_step_timings
 from letta.schemas.agent import AgentState
 from letta.schemas.enums import MessageRole
 from letta.schemas.letta_message import MessageType
@@ -946,6 +946,26 @@ class LettaAgent(BaseAgent):
                         f"wasted_tokens={response.usage.total_tokens}"
                     )
                     # Track wasted Haiku usage before we discard the response
+                    _wasted_timings = request_step_timings.get()
+                    if _wasted_timings is not None:
+                        _has_identity = bool(consultant_id or self.at_user_id)
+                        _wasted_timings.append(
+                            StepTimingEntry(
+                                step_count=i,
+                                step_name="haiku_quality_discarded",
+                                is_llm_call=True,
+                                is_success=True,
+                                provider=agent_state.llm_config.model_endpoint_type,
+                                input_token_count=response.usage.prompt_tokens,
+                                output_token_count=response.usage.completion_tokens,
+                                cache_read_token_count=response.usage.cache_read_input_tokens,
+                                cache_write_token_count=response.usage.cache_creation_input_tokens,
+                                tool_name=_haiku_tool_call_name,
+                                consultant_id=consultant_id,
+                                user_id=self.at_user_id or None,
+                                agent_id=agent_state.id if not _has_identity else None,
+                            )
+                        )
                     _haiku_retried_step_count += 1
                     _haiku_wasted_prompt_tokens += response.usage.prompt_tokens
                     _haiku_wasted_completion_tokens += response.usage.completion_tokens
@@ -1116,7 +1136,34 @@ class LettaAgent(BaseAgent):
             agent_step_span.add_event(name="step_ms", attributes={"duration_ms": ns_to_ms(step_ns)})
             _timings = request_step_timings.get()
             if _timings is not None:
-                _timings.append(ns_to_ms(step_ns))
+                if _step_used_haiku:
+                    _step_name = "haiku_kept"
+                elif _step_was_retried:
+                    _step_name = "primary_after_haiku_quality_retry"
+                elif _haiku_timed_out:
+                    _step_name = "primary_after_haiku_timeout"
+                elif _haiku_model and i == 0:
+                    _step_name = "primary_step0"
+                else:
+                    _step_name = "primary"
+                _has_identity = bool(consultant_id or self.at_user_id)
+                _timings.append(
+                    StepTimingEntry(
+                        step_count=i,
+                        step_name=_step_name,
+                        is_llm_call=True,
+                        is_success=not _step_failed,
+                        provider=agent_state.llm_config.model_endpoint_type,
+                        input_token_count=response.usage.prompt_tokens,
+                        output_token_count=response.usage.completion_tokens,
+                        cache_read_token_count=response.usage.cache_read_input_tokens,
+                        cache_write_token_count=response.usage.cache_creation_input_tokens,
+                        tool_name=_prev_tool_name,
+                        consultant_id=consultant_id,
+                        user_id=self.at_user_id or None,
+                        agent_id=agent_state.id if not _has_identity else None,
+                    )
+                )
             if _log_latency:
                 logger.warning(
                     f"[TASK_LATENCY] task_id={task_id} step_id={step_id} step={i} phase=total_step duration_ms={ns_to_ms(step_ns)}"
