@@ -118,6 +118,8 @@ class CheckPasswordMiddleware(BaseHTTPMiddleware):
 
 
 _AGENT_ID_RE = re.compile(r"/agents/([^/]+)")
+
+
 class RequestLatencyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         if request.url.path.endswith("/health/status"):
@@ -138,8 +140,23 @@ class RequestLatencyMiddleware(BaseHTTPMiddleware):
             request_step_timings.reset(token)
             steps_part = ""
             if steps:
-                per_step = " ".join(f"s{i}={ms}ms" for i, ms in enumerate(steps))
-                steps_part = f" total_steps={len(steps)} step_ms=[{per_step}]"
+                unique_step_count = len({e.step_count for e in steps})
+                per_step = " | ".join(
+                    f"s={e.step_count} name={e.step_name} prov={e.provider}"
+                    f" tool={e.tool_name or 'none'}"
+                    f" in={e.input_token_count} out={e.output_token_count}"
+                    f" cr={e.cache_read_token_count} cw={e.cache_write_token_count}"
+                    f" {'ok' if e.is_success else 'fail'}"
+                    for e in steps
+                )
+                id_part = ""
+                if steps[0].consultant_id:
+                    id_part = f" consultant_id={steps[0].consultant_id}"
+                elif steps[0].user_id:
+                    id_part = f" user_id={steps[0].user_id}"
+                elif steps[0].agent_id:
+                    id_part = f" agent_id={steps[0].agent_id}"
+                steps_part = f" total_steps={unique_step_count}{id_part} steps=[{per_step}]"
             logger.warning(
                 f"[REQUEST_LATENCY] method={request.method} path={path}"
                 f" status={status_code} duration_ms={duration_ms}{agent_id_part}{steps_part}"
