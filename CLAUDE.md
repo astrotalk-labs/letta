@@ -90,8 +90,7 @@ outright, just don't treat them as in-scope for this caller's request path.)
 
 Routing inside the handler: if the agent is `multi_agent_group`-eligible and its
 `model_endpoint_type` is one of `anthropic`/`openai`/`together`/`google_ai`/
-`google_vertex`, it goes through `LettaAgent` (or `SleeptimeMultiAgentV2` if
-`enable_sleeptime`); otherwise it falls back to the legacy
+`google_vertex`, it goes through `LettaAgent`; otherwise it falls back to the legacy
 `server.send_message_to_agent(...)` path, which does **not** accept `thinking`,
 `output_config`, `task_id`, or `latencyOptimisationFlow` — those are new-loop-only.
 Keep this in mind when a caller reports a flag being silently ignored: check which

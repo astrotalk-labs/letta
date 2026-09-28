@@ -11,16 +11,15 @@ from pydantic import Field
 from sqlalchemy.exc import IntegrityError, OperationalError
 from starlette.responses import Response, StreamingResponse
 
-from letta.agents.letta_agent import LettaAgent, TASK_LATENCY_CONSULTANT_IDS
+from letta.agents.letta_agent import TASK_LATENCY_CONSULTANT_IDS, LettaAgent
 from letta.debug_util import debug_log, new_debug_request_id, set_debug_chat_order_id
 from letta.constants import DEFAULT_MAX_STEPS, DEFAULT_MESSAGE_TOOL, DEFAULT_MESSAGE_TOOL_KWARG
-from letta.groups.sleeptime_multi_agent_v2 import SleeptimeMultiAgentV2
 from letta.helpers.datetime_helpers import get_utc_timestamp_ns, ns_to_ms
 from letta.log import get_logger
 from letta.orm.errors import NoResultFound
 from letta.otel.context import add_ctx_attribute, get_ctx_attributes
 from letta.otel.metric_registry import MetricRegistry
-from letta.schemas.agent import AgentState, AgentType, CreateAgent, UpdateAgent
+from letta.schemas.agent import AgentState, CreateAgent, UpdateAgent
 from letta.schemas.block import Block, BlockUpdate
 from letta.schemas.group import Group
 from letta.schemas.job import JobStatus, JobUpdate, LettaRequestConfig
@@ -744,41 +743,25 @@ async def send_message(
     try:
         _t_actor = get_utc_timestamp_ns()
         actor = await server.user_manager.get_actor_or_default_async(actor_id=actor_id)
-        # TODO: This is redundant, remove soon
         _t_agent = get_utc_timestamp_ns()
-        agent = await server.agent_manager.get_agent_by_id_async(agent_id, actor, include_relationships=["multi_agent_group"])
         if request.task_id or request.consultant_id in TASK_LATENCY_CONSULTANT_IDS:
             logger.warning(f"[TASK_LATENCY] task_id={request.task_id} phase=actor_load duration_ms={ns_to_ms(_t_agent - _t_actor)}")
             logger.warning(
                 f"[TASK_LATENCY] task_id={request.task_id} phase=agent_load duration_ms={ns_to_ms(get_utc_timestamp_ns() - _t_agent)}"
             )
 
-        if agent.enable_sleeptime and agent.agent_type != AgentType.voice_convo_agent:
-            debug_log(at_user_id, "send_message: choosing SleeptimeMultiAgentV2")
-            agent_loop = SleeptimeMultiAgentV2(
-                agent_id=agent_id,
-                message_manager=server.message_manager,
-                agent_manager=server.agent_manager,
-                block_manager=server.block_manager,
-                passage_manager=server.passage_manager,
-                group_manager=server.group_manager,
-                job_manager=server.job_manager,
-                actor=actor,
-                group=agent.multi_agent_group,
-            )
-        else:
-            debug_log(at_user_id, "send_message: choosing LettaAgent")
-            agent_loop = LettaAgent(
-                agent_id=agent_id,
-                message_manager=server.message_manager,
-                agent_manager=server.agent_manager,
-                block_manager=server.block_manager,
-                passage_manager=server.passage_manager,
-                actor=actor,
-                step_manager=server.step_manager,
-                telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
-                at_user_id=at_user_id,
-            )
+        debug_log(at_user_id, "send_message: choosing LettaAgent")
+        agent_loop = LettaAgent(
+            agent_id=agent_id,
+            message_manager=server.message_manager,
+            agent_manager=server.agent_manager,
+            block_manager=server.block_manager,
+            passage_manager=server.passage_manager,
+            actor=actor,
+            step_manager=server.step_manager,
+            telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
+            at_user_id=at_user_id,
+        )
 
         result = await agent_loop.step(
             request.messages,
