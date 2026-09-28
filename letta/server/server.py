@@ -814,10 +814,7 @@ class SyncServer(Server):
         log_event(name="end create_agent db")
 
         if request.enable_sleeptime:
-            if request.agent_type == AgentType.voice_convo_agent:
-                main_agent = self.create_voice_sleeptime_agent(main_agent=main_agent, actor=actor)
-            else:
-                main_agent = self.create_sleeptime_agent(main_agent=main_agent, actor=actor)
+            main_agent = self.create_sleeptime_agent(main_agent=main_agent, actor=actor)
 
         return main_agent
 
@@ -868,10 +865,7 @@ class SyncServer(Server):
         log_event(name="end create_agent db")
 
         if request.enable_sleeptime:
-            if request.agent_type == AgentType.voice_convo_agent:
-                main_agent = await self.create_voice_sleeptime_agent_async(main_agent=main_agent, actor=actor)
-            else:
-                main_agent = await self.create_sleeptime_agent_async(main_agent=main_agent, actor=actor)
+            main_agent = await self.create_sleeptime_agent_async(main_agent=main_agent, actor=actor)
 
         return main_agent
 
@@ -890,10 +884,7 @@ class SyncServer(Server):
         if request.enable_sleeptime:
             agent = self.agent_manager.get_agent_by_id(agent_id=agent_id, actor=actor)
             if agent.multi_agent_group is None:
-                if agent.agent_type == AgentType.voice_convo_agent:
-                    self.create_voice_sleeptime_agent(main_agent=agent, actor=actor)
-                else:
-                    self.create_sleeptime_agent(main_agent=agent, actor=actor)
+                self.create_sleeptime_agent(main_agent=agent, actor=actor)
 
         return self.agent_manager.update_agent(
             agent_id=agent_id,
@@ -916,10 +907,7 @@ class SyncServer(Server):
         if request.enable_sleeptime:
             agent = await self.agent_manager.get_agent_by_id_async(agent_id=agent_id, actor=actor)
             if agent.multi_agent_group is None:
-                if agent.agent_type == AgentType.voice_convo_agent:
-                    await self.create_voice_sleeptime_agent_async(main_agent=agent, actor=actor)
-                else:
-                    await self.create_sleeptime_agent_async(main_agent=agent, actor=actor)
+                await self.create_sleeptime_agent_async(main_agent=agent, actor=actor)
 
         return await self.agent_manager.update_agent_async(
             agent_id=agent_id,

@@ -252,8 +252,6 @@ class AgentManager:
         if agent_create.include_base_tools:
             if agent_create.agent_type == AgentType.voice_sleeptime_agent:
                 tool_names |= set(BASE_VOICE_SLEEPTIME_TOOLS)
-            elif agent_create.agent_type == AgentType.voice_convo_agent:
-                tool_names |= set(BASE_VOICE_SLEEPTIME_CHAT_TOOLS)
             elif agent_create.agent_type == AgentType.sleeptime_agent:
                 tool_names |= set(BASE_SLEEPTIME_TOOLS)
             elif agent_create.enable_sleeptime:
@@ -414,8 +412,6 @@ class AgentManager:
         if agent_create.include_base_tools:
             if agent_create.agent_type == AgentType.voice_sleeptime_agent:
                 tool_names |= set(BASE_VOICE_SLEEPTIME_TOOLS)
-            elif agent_create.agent_type == AgentType.voice_convo_agent:
-                tool_names |= set(BASE_VOICE_SLEEPTIME_CHAT_TOOLS)
             elif agent_create.agent_type == AgentType.sleeptime_agent:
                 tool_names |= set(BASE_SLEEPTIME_TOOLS)
             elif agent_create.enable_sleeptime:

@@ -213,32 +213,6 @@ def composio_gmail_get_profile_tool(default_user):
 
 
 @pytest.fixture
-def voice_agent(server, actor):
-    main_agent = server.create_agent(
-        request=CreateAgent(
-            agent_type=AgentType.voice_convo_agent,
-            name="main_agent",
-            memory_blocks=[
-                CreateBlock(
-                    label="persona",
-                    value="You are a personal assistant that helps users with requests.",
-                ),
-                CreateBlock(
-                    label="human",
-                    value="My favorite plant is the fiddle leaf\nMy favorite color is lavender",
-                ),
-            ],
-            model="openai/gpt-4o-mini",
-            embedding="openai/text-embedding-ada-002",
-            enable_sleeptime=True,
-        ),
-        actor=actor,
-    )
-
-    return main_agent
-
-
-@pytest.fixture
 def group_id(voice_agent):
     return voice_agent.multi_agent_group.id
 
@@ -288,41 +262,6 @@ def _assert_valid_chunk(chunk, idx, chunks):
 
 
 # --- Tests --- #
-
-
-@pytest.mark.asyncio(loop_scope="module")
-@pytest.mark.parametrize("model", ["openai/gpt-4o-mini", "anthropic/claude-3-5-sonnet-20241022"])
-async def test_model_compatibility(disable_e2b_api_key, voice_agent, model, server, server_url, group_id, actor):
-    request = _get_chat_request("How are you?")
-    server.tool_manager.upsert_base_tools(actor=actor)
-
-    main_agent = server.create_agent(
-        request=CreateAgent(
-            agent_type=AgentType.voice_convo_agent,
-            name="main_agent",
-            memory_blocks=[
-                CreateBlock(
-                    label="persona",
-                    value="You are a personal assistant that helps users with requests.",
-                ),
-                CreateBlock(
-                    label="human",
-                    value="My favorite plant is the fiddle leaf\nMy favorite color is lavender",
-                ),
-            ],
-            model=model,
-            embedding="openai/text-embedding-ada-002",
-            enable_sleeptime=True,
-        ),
-        actor=actor,
-    )
-    async_client = AsyncOpenAI(base_url=f"http://localhost:8283/v1/voice-beta/{main_agent.id}", max_retries=0)
-
-    stream = await async_client.chat.completions.create(**request.model_dump(exclude_none=True))
-    async with stream:
-        async for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta.content:
-                print(chunk.choices[0].delta.content)
 
 
 @pytest.mark.asyncio(loop_scope="module")

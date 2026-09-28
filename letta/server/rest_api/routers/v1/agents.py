@@ -753,32 +753,18 @@ async def send_message(
                 f"[TASK_LATENCY] task_id={request.task_id} phase=agent_load duration_ms={ns_to_ms(get_utc_timestamp_ns() - _t_agent)}"
             )
 
-        if agent.enable_sleeptime and agent.agent_type != AgentType.voice_convo_agent:
-            debug_log(at_user_id, "send_message: choosing SleeptimeMultiAgentV2")
-            agent_loop = SleeptimeMultiAgentV2(
-                agent_id=agent_id,
-                message_manager=server.message_manager,
-                agent_manager=server.agent_manager,
-                block_manager=server.block_manager,
-                passage_manager=server.passage_manager,
-                group_manager=server.group_manager,
-                job_manager=server.job_manager,
-                actor=actor,
-                group=agent.multi_agent_group,
-            )
-        else:
-            debug_log(at_user_id, "send_message: choosing LettaAgent")
-            agent_loop = LettaAgent(
-                agent_id=agent_id,
-                message_manager=server.message_manager,
-                agent_manager=server.agent_manager,
-                block_manager=server.block_manager,
-                passage_manager=server.passage_manager,
-                actor=actor,
-                step_manager=server.step_manager,
-                telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
-                at_user_id=at_user_id,
-            )
+        debug_log(at_user_id, "send_message: choosing LettaAgent")
+        agent_loop = LettaAgent(
+            agent_id=agent_id,
+            message_manager=server.message_manager,
+            agent_manager=server.agent_manager,
+            block_manager=server.block_manager,
+            passage_manager=server.passage_manager,
+            actor=actor,
+            step_manager=server.step_manager,
+            telemetry_manager=server.telemetry_manager if settings.llm_api_logging else NoopTelemetryManager(),
+            at_user_id=at_user_id,
+        )
 
         result = await agent_loop.step(
             request.messages,
