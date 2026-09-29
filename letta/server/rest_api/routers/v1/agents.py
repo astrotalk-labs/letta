@@ -797,6 +797,7 @@ async def send_message(
             latency_optimisation_flow=request.latencyOptimisationFlow,
             llm_provider=request.llm_provider,
             consultant_id=request.consultant_id,
+            cache_optimisation_v3=request.cache_optimisation_v3,
         )
         return result
     except Exception as e:

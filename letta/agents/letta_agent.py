@@ -280,6 +280,7 @@ class LettaAgent(BaseAgent):
         latency_optimisation_flow: bool = False,
         llm_provider: Optional[str] = None,
         consultant_id: int | None = None,
+        cache_optimisation_v3: bool = False,
     ) -> LettaResponse:
         _log_latency = bool(task_id or consultant_id in TASK_LATENCY_CONSULTANT_IDS)
         _t_agent_load_start = get_utc_timestamp_ns() if _log_latency else None
@@ -306,6 +307,7 @@ class LettaAgent(BaseAgent):
             latency_optimisation_flow=latency_optimisation_flow,
             llm_provider=llm_provider,
             consultant_id=consultant_id,
+            cache_optimisation_v3=cache_optimisation_v3,
         )
         return _create_letta_response(
             new_in_context_messages=new_in_context_messages,
@@ -582,6 +584,7 @@ class LettaAgent(BaseAgent):
         latency_optimisation_flow: bool = False,
         llm_provider: Optional[str] = None,
         consultant_id: int | None = None,
+        cache_optimisation_v3: bool = False,
     ) -> Tuple[List[Message], List[Message], Optional[LettaStopReason], LettaUsageStatistics]:
         """
         Carries out an invocation of the agent loop. In each step, the agent
@@ -653,6 +656,7 @@ class LettaAgent(BaseAgent):
         )
         if llm_client is not None:
             llm_client.consultant_id = consultant_id
+            llm_client.cache_optimisation_v3 = cache_optimisation_v3
 
         # Resolve the Haiku model name for this provider (used when latency_optimisation_flow=True).
         # Hardcoded provider→model mapping; Bedrock uses an ARN application inference profile.
