@@ -13,6 +13,7 @@ from anthropic.types.beta.message_create_params import MessageCreateParamsNonStr
 from anthropic.types.beta.messages import BetaMessageBatch
 from anthropic.types.beta.messages.batch_create_params import Request
 
+from letta.debug_util import _DEBUG_USER_ID, debug_log, get_debug_chat_order_id
 from letta.errors import (
     ContextWindowExceededError,
     ErrorCode,
@@ -28,20 +29,34 @@ from letta.errors import (
 )
 from letta.helpers.datetime_helpers import get_utc_time_int
 from letta.llm_api.anthropic import DEPRECATED_MODEL_ALIASES
-from letta.llm_api.bedrock_inference_profiles import COHORT_INFERENCE_PROFILES, FALLBACK_INFERENCE_PROFILE, MODEL_INFERENCE_PROFILES
-from letta.llm_api.helpers import add_inner_thoughts_to_functions, unpack_all_inner_thoughts_from_kwargs
-from letta.debug_util import _DEBUG_USER_ID, debug_log, get_debug_chat_order_id
+from letta.llm_api.bedrock_inference_profiles import (
+    COHORT_INFERENCE_PROFILES,
+    FALLBACK_INFERENCE_PROFILE,
+    MODEL_INFERENCE_PROFILES,
+)
+from letta.llm_api.helpers import (
+    add_inner_thoughts_to_functions,
+    unpack_all_inner_thoughts_from_kwargs,
+)
 from letta.llm_api.llm_client_base import LLMClientBase
-from letta.local_llm.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION
+from letta.local_llm.constants import (
+    INNER_THOUGHTS_KWARG,
+    INNER_THOUGHTS_KWARG_DESCRIPTION,
+)
 from letta.log import get_logger
 from letta.otel.tracing import trace_method
 from letta.schemas.enums import ProviderCategory
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.message import Message as PydanticMessage
 from letta.schemas.openai.chat_completion_request import Tool as OpenAITool
-from letta.schemas.openai.chat_completion_response import ChatCompletionResponse, Choice, FunctionCall
+from letta.schemas.openai.chat_completion_response import (
+    ChatCompletionResponse,
+    Choice,
+    FunctionCall,
+    ToolCall,
+    UsageStatistics,
+)
 from letta.schemas.openai.chat_completion_response import Message as ChoiceMessage
-from letta.schemas.openai.chat_completion_response import ToolCall, UsageStatistics
 from letta.services.provider_manager import ProviderManager
 from letta.settings import model_settings
 
@@ -206,8 +221,9 @@ class AnthropicClient(LLMClientBase):
         )
         if llm_config.model_endpoint_type == "anthropic_vertex":
             debug_log(_at_uid, f"request_async: VERTEX branch project={model_settings.google_cloud_project}")
-            from anthropic import AsyncAnthropicVertex
             import os
+
+            from anthropic import AsyncAnthropicVertex
 
             # Create async Vertex client with proper configuration
             project_id = model_settings.google_cloud_project
@@ -266,8 +282,9 @@ class AnthropicClient(LLMClientBase):
                 raise LLMTimeoutError(message="Vertex Anthropic timeout retries exhausted")
         elif llm_config.model_endpoint_type == "anthropic_bedrock":
             debug_log(_at_uid, f"request_async: BEDROCK branch model={llm_config.model}")
-            import os
             import json
+            import os
+
             import boto3
 
             aws_region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or model_settings.aws_region or "ap-south-1"
@@ -411,7 +428,7 @@ class AnthropicClient(LLMClientBase):
 
             debug_log(
                 _at_uid,
-                lambda: f"request_async: BEDROCK FINAL_CALL model_id={model_id} num_messages={len(bedrock_body.get('messages', []))} num_tools={len(bedrock_body.get('tools', []))} thinking={bedrock_body.get('thinking')} max_tokens={bedrock_body.get('max_tokens')} tool_choice={bedrock_body.get('tool_choice')} full_body={json.dumps(bedrock_body, default=str)}",
+                lambda: f"request_async: BEDROCK FINAL_CALL chat_order_id={get_debug_chat_order_id()} model_id={model_id} num_messages={len(bedrock_body.get('messages', []))} num_tools={len(bedrock_body.get('tools', []))} thinking={bedrock_body.get('thinking')} max_tokens={bedrock_body.get('max_tokens')} tool_choice={bedrock_body.get('tool_choice')} full_body={json.dumps(bedrock_body, default=str)}",
             )
 
             # Run synchronous boto3 call in a thread to avoid blocking the event loop
@@ -474,7 +491,10 @@ class AnthropicClient(LLMClientBase):
                     f"cache_read_tokens={_u.get('cache_read_input_tokens')}"
                 ),
             )
-            debug_log(_at_uid, lambda _r=response_dict: f"request_async: BEDROCK LLM_RESPONSE body={json.dumps(_r, default=str)}")
+            debug_log(
+                _at_uid,
+                lambda _r=response_dict: f"request_async: BEDROCK LLM_RESPONSE chat_order_id={get_debug_chat_order_id()} body={json.dumps(_r, default=str)}",
+            )
             return response_dict
         else:
             debug_log(_at_uid, f"request_async: STANDARD_ANTHROPIC branch model={llm_config.model}")
@@ -488,7 +508,7 @@ class AnthropicClient(LLMClientBase):
                     _sdk_data[k] = v
             debug_log(
                 _at_uid,
-                lambda: f"request_async: STANDARD_ANTHROPIC FINAL_CALL model={_sdk_data.get('model')} num_messages={len(_sdk_data.get('messages', []))} num_tools={len(_sdk_data.get('tools', []))} thinking={_sdk_data.get('thinking')} max_tokens={_sdk_data.get('max_tokens')} tool_choice={_sdk_data.get('tool_choice')} full_body={json.dumps(_sdk_data, default=str)}",
+                lambda: f"request_async: STANDARD_ANTHROPIC FINAL_CALL chat_order_id={get_debug_chat_order_id()} model={_sdk_data.get('model')} num_messages={len(_sdk_data.get('messages', []))} num_tools={len(_sdk_data.get('tools', []))} thinking={_sdk_data.get('thinking')} max_tokens={_sdk_data.get('max_tokens')} tool_choice={_sdk_data.get('tool_choice')} full_body={json.dumps(_sdk_data, default=str)}",
             )
             _standard_create = cast(Callable[..., Awaitable[anthropic.types.Message]], client.beta.messages.create)
             _standard_max_retries = model_settings.anthropic_llm_timeout_max_retries
@@ -532,7 +552,10 @@ class AnthropicClient(LLMClientBase):
                 f"cache_read_tokens={getattr(_u, 'cache_read_input_tokens', None)}"
             ),
         )
-        debug_log(_at_uid, lambda _r=response: f"request_async: LLM_RESPONSE body={json.dumps(_r.model_dump(), default=str)}")
+        debug_log(
+            _at_uid,
+            lambda _r=response: f"request_async: LLM_RESPONSE chat_order_id={get_debug_chat_order_id()} body={json.dumps(_r.model_dump(), default=str)}",
+        )
         return response.model_dump()
 
     @trace_method
