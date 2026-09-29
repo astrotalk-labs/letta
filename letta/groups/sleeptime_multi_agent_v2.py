@@ -66,6 +66,18 @@ class SleeptimeMultiAgentV2(BaseAgent):
         use_assistant_message: bool = True,
         request_start_timestamp_ns: Optional[int] = None,
         include_return_message_types: Optional[List[MessageType]] = None,
+        use_vertex_experiment: bool = False,
+        use_bedrock_experiment: bool = False,
+        model_override: Optional[str] = None,
+        user_cohort: Optional[str] = None,
+        thinking: Optional[dict] = None,
+        thinking_config: Optional[dict] = None,
+        output_config: Optional[dict] = None,
+        task_id: Optional[str] = None,
+        latency_optimisation_flow: bool = False,
+        llm_provider: Optional[str] = None,
+        consultant_id: int | None = None,
+        cache_optimisation_v3: bool = False,
     ) -> LettaResponse:
         run_ids = []
 
@@ -93,7 +105,20 @@ class SleeptimeMultiAgentV2(BaseAgent):
             input_messages=new_messages,
             max_steps=max_steps,
             use_assistant_message=use_assistant_message,
+            request_start_timestamp_ns=request_start_timestamp_ns,
             include_return_message_types=include_return_message_types,
+            use_vertex_experiment=use_vertex_experiment,
+            use_bedrock_experiment=use_bedrock_experiment,
+            model_override=model_override,
+            user_cohort=user_cohort,
+            thinking=thinking,
+            thinking_config=thinking_config,
+            output_config=output_config,
+            task_id=task_id,
+            latency_optimisation_flow=latency_optimisation_flow,
+            llm_provider=llm_provider,
+            consultant_id=consultant_id,
+            cache_optimisation_v3=cache_optimisation_v3,
         )
 
         # Get last response messages
