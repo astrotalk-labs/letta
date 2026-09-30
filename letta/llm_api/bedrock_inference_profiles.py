@@ -21,4 +21,6 @@ COHORT_INFERENCE_PROFILES: dict = {
     "INDIAN_AT": "rg76qwszdgvo",
     "PANDITJI": "18c7gtd1mst5",
     "LUMUS": "9gx7yplss61x",
+    "LETTA_CONTROL_VARIATION": "n4y5wim2o5gx",
+    "LETTA_EXPERIMENT_VARIATION": "4qkesixe4j2v",
 }

@@ -909,18 +909,23 @@ class AnthropicClient(LLMClientBase):
         # Test user CACHE_OBS_USER_ID is always in the v2 bucket so observability
         # logs remain comparable to the PR #54 baseline.
         at_user_id_for_opt = getattr(self, "at_user_id", None)
+        use_v3_caching = self.cache_optimisation_v3
         use_v2_caching = _is_user_in_v2_cache_bucket(at_user_id_for_opt)
-        v2_split = self._split_system_message_v2_for_caching(system_content) if use_v2_caching else None
-        if v2_split is not None:
-            static_base, dynamic_persona, dynamic_user_memory, static_rules, dynamic_metadata = v2_split
-            if dynamic_metadata:
-                dynamic_metadata = self._stabilize_memory_metadata(dynamic_metadata)
-            data["system"] = self._add_cache_control_to_system_message_v2(
-                static_base, dynamic_persona, dynamic_user_memory, static_rules, dynamic_metadata
-            )
+
+        if use_v3_caching:
+            data["system"] = self._build_system_blocks_v3(system_content)
         else:
-            static_part_1, dynamic_part_1, static_part_2, dynamic_part_2 = self._split_system_message_for_caching(system_content)
-            data["system"] = self._add_cache_control_to_system_message(static_part_1, dynamic_part_1, static_part_2, dynamic_part_2)
+            v2_split = self._split_system_message_v2_for_caching(system_content) if use_v2_caching else None
+            if v2_split is not None:
+                static_base, dynamic_persona, dynamic_user_memory, static_rules, dynamic_metadata = v2_split
+                if dynamic_metadata:
+                    dynamic_metadata = self._stabilize_memory_metadata()
+                data["system"] = self._add_cache_control_to_system_message_v2(
+                    static_base, dynamic_persona, dynamic_user_memory, static_rules, dynamic_metadata
+                )
+            else:
+                static_part_1, dynamic_part_1, static_part_2, dynamic_part_2 = self._split_system_message_for_caching(system_content)
+                data["system"] = self._add_cache_control_to_system_message(static_part_1, dynamic_part_1, static_part_2, dynamic_part_2)
         data["messages"] = [
             m.to_anthropic_dict(
                 inner_thoughts_xml_tag=inner_thoughts_xml_tag,
@@ -942,7 +947,7 @@ class AnthropicClient(LLMClientBase):
         # through this breakpoint and read everything from cache. Applied BEFORE prefix_fill
         # so the prefix-fill assistant marker (appended below) stays uncached and never sits
         # at the breakpoint position.
-        if use_v2_caching:
+        if use_v2_caching and not use_v3_caching:
             self._add_cache_control_to_last_assistant_message(data["messages"])
 
         # Prefix fill
@@ -1077,7 +1082,28 @@ class AnthropicClient(LLMClientBase):
             parts.append({"type": "text", "text": dynamic_metadata})
         return parts
 
-    def _stabilize_memory_metadata(self, metadata_content: str) -> str:
+    def _build_system_blocks_v3(self, system_content: str) -> list:
+        from letta.llm_api.anthropic_cache_v3 import (
+            block_fingerprints,
+            build_cache_blocks_v3,
+            split_system_message_v3,
+        )
+
+        v3_split = split_system_message_v3(system_content)
+        if v3_split is not None:
+            try:
+                import json as _json
+
+                fps = block_fingerprints(*v3_split)
+                logger.info("[CACHE_V3_BLOCKS] %s", _json.dumps({"at_user_id": getattr(self, "at_user_id", None), **fps}))
+            except (TypeError, ValueError) as e:
+                logger.warning("[CACHE_V3_BLOCKS] fingerprint failed: %s", e)
+            return build_cache_blocks_v3(*v3_split)
+        # fallback to v1 if required markers are not found
+        static_part_1, dynamic_part_1, static_part_2, dynamic_part_2 = self._split_system_message_for_caching(system_content)
+        return self._add_cache_control_to_system_message(static_part_1, dynamic_part_1, static_part_2, dynamic_part_2)
+
+    def _stabilize_memory_metadata(self) -> str:
         # Replace per-second timestamp + recall/archival counts with hourly-stable text so
         # this trailing block stops invalidating cache lookups on every turn. The agent still
         # gets a coarse time reference and a reminder that recall tools exist; it never acts
