@@ -1083,10 +1083,21 @@ class AnthropicClient(LLMClientBase):
         return parts
 
     def _build_system_blocks_v3(self, system_content: str) -> list:
-        from letta.llm_api.anthropic_cache_v3 import build_cache_blocks_v3, split_system_message_v3
+        from letta.llm_api.anthropic_cache_v3 import (
+            block_fingerprints,
+            build_cache_blocks_v3,
+            split_system_message_v3,
+        )
 
         v3_split = split_system_message_v3(system_content)
         if v3_split is not None:
+            try:
+                import json as _json
+
+                fps = block_fingerprints(*v3_split)
+                logger.info("[CACHE_V3_BLOCKS] %s", _json.dumps({"at_user_id": getattr(self, "at_user_id", None), **fps}))
+            except (TypeError, ValueError) as e:
+                logger.warning("[CACHE_V3_BLOCKS] fingerprint failed: %s", e)
             return build_cache_blocks_v3(*v3_split)
         # fallback to v1 if required markers are not found
         static_part_1, dynamic_part_1, static_part_2, dynamic_part_2 = self._split_system_message_for_caching(system_content)
