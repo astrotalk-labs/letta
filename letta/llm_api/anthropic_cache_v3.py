@@ -64,9 +64,15 @@ def split_system_message_v3(
     ``<conversation_summary>`` is optional: agents without a summary yet
     produce an empty block 4 prefix, which is safe.
     """
-    human_start = system_content.find("<human>")
-    persona_start = system_content.find("<persona>")
-    persona_end_idx = system_content.find("</persona>")
+    # The base instructions contain inline text references to <persona> and <human> that precede
+    # the actual memory block tags.  Search for block tags only within the <memory_blocks> section
+    # to skip those false matches.
+    memory_blocks_pos = system_content.find("<memory_blocks>")
+    search_from = memory_blocks_pos if memory_blocks_pos != -1 else 0
+
+    human_start = system_content.find("<human>", search_from)
+    persona_start = system_content.find("<persona>", search_from)
+    persona_end_idx = system_content.find("</persona>", search_from)
     memory_metadata_start = system_content.find("<memory_metadata>")
 
     # Both <human> and <persona> are required.
