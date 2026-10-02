@@ -241,9 +241,8 @@ class CreateAgent(BaseModel, validate_assignment=True):
         """Validate that enable_sleeptime is True when agent_type is a specific value"""
         AGENT_TYPES_REQUIRING_SLEEPTIME = {AgentType.voice_convo_agent}
 
-        if self.agent_type in AGENT_TYPES_REQUIRING_SLEEPTIME:
-            if not self.enable_sleeptime:
-                raise ValueError(f"Agent type {self.agent_type} requires enable_sleeptime to be True")
+        if self.agent_type in AGENT_TYPES_REQUIRING_SLEEPTIME and not self.enable_sleeptime:
+            raise ValueError(f"Agent type {self.agent_type} requires enable_sleeptime to be True")
 
         return self
 
