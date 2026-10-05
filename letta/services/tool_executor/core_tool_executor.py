@@ -205,6 +205,7 @@ class LettaCoreToolExecutor(ToolExecutor):
         new_value = current_value + "\n" + str(content)
         agent_state.memory.update_block_value(label=label, value=new_value)
         await AgentManager().update_memory_if_changed_async(agent_id=agent_state.id, new_memory=agent_state.memory, actor=actor)
+        logger.info("[BLOCK_WRITE] tool=core_memory_append  label=%s  agent_id=%s", label, agent_state.id)
         try:
             import json as _json
 
@@ -240,12 +241,12 @@ class LettaCoreToolExecutor(ToolExecutor):
         current_value = str(agent_state.memory.get_block(label).value)
         if old_content not in current_value:
             raise ValueError(
-                f"Old content '{old_content}' not found in memory block '{label}'. "
-                f"Current value of '{label}':\n{current_value}"
+                f"Old content '{old_content}' not found in memory block '{label}'. " f"Current value of '{label}':\n{current_value}"
             )
         new_value = current_value.replace(str(old_content), str(new_content))
         agent_state.memory.update_block_value(label=label, value=new_value)
         await AgentManager().update_memory_if_changed_async(agent_id=agent_state.id, new_memory=agent_state.memory, actor=actor)
+        logger.info("[BLOCK_WRITE] tool=core_memory_replace  label=%s  agent_id=%s", label, agent_state.id)
         try:
             import json as _json
 
