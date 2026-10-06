@@ -847,6 +847,17 @@ class AnthropicClient(LLMClientBase):
             # Silently disable prefix_fill for now
             prefix_fill = False
 
+        elif "sonnet-5-5" in (llm_config.model or ""):
+            # claude-sonnet-5-5: thinking: {type: "disabled"} is rejected (400).
+            # between_tools keeps Claude thinking only between tool calls, not in the
+            # final text turn. effort=low minimises latency / cost for this step.
+            # Sampling params (temperature/top_p/top_k) must be omitted — non-default
+            # values return a 400 on this model.
+            data["thinking"] = {"type": "between_tools"}
+            data["output_config"] = {"effort": "low"}
+            data.pop("temperature", None)
+            prefix_fill = False
+
         # Tools
         # For an overview on tool choice:
         # https://docs.anthropic.com/en/docs/build-with-claude/tool-use/overview
@@ -854,8 +865,8 @@ class AnthropicClient(LLMClientBase):
             # Special case for summarization path
             tools_for_request = None
             tool_choice = None
-        elif llm_config.enable_reasoner:
-            # NOTE: reasoning models currently do not allow for `any`
+        elif llm_config.enable_reasoner or "sonnet-5-5" in (llm_config.model or ""):
+            # reasoning models and claude-sonnet-5-5 reject tool_choice "any"/"tool"
             tool_choice = {"type": "auto", "disable_parallel_tool_use": True}
             tools_for_request = [OpenAITool(function=f) for f in tools]
         elif force_tool_call is not None:
