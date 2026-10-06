@@ -77,7 +77,6 @@ class SleeptimeMultiAgentV2(BaseAgent):
         latency_optimisation_flow: bool = False,
         llm_provider: Optional[str] = None,
         consultant_id: int | None = None,
-        cache_optimisation_v3: bool = False,
         main_llm_model: Optional[str] = None,
         chat_order_id: Optional[int] = None,
     ) -> LettaResponse:
@@ -120,7 +119,6 @@ class SleeptimeMultiAgentV2(BaseAgent):
             latency_optimisation_flow=latency_optimisation_flow,
             llm_provider=llm_provider,
             consultant_id=consultant_id,
-            cache_optimisation_v3=cache_optimisation_v3,
         )
 
         # Get last response messages

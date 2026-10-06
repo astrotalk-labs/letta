@@ -119,17 +119,6 @@ class LettaRequest(BaseModel):
         ),
     )
 
-    cache_optimisation_v3: bool = Field(
-        default=False,
-        description=(
-            "When True, uses a 4-breakpoint system prompt layout: base instructions, "
-            "persona, human+conversation_summary, and tool_usage_rules each get their "
-            "own cache_control: ephemeral block. memory_metadata remains uncached. "
-            "A core_memory_append to human invalidates only blocks 3-5; base and "
-            "persona remain cached."
-        ),
-    )
-
     @field_validator("task_id", mode="before")
     @classmethod
     def coerce_task_id_to_str(cls, v: Any) -> Optional[str]:
