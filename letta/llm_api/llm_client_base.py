@@ -32,6 +32,7 @@ class LLMClientBase:
         actor: Optional["User"] = None,
         at_user_id: Optional[str] = None,
         user_cohort: Optional[str] = None,
+        use_model_experiment: Optional[bool] = False,
     ):
         self.actor = actor
         self.at_user_id = at_user_id
@@ -40,6 +41,7 @@ class LLMClientBase:
         self.cache_optimisation_v3: bool = False
         self.put_inner_thoughts_first = put_inner_thoughts_first
         self.use_tool_naming = use_tool_naming
+        self.use_model_experiment = use_model_experiment
 
     @trace_method
     def send_llm_request(

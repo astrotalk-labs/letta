@@ -78,6 +78,8 @@ class SleeptimeMultiAgentV2(BaseAgent):
         llm_provider: Optional[str] = None,
         consultant_id: int | None = None,
         cache_optimisation_v3: bool = False,
+        main_llm_model: Optional[str] = None,
+        chat_order_id: Optional[int] = None,
     ) -> LettaResponse:
         run_ids = []
 

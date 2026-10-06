@@ -636,9 +636,19 @@ class AnthropicClient(LLMClientBase):
 
         if not override_key:
             at_uid = getattr(self, "at_user_id", None)
-            cohort = getattr(self, "user_cohort", None)
-            logger.info("[GEO_KEY] _get_anthropic_client at_user_id=%s user_cohort=%s", at_uid, cohort)
-            override_key = _resolve_key_from_cohort(at_uid, cohort)
+            if self.use_model_experiment:
+                import os
+
+                override_key = os.environ.get("ANTHROPIC_EXPERIMENT_API_KEY") or None
+                logger.info(
+                    "[MODEL_EXP] _get_anthropic_client at_user_id=%s using experiment key env=ANTHROPIC_EXPERIMENT_API_KEY set=%s",
+                    at_uid,
+                    bool(override_key),
+                )
+            else:
+                cohort = getattr(self, "user_cohort", None)
+                logger.info("[GEO_KEY] _get_anthropic_client at_user_id=%s user_cohort=%s", at_uid, cohort)
+                override_key = _resolve_key_from_cohort(at_uid, cohort)
 
         if async_client:
             return (
@@ -662,9 +672,19 @@ class AnthropicClient(LLMClientBase):
 
         if not override_key:
             at_uid = getattr(self, "at_user_id", None)
-            cohort = getattr(self, "user_cohort", None)
-            logger.info("[GEO_KEY] _get_anthropic_client_async at_user_id=%s user_cohort=%s", at_uid, cohort)
-            override_key = _resolve_key_from_cohort(at_uid, cohort)
+            if self.use_model_experiment:
+                import os
+
+                override_key = os.environ.get("ANTHROPIC_EXPERIMENT_API_KEY") or None
+                logger.info(
+                    "[MODEL_EXP] _get_anthropic_client_async at_user_id=%s using experiment key env=ANTHROPIC_EXPERIMENT_API_KEY set=%s",
+                    at_uid,
+                    bool(override_key),
+                )
+            else:
+                cohort = getattr(self, "user_cohort", None)
+                logger.info("[GEO_KEY] _get_anthropic_client_async at_user_id=%s user_cohort=%s", at_uid, cohort)
+                override_key = _resolve_key_from_cohort(at_uid, cohort)
 
         _max_retries = max_retries if max_retries is not None else model_settings.anthropic_max_retries
         if async_client:

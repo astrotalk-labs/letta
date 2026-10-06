@@ -1,4 +1,4 @@
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
@@ -48,6 +48,15 @@ class LettaRequest(BaseModel):
     model_override: Optional[str] = Field(
         default=None,
         description="Optional model name to use for this request only, overriding the agent's configured llm_config.model. Useful for runtime A/B testing (e.g. shifting an agent from Sonnet 4.5 to Sonnet 4.6 without modifying the stored agent config).",
+    )
+
+    main_llm_model: Optional[Literal["claude-sonnet-4-5", "claude-sonnet-5-5"]] = Field(
+        default=None,
+        description=(
+            "Sonnet model experiment override. When set, forces Anthropic direct routing (bypasses Bedrock/Vertex) "
+            "and uses the ANTHROPIC_EXPERIMENT_API_KEY env var regardless of user_cohort, so cost is isolated to the experiment key. "
+            "Accepts 'claude-sonnet-4-5' or 'claude-sonnet-5-5'. Absent → default flow unchanged."
+        ),
     )
 
     user_cohort: Optional[str] = Field(

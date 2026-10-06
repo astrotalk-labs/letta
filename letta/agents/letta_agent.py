@@ -229,8 +229,15 @@ class LettaAgent(BaseAgent):
         model_override: Optional[str] = None,
         llm_provider: Optional[str] = None,
         consultant_id: int | None = None,
+        main_llm_model: Optional[str] = None,
     ):
         """Apply dynamic provider switching based on experiment flags."""
+        # main_llm_model experiment: force Anthropic direct + set model; bypass all other flags.
+        if main_llm_model:
+            agent_state.llm_config.model = main_llm_model
+            agent_state.llm_config.model_endpoint_type = "anthropic"
+            return
+
         # Runtime model override: swap the model name before any endpoint-type remapping
         # so that downstream (e.g. Bedrock ARN selection based on model substring) sees the
         # overridden model.
@@ -281,6 +288,8 @@ class LettaAgent(BaseAgent):
         llm_provider: Optional[str] = None,
         consultant_id: int | None = None,
         cache_optimisation_v3: bool = False,
+        main_llm_model: Optional[str] = None,
+        chat_order_id: Optional[int] = None,
     ) -> LettaResponse:
         _log_latency = bool(task_id or consultant_id in TASK_LATENCY_CONSULTANT_IDS)
         _t_agent_load_start = get_utc_timestamp_ns() if _log_latency else None
@@ -308,6 +317,8 @@ class LettaAgent(BaseAgent):
             llm_provider=llm_provider,
             consultant_id=consultant_id,
             cache_optimisation_v3=cache_optimisation_v3,
+            main_llm_model=main_llm_model,
+            chat_order_id=chat_order_id,
         )
         return _create_letta_response(
             new_in_context_messages=new_in_context_messages,
@@ -585,6 +596,8 @@ class LettaAgent(BaseAgent):
         llm_provider: Optional[str] = None,
         consultant_id: int | None = None,
         cache_optimisation_v3: bool = False,
+        main_llm_model: Optional[str] = None,
+        chat_order_id: Optional[int] = None,
     ) -> Tuple[List[Message], List[Message], Optional[LettaStopReason], LettaUsageStatistics]:
         """
         Carries out an invocation of the agent loop. In each step, the agent
@@ -601,6 +614,7 @@ class LettaAgent(BaseAgent):
             model_override=model_override,
             llm_provider=llm_provider,
             consultant_id=consultant_id,
+            main_llm_model=main_llm_model,
         )
 
         # Stash task_id on the instance so agent-internal helpers (_rebuild_memory_async,
@@ -608,6 +622,15 @@ class LettaAgent(BaseAgent):
         self._task_id = task_id
         self._consultant_id = consultant_id
         _log_latency = bool(task_id or consultant_id in TASK_LATENCY_CONSULTANT_IDS)
+
+        if main_llm_model:
+            logger.warning(
+                "[LLM_GENERATE] runtime_model_override=%s user_id=%s consultant_id=%s chat_order_id=%s",
+                main_llm_model,
+                self.at_user_id,
+                consultant_id,
+                chat_order_id,
+            )
 
         # Cascade rollout gate: honor latencyOptimisationFlow only for the rolled-out
         # percentage of users (_CASCADE_ROLLOUT_PCT, keyed on user_id % 100). Ramp up as
@@ -657,6 +680,8 @@ class LettaAgent(BaseAgent):
         if llm_client is not None:
             llm_client.consultant_id = consultant_id
             llm_client.cache_optimisation_v3 = cache_optimisation_v3
+            if main_llm_model:
+                llm_client.use_model_experiment = True
 
         # Resolve the Haiku model name for this provider (used when latency_optimisation_flow=True).
         # Hardcoded provider→model mapping; Bedrock uses an ARN application inference profile.
@@ -818,7 +843,7 @@ class LettaAgent(BaseAgent):
             # to max_steps (prod task 323737721: 42+ archival_memory_insert steps, ~150s).
             _excluded_for_haiku: Optional[frozenset] = None
 
-            _llm_start = get_utc_timestamp_ns() if _log_latency else None
+            _llm_start = get_utc_timestamp_ns() if (_log_latency or main_llm_model) else None
             _haiku_timed_out: bool = False
             _step_failed = False
             response = None  # always initialised — assigned in try block or timeout fallback
@@ -1027,6 +1052,29 @@ class LettaAgent(BaseAgent):
             MetricRegistry().message_output_tokens.record(
                 response.usage.completion_tokens, dict(get_ctx_attributes(), **{"model.name": agent_state.llm_config.model})
             )
+
+            if main_llm_model:
+                _llm_ms = ns_to_ms(get_utc_timestamp_ns() - _llm_start) if _llm_start else 0
+                _resp_msg = response.choices[0].message
+                _tool_args = _resp_msg.tool_calls[0].function.arguments if _resp_msg.tool_calls else ""
+                _output_chars = len(_resp_msg.content or "") + len(_tool_args or "")
+                logger.warning(
+                    "[LLM_GENERATE] step=%d step_id=%s ms=%d model=%s user_id=%s consultant_id=%s "
+                    "chat_order_id=%s input_tokens=%d output_tokens=%d cache_read_tokens=%d "
+                    "cache_creation_tokens=%d output_chars=%d",
+                    i,
+                    step_id,
+                    _llm_ms,
+                    agent_state.llm_config.model,
+                    self.at_user_id,
+                    consultant_id,
+                    chat_order_id,
+                    response.usage.prompt_tokens,
+                    response.usage.completion_tokens,
+                    response.usage.cache_read_input_tokens,
+                    response.usage.cache_creation_input_tokens,
+                    _output_chars,
+                )
 
             # Accumulate per-model usage for the cascade summary
             if _step_used_haiku:

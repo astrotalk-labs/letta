@@ -713,7 +713,7 @@ async def send_message(
     add_ctx_attribute("latency_optimisation_flow", _lof_attr)
 
     logger.warning(
-        f"[SEND_MESSAGE] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}, model_override={request.model_override}, llm_provider={request.llm_provider}"
+        f"[SEND_MESSAGE] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}, model_override={request.model_override}, llm_provider={request.llm_provider}, main_llm_model={request.main_llm_model}"
     )
 
     try:
@@ -798,6 +798,8 @@ async def send_message(
             llm_provider=request.llm_provider,
             consultant_id=request.consultant_id,
             cache_optimisation_v3=request.cache_optimisation_v3,
+            main_llm_model=request.main_llm_model,
+            chat_order_id=request.chat_order_id,
         )
         return result
     except Exception as e:
