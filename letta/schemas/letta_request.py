@@ -50,7 +50,7 @@ class LettaRequest(BaseModel):
         description="Optional model name to use for this request only, overriding the agent's configured llm_config.model. Useful for runtime A/B testing (e.g. shifting an agent from Sonnet 4.5 to Sonnet 4.6 without modifying the stored agent config).",
     )
 
-    main_llm_model: Optional[Literal["claude-sonnet-4-5", "claude-sonnet-5-5"]] = Field(
+    main_llm_model: Optional[Literal["claude-sonnet-4-5", "claude-sonnet-5-5", "claude-sonnet-4-6"]] = Field(
         default=None,
         description=(
             "Sonnet model experiment override. When set, forces Anthropic direct routing (bypasses Bedrock/Vertex) "
