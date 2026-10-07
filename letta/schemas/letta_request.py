@@ -119,6 +119,27 @@ class LettaRequest(BaseModel):
         ),
     )
 
+    cache_history_v4: bool = Field(
+        default=False,
+        description=(
+            "When True (Anthropic/Bedrock), caches the conversation history: the system prompt keeps "
+            "only the stable parts (base instructions, persona, tool rules) and the frequently changing "
+            "memory blocks (human, conversation_summary, memory_metadata) are sent in a note at the end "
+            "of the turn. Takes precedence over cache_optimisation_v3."
+        ),
+    )
+
+    cache_optimisation_v3: bool = Field(
+        default=False,
+        description=(
+            "When True, uses a 4-breakpoint system prompt layout: base instructions, "
+            "persona, human+conversation_summary, and tool_usage_rules each get their "
+            "own cache_control: ephemeral block. memory_metadata remains uncached. "
+            "A core_memory_append to human invalidates only blocks 3-5; base and "
+            "persona remain cached."
+        ),
+    )
+
     @field_validator("task_id", mode="before")
     @classmethod
     def coerce_task_id_to_str(cls, v: Any) -> Optional[str]:

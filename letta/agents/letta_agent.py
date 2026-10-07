@@ -288,6 +288,7 @@ class LettaAgent(BaseAgent):
         llm_provider: Optional[str] = None,
         consultant_id: int | None = None,
         main_llm_model: Optional[str] = None,
+        cache_history_v4: bool = False,
         chat_order_id: Optional[int] = None,
     ) -> LettaResponse:
         _log_latency = bool(task_id or consultant_id in TASK_LATENCY_CONSULTANT_IDS)
@@ -316,6 +317,7 @@ class LettaAgent(BaseAgent):
             llm_provider=llm_provider,
             consultant_id=consultant_id,
             main_llm_model=main_llm_model,
+            cache_history_v4=cache_history_v4,
             chat_order_id=chat_order_id,
         )
         return _create_letta_response(
@@ -594,6 +596,7 @@ class LettaAgent(BaseAgent):
         llm_provider: Optional[str] = None,
         consultant_id: int | None = None,
         main_llm_model: Optional[str] = None,
+        cache_history_v4: bool = False,
         chat_order_id: Optional[int] = None,
     ) -> Tuple[List[Message], List[Message], Optional[LettaStopReason], LettaUsageStatistics]:
         """
@@ -676,6 +679,8 @@ class LettaAgent(BaseAgent):
         )
         if llm_client is not None:
             llm_client.consultant_id = consultant_id
+            llm_client.cache_optimisation_v3 = cache_optimisation_v3
+            llm_client.cache_history_v4 = cache_history_v4
             if main_llm_model:
                 llm_client.use_model_experiment = True
 
@@ -1445,6 +1450,8 @@ class LettaAgent(BaseAgent):
                 log_event("agent.stream_no_tokens.messages.refreshed")
                 # Create LLM request data
                 async with AsyncTimer() as _t:
+                    # v4 history caching: everything up to here is persisted history; the rest is this turn.
+                    llm_client.history_message_count = len(current_in_context_messages)
                     request_data, valid_tool_names = await self._create_llm_request_data_async(
                         llm_client=llm_client,
                         in_context_messages=current_in_context_messages + new_in_context_messages,
@@ -1626,6 +1633,8 @@ class LettaAgent(BaseAgent):
             try:
                 log_event("agent.stream_no_tokens.messages.refreshed")
                 # Create LLM request data
+                # v4 history caching: everything up to here is persisted history; the rest is this turn.
+                llm_client.history_message_count = len(current_in_context_messages)
                 request_data, valid_tool_names = await self._create_llm_request_data_async(
                     llm_client=llm_client,
                     in_context_messages=current_in_context_messages + new_in_context_messages,

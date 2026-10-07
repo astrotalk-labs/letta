@@ -797,6 +797,8 @@ async def send_message(
             latency_optimisation_flow=request.latencyOptimisationFlow,
             llm_provider=request.llm_provider,
             consultant_id=request.consultant_id,
+            cache_optimisation_v3=request.cache_optimisation_v3,
+            cache_history_v4=request.cache_history_v4,
             main_llm_model=request.main_llm_model,
             chat_order_id=request.chat_order_id,
         )
