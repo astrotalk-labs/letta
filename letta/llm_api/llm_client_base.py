@@ -38,6 +38,11 @@ class LLMClientBase:
         self.at_user_id = at_user_id
         self.user_cohort = user_cohort
         self.consultant_id: Optional[int] = None
+        # v4 history caching: set per request by the agent loop. history_message_count is
+        # len(persisted in-context messages incl. the system message); everything after it
+        # belongs to the current turn.
+        self.cache_history_v4: bool = False
+        self.history_message_count: Optional[int] = None
         self.put_inner_thoughts_first = put_inner_thoughts_first
         self.use_tool_naming = use_tool_naming
         self.use_model_experiment = use_model_experiment

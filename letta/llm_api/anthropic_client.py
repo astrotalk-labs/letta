@@ -29,6 +29,14 @@ from letta.errors import (
 )
 from letta.helpers.datetime_helpers import get_utc_time_int
 from letta.llm_api.anthropic import DEPRECATED_MODEL_ALIASES
+from letta.llm_api.anthropic_cache_v4 import (
+    append_memory_note,
+    build_system_blocks_v4,
+    count_cache_breakpoints,
+    mark_last_cacheable_block,
+    split_system_message_v4,
+    strip_message_cache_control,
+)
 from letta.llm_api.bedrock_inference_profiles import (
     COHORT_INFERENCE_PROFILES,
     FALLBACK_INFERENCE_PROFILE,
@@ -946,7 +954,18 @@ class AnthropicClient(LLMClientBase):
         use_v3_caching = True
         use_v2_caching = _is_user_in_v2_cache_bucket(at_user_id_for_opt)
 
-        if use_v3_caching:
+        # v4 (history caching) takes precedence over v3/v2 when the request asks for it.
+        # Needs the history/turn boundary from the agent loop and a normal tool-calling
+        # request (the summarizer path sends no tools). Falls back to the layouts below
+        # when the system prompt markers are missing.
+        history_end = self.history_message_count
+        v4_split = None
+        if self.cache_history_v4 and tools and history_end is not None and 1 <= history_end <= len(messages):
+            v4_split = split_system_message_v4(system_content)
+
+        if v4_split is not None:
+            data["system"] = build_system_blocks_v4(v4_split[0], v4_split[1])
+        elif use_v3_caching:
             data["system"] = self._build_system_blocks_v3(system_content)
         else:
             v2_split = self._split_system_message_v2_for_caching(system_content) if use_v2_caching else None
@@ -968,6 +987,10 @@ class AnthropicClient(LLMClientBase):
             for m in messages[1:]
         ]
 
+        # v4 bp3: last message of the persisted history (messages[1:history_end]).
+        if v4_split is not None and history_end > 1:
+            mark_last_cacheable_block(data["messages"][history_end - 2])
+
         # Ensure first message is user
         if not data["messages"] or data["messages"][0]["role"] != "user":
             data["messages"] = [{"role": "user", "content": DUMMY_FIRST_USER_MESSAGE}] + data["messages"]
@@ -981,8 +1004,20 @@ class AnthropicClient(LLMClientBase):
         # through this breakpoint and read everything from cache. Applied BEFORE prefix_fill
         # so the prefix-fill assistant marker (appended below) stays uncached and never sits
         # at the breakpoint position.
-        if use_v2_caching and not use_v3_caching:
+        if use_v2_caching and not use_v3_caching and v4_split is None:
             self._add_cache_control_to_last_assistant_message(data["messages"])
+
+        # v4 bp4 + memory note at the end of this turn. If the request doesn't end on a
+        # user message (never expected in the agent loop), undo v4 so no memory content
+        # is lost.
+        if v4_split is not None:
+            if append_memory_note(data["messages"], v4_split[2]):
+                self._log_cache_v4(data, v4_split, history_end)
+            else:
+                logger.warning("[CACHE_V4] last message is not a user message; falling back to v1 layout")
+                strip_message_cache_control(data["messages"])
+                static_part_1, dynamic_part_1, static_part_2, dynamic_part_2 = self._split_system_message_for_caching(system_content)
+                data["system"] = self._add_cache_control_to_system_message(static_part_1, dynamic_part_1, static_part_2, dynamic_part_2)
 
         # Prefix fill
         # https://docs.anthropic.com/en/api/messages#body-messages
@@ -1115,6 +1150,31 @@ class AnthropicClient(LLMClientBase):
         if dynamic_metadata:
             parts.append({"type": "text", "text": dynamic_metadata})
         return parts
+
+    def _log_cache_v4(self, data: dict, v4_split: tuple, history_end: int) -> None:
+        at_user_id = getattr(self, "at_user_id", None)
+        if not _is_user_in_cache_obs_sample(at_user_id):
+            return
+        try:
+            static_base, stable_tail, volatile = v4_split
+            logger.info(
+                "[CACHE_V4] %s",
+                json.dumps(
+                    {
+                        "at_user_id": at_user_id,
+                        "agent_id": getattr(self, "_cache_obs_agent_id", None),
+                        "history_messages": history_end - 1,
+                        "breakpoints": count_cache_breakpoints(data),
+                        "base_chars": len(static_base),
+                        "base_hash": hashlib.sha256(static_base.encode()).hexdigest()[:8],
+                        "stable_tail_chars": len(stable_tail),
+                        "stable_tail_hash": hashlib.sha256(stable_tail.encode()).hexdigest()[:8],
+                        "volatile_chars": len(volatile),
+                    }
+                ),
+            )
+        except Exception as e:
+            logger.warning("[CACHE_V4] log failed: %s", e)
 
     def _build_system_blocks_v3(self, system_content: str) -> list:
         from letta.llm_api.anthropic_cache_v3 import (
