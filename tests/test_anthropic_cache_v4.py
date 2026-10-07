@@ -38,8 +38,20 @@ def system_prompt(human: str, summary: str, now: str, n_messages: int) -> str:
 
 
 TOOLS = [
-    {"name": "send_message", "description": "Send a message", "parameters": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}},
-    {"name": "core_memory_append", "description": "Append to memory", "parameters": {"type": "object", "properties": {"label": {"type": "string"}, "content": {"type": "string"}}, "required": ["label", "content"]}},
+    {
+        "name": "send_message",
+        "description": "Send a message",
+        "parameters": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]},
+    },
+    {
+        "name": "core_memory_append",
+        "description": "Append to memory",
+        "parameters": {
+            "type": "object",
+            "properties": {"label": {"type": "string"}, "content": {"type": "string"}},
+            "required": ["label", "content"],
+        },
+    },
 ]
 
 
@@ -92,7 +104,9 @@ def turn(i):
     ]
 
 
-def build(history_turns, current, human="Asks about marriage.", summary="Earlier chat.", now="10:00:00", flag=True, inner=True, tools=TOOLS):
+def build(
+    history_turns, current, human="Asks about marriage.", summary="Earlier chat.", now="10:00:00", flag=True, inner=True, tools=TOOLS
+):
     client = AnthropicClient(at_user_id="1")
     client.cache_history_v4 = flag
     history = [m for i in range(history_turns) for m in turn(i)]
@@ -191,11 +205,11 @@ def test_first_turn_without_history():
     assert data["messages"][-1]["content"][-1]["text"].startswith("<event>")
 
 
-def test_flag_off_is_unchanged_v1():
+def test_flag_off_is_unchanged_v3():
     off = build(3, CURRENT, flag=False)
-    v1 = AnthropicClient(at_user_id="1")._split_system_message_for_caching(system_prompt("Asks about marriage.", "Earlier chat.", "10:00:00", 15))
-    assert [b["text"] for b in off["system"]] == [p for p in v1 if p]
-    assert count_cache_breakpoints(off) == 2
+    v3 = AnthropicClient(at_user_id="1")._build_system_blocks_v3(system_prompt("Asks about marriage.", "Earlier chat.", "10:00:00", 15))
+    assert [b["text"] for b in off["system"]] == [b["text"] for b in v3]
+    assert count_cache_breakpoints(off) == count_cache_breakpoints({"system": v3, "messages": [], "tools": []})
     assert NOTE_HEADER not in json.dumps(off["messages"])
 
 

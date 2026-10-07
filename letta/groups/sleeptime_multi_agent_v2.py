@@ -120,7 +120,6 @@ class SleeptimeMultiAgentV2(BaseAgent):
             latency_optimisation_flow=latency_optimisation_flow,
             llm_provider=llm_provider,
             consultant_id=consultant_id,
-            cache_optimisation_v3=cache_optimisation_v3,
             cache_history_v4=cache_history_v4,
         )
 

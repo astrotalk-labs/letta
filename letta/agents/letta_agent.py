@@ -679,7 +679,6 @@ class LettaAgent(BaseAgent):
         )
         if llm_client is not None:
             llm_client.consultant_id = consultant_id
-            llm_client.cache_optimisation_v3 = cache_optimisation_v3
             llm_client.cache_history_v4 = cache_history_v4
             if main_llm_model:
                 llm_client.use_model_experiment = True
