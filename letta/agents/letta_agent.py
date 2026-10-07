@@ -287,7 +287,6 @@ class LettaAgent(BaseAgent):
         latency_optimisation_flow: bool = False,
         llm_provider: Optional[str] = None,
         consultant_id: int | None = None,
-        cache_optimisation_v3: bool = False,
         main_llm_model: Optional[str] = None,
         chat_order_id: Optional[int] = None,
     ) -> LettaResponse:
@@ -316,7 +315,6 @@ class LettaAgent(BaseAgent):
             latency_optimisation_flow=latency_optimisation_flow,
             llm_provider=llm_provider,
             consultant_id=consultant_id,
-            cache_optimisation_v3=cache_optimisation_v3,
             main_llm_model=main_llm_model,
             chat_order_id=chat_order_id,
         )
@@ -595,7 +593,6 @@ class LettaAgent(BaseAgent):
         latency_optimisation_flow: bool = False,
         llm_provider: Optional[str] = None,
         consultant_id: int | None = None,
-        cache_optimisation_v3: bool = False,
         main_llm_model: Optional[str] = None,
         chat_order_id: Optional[int] = None,
     ) -> Tuple[List[Message], List[Message], Optional[LettaStopReason], LettaUsageStatistics]:
@@ -679,7 +676,6 @@ class LettaAgent(BaseAgent):
         )
         if llm_client is not None:
             llm_client.consultant_id = consultant_id
-            llm_client.cache_optimisation_v3 = cache_optimisation_v3
             if main_llm_model:
                 llm_client.use_model_experiment = True
 

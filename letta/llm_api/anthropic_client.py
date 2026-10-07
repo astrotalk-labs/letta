@@ -940,7 +940,10 @@ class AnthropicClient(LLMClientBase):
         # Test user CACHE_OBS_USER_ID is always in the v2 bucket so observability
         # logs remain comparable to the PR #54 baseline.
         at_user_id_for_opt = getattr(self, "at_user_id", None)
-        use_v3_caching = self.cache_optimisation_v3
+        # v3 graduated from A/B experiment: +2.2pp cache hit rate (56.5% → 58.7%), −31.6% cache writes (286.8M → 196.2M),
+        # and +8.6% cached tokens vs. v1. The gain comes from the 4-breakpoint layout isolating human+conversation_summary
+        # into its own block, so a core_memory_append only invalidates blocks 3-5 and leaves base instructions + persona cached.
+        use_v3_caching = True
         use_v2_caching = _is_user_in_v2_cache_bucket(at_user_id_for_opt)
 
         if use_v3_caching:

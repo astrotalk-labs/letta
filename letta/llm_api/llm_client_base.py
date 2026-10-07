@@ -38,7 +38,6 @@ class LLMClientBase:
         self.at_user_id = at_user_id
         self.user_cohort = user_cohort
         self.consultant_id: Optional[int] = None
-        self.cache_optimisation_v3: bool = False
         self.put_inner_thoughts_first = put_inner_thoughts_first
         self.use_tool_naming = use_tool_naming
         self.use_model_experiment = use_model_experiment
