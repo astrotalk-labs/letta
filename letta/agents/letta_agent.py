@@ -1,7 +1,10 @@
 import asyncio
 import json
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+_IST = timezone(timedelta(hours=5, minutes=30))
 
 from openai import AsyncStream
 from openai.types.chat import ChatCompletionChunk
@@ -787,6 +790,7 @@ class LettaAgent(BaseAgent):
         _haiku_wasted_completion_tokens: int = 0
 
         _cascade_chain_at_uid = getattr(self, "at_user_id", None)
+        _step_records: list[dict] = []
         for i in range(max_steps):
             step_id = generate_step_id()
             step_start = get_utc_timestamp_ns()
@@ -854,6 +858,7 @@ class LettaAgent(BaseAgent):
                 debug_log(self.at_user_id, f"_step: step={i} no haiku model mapped using primary={agent_state.llm_config.model}")
             else:
                 debug_log(self.at_user_id, f"_step: step={i} standard (no cascade) model={agent_state.llm_config.model}")
+            _step_model_used: str = agent_state.llm_config.model  # haiku or primary, whichever is active for this step
 
             # Strategy: gate-only (NOT tool-list restriction).
             #
@@ -871,6 +876,7 @@ class LettaAgent(BaseAgent):
             _haiku_timed_out: bool = False
             _step_failed = False
             response = None  # always initialised — assigned in try block or timeout fallback
+            request_data: dict = {}  # always overwritten by _build_and_request_from_llm; init silences unbound warning
             response_data: dict = {}  # always overwritten by _build_and_request_from_llm; init silences unbound warning
             valid_tool_names: list[str] = []  # always overwritten by _build_and_request_from_llm; init silences unbound warning
             try:
@@ -1283,6 +1289,29 @@ class LettaAgent(BaseAgent):
                 f"duration_ms={ns_to_ms(step_ns)}"
             )
 
+            _out_content = response.choices[0].message.content if response.choices else None
+            _step_records.append(
+                {
+                    "step_index": i,
+                    "model": _step_model_used,
+                    "endpoint_type": agent_state.llm_config.model_endpoint_type,
+                    "is_haiku": "haiku" in _step_model_used.lower(),
+                    "input_tokens": response.usage.prompt_tokens,
+                    "output_tokens": response.usage.completion_tokens,
+                    "cache_write_tokens": response.usage.cache_creation_input_tokens,
+                    "cache_read_tokens": response.usage.cache_read_input_tokens,
+                    "input_char_count": sum(
+                        len(str(b.get("text", "") or ""))
+                        for m in (request_data.get("messages") or [])
+                        for b in (m["content"] if isinstance(m.get("content"), list) else [{"text": m.get("content", "")}])
+                    )
+                    + sum(len(str(b.get("text", "") or "")) for b in (request_data.get("system") or []) if isinstance(b, dict)),
+                    "output_char_count": len(_out_content) if isinstance(_out_content, str) else 0,
+                    "latency_ms": ns_to_ms(step_ns),
+                    "tool_called": _prev_tool_name,
+                }
+            )
+
             # Log LLM Trace
             async with AsyncTimer() as _t:
                 await self.telemetry_manager.create_provider_trace_async(
@@ -1358,6 +1387,45 @@ class LettaAgent(BaseAgent):
                 )
         except Exception:
             pass
+
+        if _step_records:
+            try:
+                from letta.metrics import step_metrics_writer
+
+                _total_input = sum(r["input_tokens"] or 0 for r in _step_records)
+                _total_cache_read = sum(r["cache_read_tokens"] or 0 for r in _step_records)
+                _total_cache_write = sum(r["cache_write_tokens"] or 0 for r in _step_records)
+                step_metrics_writer.fire(
+                    {
+                        "turn_id": task_id or str(uuid.uuid4()),
+                        "agent_id": agent_state.id,
+                        "at_user_id": int(self.at_user_id) if self.at_user_id else None,
+                        "consultant_id": consultant_id,
+                        "chat_order_id": chat_order_id,
+                        "total_steps": len(_step_records),
+                        "input_tokens": _total_input,
+                        "output_tokens": sum(r["output_tokens"] or 0 for r in _step_records),
+                        "cache_write_tokens": _total_cache_write,
+                        "cache_read_tokens": _total_cache_read,
+                        "cache_efficiency": (
+                            _total_cache_read / (_total_cache_read + _total_input) if (_total_cache_read + _total_input) > 0 else None
+                        ),
+                        "cache_rotation_efficiency": (_total_cache_read / _total_cache_write if _total_cache_write > 0 else None),
+                        "input_char_count": sum(r.get("input_char_count") or 0 for r in _step_records),
+                        "output_char_count": sum(r.get("output_char_count") or 0 for r in _step_records),
+                        "cache_version": "v4" if cache_history_v4 else "v3",
+                        "latency_optimisation_flow": latency_optimisation_flow,
+                        "endpoint_type": agent_state.llm_config.model_endpoint_type,
+                        "primary_model": agent_state.llm_config.model,
+                        "latency_ms": sum(r.get("latency_ms") or 0.0 for r in _step_records),
+                        "steps_json": json.dumps(_step_records),
+                        "created_at": datetime.now(_IST),
+                        "updated_at": datetime.now(_IST),
+                        "metadata": None,
+                    }
+                )
+            except Exception:
+                pass
 
         # log request time
         if request_start_timestamp_ns:
