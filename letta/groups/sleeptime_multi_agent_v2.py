@@ -80,6 +80,8 @@ class SleeptimeMultiAgentV2(BaseAgent):
         main_llm_model: Optional[str] = None,
         cache_history_v4: bool = False,
         chat_order_id: Optional[int] = None,
+        cache_history_v5: bool = False,
+        cache_history_v6: bool = False,
     ) -> LettaResponse:
         run_ids = []
 
@@ -121,6 +123,8 @@ class SleeptimeMultiAgentV2(BaseAgent):
             llm_provider=llm_provider,
             consultant_id=consultant_id,
             cache_history_v4=cache_history_v4,
+            cache_history_v5=cache_history_v5,
+            cache_history_v6=cache_history_v6,
         )
 
         # Get last response messages
