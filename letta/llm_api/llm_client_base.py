@@ -42,6 +42,8 @@ class LLMClientBase:
         # len(persisted in-context messages incl. the system message); everything after it
         # belongs to the current turn.
         self.cache_history_v4: bool = False
+        self.cache_history_v5: bool = False
+        self.cache_history_v6: bool = False
         self.history_message_count: Optional[int] = None
         self.put_inner_thoughts_first = put_inner_thoughts_first
         self.use_tool_naming = use_tool_naming

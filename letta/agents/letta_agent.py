@@ -305,6 +305,8 @@ class LettaAgent(BaseAgent):
         consultant_id: int | None = None,
         main_llm_model: str | None = None,
         cache_history_v4: bool = False,
+        cache_history_v5: bool = False,
+        cache_history_v6: bool = False,
         chat_order_id: int | None = None,
     ) -> LettaResponse:
         _log_latency = bool(task_id or consultant_id in TASK_LATENCY_CONSULTANT_IDS)
@@ -334,6 +336,8 @@ class LettaAgent(BaseAgent):
             consultant_id=consultant_id,
             main_llm_model=main_llm_model,
             cache_history_v4=cache_history_v4,
+            cache_history_v5=cache_history_v5,
+            cache_history_v6=cache_history_v6,
             chat_order_id=chat_order_id,
         )
         return _create_letta_response(
@@ -623,6 +627,8 @@ class LettaAgent(BaseAgent):
         consultant_id: int | None = None,
         main_llm_model: str | None = None,
         cache_history_v4: bool = False,
+        cache_history_v5: bool = False,
+        cache_history_v6: bool = False,
         chat_order_id: int | None = None,
     ) -> tuple[list[Message], list[Message], LettaStopReason | None, LettaUsageStatistics]:
         """
@@ -706,6 +712,8 @@ class LettaAgent(BaseAgent):
         if llm_client is not None:
             llm_client.consultant_id = consultant_id
             llm_client.cache_history_v4 = cache_history_v4
+            llm_client.cache_history_v5 = cache_history_v5
+            llm_client.cache_history_v6 = cache_history_v6
             if main_llm_model:
                 llm_client.use_model_experiment = True
 
@@ -1395,6 +1403,14 @@ class LettaAgent(BaseAgent):
                 _total_input = sum(r["input_tokens"] or 0 for r in _step_records)
                 _total_cache_read = sum(r["cache_read_tokens"] or 0 for r in _step_records)
                 _total_cache_write = sum(r["cache_write_tokens"] or 0 for r in _step_records)
+                if cache_history_v6:
+                    _cache_version = "v6"
+                elif cache_history_v5:
+                    _cache_version = "v5"
+                elif cache_history_v4:
+                    _cache_version = "v4"
+                else:
+                    _cache_version = "v3"
                 step_metrics_writer.fire(
                     {
                         "turn_id": task_id or str(uuid.uuid4()),
@@ -1413,7 +1429,7 @@ class LettaAgent(BaseAgent):
                         "cache_rotation_efficiency": (_total_cache_read / _total_cache_write if _total_cache_write > 0 else None),
                         "input_char_count": sum(r.get("input_char_count") or 0 for r in _step_records),
                         "output_char_count": sum(r.get("output_char_count") or 0 for r in _step_records),
-                        "cache_version": "v4" if cache_history_v4 else "v3",
+                        "cache_version": _cache_version,
                         "latency_optimisation_flow": latency_optimisation_flow,
                         "endpoint_type": agent_state.llm_config.model_endpoint_type,
                         "primary_model": agent_state.llm_config.model,
@@ -1421,7 +1437,6 @@ class LettaAgent(BaseAgent):
                         "steps_json": json.dumps(_step_records),
                         "created_at": datetime.now(_IST),
                         "updated_at": datetime.now(_IST),
-                        "metadata": None,
                     }
                 )
             except Exception:
