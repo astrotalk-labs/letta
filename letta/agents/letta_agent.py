@@ -1,17 +1,21 @@
 import asyncio
 import json
 import uuid
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Optional
 
 from openai import AsyncStream
 from openai.types.chat import ChatCompletionChunk
 from opentelemetry.trace import Span
 
 from letta.agents.base_agent import BaseAgent
-from letta.debug_util import debug_log
 from letta.agents.ephemeral_summary_agent import EphemeralSummaryAgent
-from letta.agents.helpers import _create_letta_response, prepare_in_context_messages_no_persist_async, generate_step_id
+from letta.agents.helpers import (
+    _create_letta_response,
+    generate_step_id,
+    prepare_in_context_messages_no_persist_async,
+)
 from letta.constants import DEFAULT_MAX_STEPS
+from letta.debug_util import debug_log
 from letta.errors import ContextWindowExceededError
 from letta.helpers import ToolRulesSolver
 from letta.helpers.datetime_helpers import AsyncTimer, get_utc_timestamp_ns, ns_to_ms
@@ -28,12 +32,21 @@ from letta.request_context import StepTimingEntry, request_step_timings
 from letta.schemas.agent import AgentState
 from letta.schemas.enums import MessageRole
 from letta.schemas.letta_message import MessageType
-from letta.schemas.letta_message_content import OmittedReasoningContent, ReasoningContent, RedactedReasoningContent, TextContent
+from letta.schemas.letta_message_content import (
+    OmittedReasoningContent,
+    ReasoningContent,
+    RedactedReasoningContent,
+    TextContent,
+)
 from letta.schemas.letta_response import LettaResponse
 from letta.schemas.letta_stop_reason import LettaStopReason, StopReasonType
 from letta.schemas.llm_config import LLMConfig
 from letta.schemas.message import Message, MessageCreate
-from letta.schemas.openai.chat_completion_response import FunctionCall, ToolCall, UsageStatistics
+from letta.schemas.openai.chat_completion_response import (
+    FunctionCall,
+    ToolCall,
+    UsageStatistics,
+)
 from letta.schemas.provider_trace import ProviderTraceCreate
 from letta.schemas.tool_execution_result import ToolExecutionResult
 from letta.schemas.usage import LettaUsageStatistics
@@ -89,7 +102,7 @@ _GEMINI_THINKING_LEVEL_TO_BUDGET: dict = {
 }
 
 
-def _thinking_override_allowed(at_user_id: Optional[str], model: Optional[str]) -> bool:
+def _thinking_override_allowed(at_user_id: str | None, model: str | None) -> bool:
     if at_user_id in _THINKING_GATED_USER_IDS:
         return True
     return "sonnet-5" in (model or "").lower()
@@ -103,7 +116,7 @@ _CASCADE_ALWAYS_ON_USER_ID: str = "92744418"
 _CASCADE_ROLLOUT_PCT: int = 10
 
 
-def _cascade_enabled_for_user(at_user_id: Optional[str]) -> bool:
+def _cascade_enabled_for_user(at_user_id: str | None) -> bool:
     """Deterministic percentage rollout of the Haiku cascade, keyed on user_id % 100.
     Same user always gets the same treatment. The always-on test user is always enabled;
     missing/non-numeric ids fail closed (cascade off)."""
@@ -178,7 +191,7 @@ class LettaAgent(BaseAgent):
         message_buffer_min: int = 15,  # TODO: Make this configurable
         enable_summarization: bool = True,  # TODO: Make this configurable
         max_summarization_retries: int = 3,  # TODO: Make this configurable
-        at_user_id: Optional[str] = None,
+        at_user_id: str | None = None,
     ):
         super().__init__(agent_id=agent_id, openai_client=None, message_manager=message_manager, agent_manager=agent_manager, actor=actor)
 
@@ -188,7 +201,7 @@ class LettaAgent(BaseAgent):
         self.passage_manager = passage_manager
         self.step_manager = step_manager
         self.telemetry_manager = telemetry_manager
-        self.response_messages: List[Message] = []
+        self.response_messages: list[Message] = []
 
         self.last_function_response = None
 
@@ -226,10 +239,10 @@ class LettaAgent(BaseAgent):
         agent_state: AgentState,
         use_vertex_experiment: bool,
         use_bedrock_experiment: bool,
-        model_override: Optional[str] = None,
-        llm_provider: Optional[str] = None,
+        model_override: str | None = None,
+        llm_provider: str | None = None,
         consultant_id: int | None = None,
-        main_llm_model: Optional[str] = None,
+        main_llm_model: str | None = None,
     ):
         """Apply dynamic provider switching based on experiment flags."""
         # main_llm_model experiment: force Anthropic direct + set model; bypass all other flags.
@@ -271,25 +284,25 @@ class LettaAgent(BaseAgent):
     @trace_method
     async def step(
         self,
-        input_messages: List[MessageCreate],
+        input_messages: list[MessageCreate],
         max_steps: int = DEFAULT_MAX_STEPS,
         use_assistant_message: bool = True,
-        request_start_timestamp_ns: Optional[int] = None,
-        include_return_message_types: Optional[List[MessageType]] = None,
+        request_start_timestamp_ns: int | None = None,
+        include_return_message_types: list[MessageType] | None = None,
         use_vertex_experiment: bool = False,
         use_bedrock_experiment: bool = False,
-        model_override: Optional[str] = None,
-        user_cohort: Optional[str] = None,
-        thinking: Optional[dict] = None,
-        thinking_config: Optional[dict] = None,
-        output_config: Optional[dict] = None,
-        task_id: Optional[str] = None,
+        model_override: str | None = None,
+        user_cohort: str | None = None,
+        thinking: dict | None = None,
+        thinking_config: dict | None = None,
+        output_config: dict | None = None,
+        task_id: str | None = None,
         latency_optimisation_flow: bool = False,
-        llm_provider: Optional[str] = None,
+        llm_provider: str | None = None,
         consultant_id: int | None = None,
-        main_llm_model: Optional[str] = None,
+        main_llm_model: str | None = None,
         cache_history_v4: bool = False,
-        chat_order_id: Optional[int] = None,
+        chat_order_id: int | None = None,
     ) -> LettaResponse:
         _log_latency = bool(task_id or consultant_id in TASK_LATENCY_CONSULTANT_IDS)
         _t_agent_load_start = get_utc_timestamp_ns() if _log_latency else None
@@ -331,19 +344,19 @@ class LettaAgent(BaseAgent):
     @trace_method
     async def step_stream_no_tokens(
         self,
-        input_messages: List[MessageCreate],
+        input_messages: list[MessageCreate],
         max_steps: int = DEFAULT_MAX_STEPS,
         use_assistant_message: bool = True,
-        request_start_timestamp_ns: Optional[int] = None,
-        include_return_message_types: Optional[List[MessageType]] = None,
+        request_start_timestamp_ns: int | None = None,
+        include_return_message_types: list[MessageType] | None = None,
         use_vertex_experiment: bool = False,
         use_bedrock_experiment: bool = False,
-        model_override: Optional[str] = None,
-        user_cohort: Optional[str] = None,
-        thinking: Optional[dict] = None,
-        thinking_config: Optional[dict] = None,
-        output_config: Optional[dict] = None,
-        llm_provider: Optional[str] = None,
+        model_override: str | None = None,
+        user_cohort: str | None = None,
+        thinking: dict | None = None,
+        thinking_config: dict | None = None,
+        output_config: dict | None = None,
+        llm_provider: str | None = None,
     ):
         agent_state = await self.agent_manager.get_agent_by_id_async(
             agent_id=self.agent_id, include_relationships=["tools", "memory", "tool_exec_environment_variables"], actor=self.actor
@@ -389,8 +402,9 @@ class LettaAgent(BaseAgent):
             agent_step_span.set_attributes({"step_id": step_id})
 
             try:
-                from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
                 import json as _json
+
+                from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
 
                 if _chain_at_uid and _is_user_in_cache_obs_sample(_chain_at_uid):
                     logger.info(
@@ -441,7 +455,15 @@ class LettaAgent(BaseAgent):
 
             if not response.choices[0].message.tool_calls:
                 text = response.choices[0].message.content
-                if text:
+                if response.choices[0].finish_reason == "content_filter":
+                    _stop_details = response_data.get("stop_details") or {}
+                    _refusal_category = _stop_details.get("category") if isinstance(_stop_details, dict) else None
+                    logger.warning(
+                        "[LLM_REFUSAL] model refused to respond stop_details_category=%s; failing request",
+                        _refusal_category,
+                    )
+                    raise ValueError(f"LLM refused to respond (stop_details_category={_refusal_category})")
+                elif text:
                     synthetic = ToolCall(
                         id=f"synthetic_{uuid.uuid4().hex[:8]}",
                         function=FunctionCall(
@@ -536,8 +558,9 @@ class LettaAgent(BaseAgent):
                 break
 
         try:
-            from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
             import json as _json
+
+            from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
 
             if _chain_at_uid and _is_user_in_cache_obs_sample(_chain_at_uid):
                 logger.info(
@@ -581,24 +604,24 @@ class LettaAgent(BaseAgent):
     async def _step(
         self,
         agent_state: AgentState,
-        input_messages: List[MessageCreate],
+        input_messages: list[MessageCreate],
         max_steps: int = DEFAULT_MAX_STEPS,
-        request_start_timestamp_ns: Optional[int] = None,
+        request_start_timestamp_ns: int | None = None,
         use_vertex_experiment: bool = False,
         use_bedrock_experiment: bool = False,
-        model_override: Optional[str] = None,
-        user_cohort: Optional[str] = None,
-        thinking: Optional[dict] = None,
-        thinking_config: Optional[dict] = None,
-        output_config: Optional[dict] = None,
-        task_id: Optional[str] = None,
+        model_override: str | None = None,
+        user_cohort: str | None = None,
+        thinking: dict | None = None,
+        thinking_config: dict | None = None,
+        output_config: dict | None = None,
+        task_id: str | None = None,
         latency_optimisation_flow: bool = False,
-        llm_provider: Optional[str] = None,
+        llm_provider: str | None = None,
         consultant_id: int | None = None,
-        main_llm_model: Optional[str] = None,
+        main_llm_model: str | None = None,
         cache_history_v4: bool = False,
-        chat_order_id: Optional[int] = None,
-    ) -> Tuple[List[Message], List[Message], Optional[LettaStopReason], LettaUsageStatistics]:
+        chat_order_id: int | None = None,
+    ) -> tuple[list[Message], list[Message], LettaStopReason | None, LettaUsageStatistics]:
         """
         Carries out an invocation of the agent loop. In each step, the agent
             1. Rebuilds its memory
@@ -685,7 +708,7 @@ class LettaAgent(BaseAgent):
 
         # Resolve the Haiku model name for this provider (used when latency_optimisation_flow=True).
         # Hardcoded provider→model mapping; Bedrock uses an ARN application inference profile.
-        _haiku_model: Optional[str] = None
+        _haiku_model: str | None = None
 
         # Pre-build attribute dicts for the cascade metrics. Low cardinality only —
         # provider + primary_model + (outcome on the step counter). Wrapped in a
@@ -747,7 +770,7 @@ class LettaAgent(BaseAgent):
 
         stop_reason = None
         usage = LettaUsageStatistics()
-        _prev_tool_name: Optional[str] = None  # tracks the tool called in the previous step for cascade decisions
+        _prev_tool_name: str | None = None  # tracks the tool called in the previous step for cascade decisions
 
         # Cascade usage counters (only meaningful when latency_optimisation_flow=True)
         _haiku_step_count: int = 0
@@ -771,8 +794,9 @@ class LettaAgent(BaseAgent):
             agent_step_span.set_attributes({"step_id": step_id})
 
             try:
-                from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
                 import json as _json
+
+                from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
 
                 if _cascade_chain_at_uid and _is_user_in_cache_obs_sample(_cascade_chain_at_uid):
                     logger.info(
@@ -808,7 +832,7 @@ class LettaAgent(BaseAgent):
             _pre_call_current_messages = current_in_context_messages
             _pre_call_new_messages = new_in_context_messages
 
-            _original_model: Optional[str] = None
+            _original_model: str | None = None
             _step_used_haiku: bool = False
             _step_was_retried: bool = False  # flipped to True if the gate forces a primary retry
             if _haiku_model and i > 0:
@@ -841,12 +865,13 @@ class LettaAgent(BaseAgent):
             # trigger for the primary handoff (the gate only fires when Haiku picks
             # send_message), so the agent could never terminate on a Haiku step and looped
             # to max_steps (prod task 323737721: 42+ archival_memory_insert steps, ~150s).
-            _excluded_for_haiku: Optional[frozenset] = None
+            _excluded_for_haiku: frozenset | None = None
 
             _llm_start = get_utc_timestamp_ns() if (_log_latency or main_llm_model) else None
             _haiku_timed_out: bool = False
             _step_failed = False
             response = None  # always initialised — assigned in try block or timeout fallback
+            response_data: dict = {}  # always overwritten by _build_and_request_from_llm; init silences unbound warning
             valid_tool_names: list[str] = []  # always overwritten by _build_and_request_from_llm; init silences unbound warning
             try:
                 _haiku_coro = self._build_and_request_from_llm(
@@ -953,7 +978,7 @@ class LettaAgent(BaseAgent):
             # response and re-run the step on the primary model so the user-facing
             # reply is always generated by the configured primary model.
             if _step_used_haiku:
-                _haiku_tool_call_name: Optional[str] = (
+                _haiku_tool_call_name: str | None = (
                     response.choices[0].message.tool_calls[0].function.name if response.choices[0].message.tool_calls else None
                 )
                 # Retry when Haiku picked a primary-reserved tool (send_message) or
@@ -1088,7 +1113,15 @@ class LettaAgent(BaseAgent):
 
             if not response.choices[0].message.tool_calls:
                 text = response.choices[0].message.content
-                if text:
+                if response.choices[0].finish_reason == "content_filter":
+                    _stop_details = response_data.get("stop_details") or {}
+                    _refusal_category = _stop_details.get("category") if isinstance(_stop_details, dict) else None
+                    logger.warning(
+                        "[LLM_REFUSAL] model refused to respond stop_details_category=%s; failing request",
+                        _refusal_category,
+                    )
+                    raise ValueError(f"LLM refused to respond (stop_details_category={_refusal_category})")
+                elif text:
                     synthetic = ToolCall(
                         id=f"synthetic_{uuid.uuid4().hex[:8]}",
                         function=FunctionCall(
@@ -1101,8 +1134,8 @@ class LettaAgent(BaseAgent):
                 else:
                     raise ValueError("No tool calls found in response, model must make a tool call")
             tool_call = response.choices[0].message.tool_calls[0]
-            _reasoning_item: Optional[Union[TextContent, ReasoningContent, RedactedReasoningContent, OmittedReasoningContent]]
-            reasoning: Optional[List[Union[TextContent, ReasoningContent, RedactedReasoningContent, OmittedReasoningContent]]]
+            _reasoning_item: TextContent | ReasoningContent | RedactedReasoningContent | OmittedReasoningContent | None
+            reasoning: list[TextContent | ReasoningContent | RedactedReasoningContent | OmittedReasoningContent] | None
             if response.choices[0].message.reasoning_content:
                 _reasoning_item = ReasoningContent(
                     reasoning=response.choices[0].message.reasoning_content,
@@ -1304,8 +1337,9 @@ class LettaAgent(BaseAgent):
                 pass
 
         try:
-            from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
             import json as _json
+
+            from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
 
             if _cascade_chain_at_uid and _is_user_in_cache_obs_sample(_cascade_chain_at_uid):
                 logger.info(
@@ -1429,8 +1463,8 @@ class LettaAgent(BaseAgent):
     # noinspection PyInconsistentReturns
     async def _build_and_request_from_llm(
         self,
-        current_in_context_messages: List[Message],
-        new_in_context_messages: List[Message],
+        current_in_context_messages: list[Message],
+        new_in_context_messages: list[Message],
         agent_state: AgentState,
         llm_client: LLMClientBase,
         tool_rules_solver: ToolRulesSolver,
@@ -1438,12 +1472,12 @@ class LettaAgent(BaseAgent):
         use_vertex_experiment: bool = False,
         use_bedrock_experiment: bool = False,
         step_index: int = 0,
-        thinking: Optional[dict] = None,
-        thinking_config: Optional[dict] = None,
-        output_config: Optional[dict] = None,
-        excluded_tool_names: Optional[frozenset] = None,
-        step_id: Optional[str] = None,
-    ) -> Tuple[Dict, Dict, List[Message], List[Message], List[str]] | None:
+        thinking: dict | None = None,
+        thinking_config: dict | None = None,
+        output_config: dict | None = None,
+        excluded_tool_names: frozenset | None = None,
+        step_id: str | None = None,
+    ) -> tuple[dict, dict, list[Message], list[Message], list[str]] | None:
         for attempt in range(self.max_summarization_retries + 1):
             try:
                 log_event("agent.stream_no_tokens.messages.refreshed")
@@ -1618,16 +1652,16 @@ class LettaAgent(BaseAgent):
         first_chunk: bool,
         ttft_span: "Span",
         request_start_timestamp_ns: int,
-        current_in_context_messages: List[Message],
-        new_in_context_messages: List[Message],
+        current_in_context_messages: list[Message],
+        new_in_context_messages: list[Message],
         agent_state: AgentState,
         llm_client: LLMClientBase,
         tool_rules_solver: ToolRulesSolver,
         step_index: int = 0,
-        thinking: Optional[dict] = None,
-        output_config: Optional[dict] = None,
-        step_id: Optional[str] = None,
-    ) -> Tuple[Dict, AsyncStream[ChatCompletionChunk], List[Message], List[Message], List[str], int] | None:
+        thinking: dict | None = None,
+        output_config: dict | None = None,
+        step_id: str | None = None,
+    ) -> tuple[dict, AsyncStream[ChatCompletionChunk], list[Message], list[Message], list[str], int] | None:
         for attempt in range(self.max_summarization_retries + 1):
             try:
                 log_event("agent.stream_no_tokens.messages.refreshed")
@@ -1697,11 +1731,11 @@ class LettaAgent(BaseAgent):
         self,
         e: Exception,
         llm_client: LLMClientBase,
-        in_context_messages: List[Message],
-        new_letta_messages: List[Message],
+        in_context_messages: list[Message],
+        new_letta_messages: list[Message],
         llm_config: LLMConfig,
         force: bool,
-    ) -> List[Message]:
+    ) -> list[Message]:
         debug_log(
             self.at_user_id,
             f"_handle_llm_error: error_type={type(e).__name__} is_context_window_exceeded={isinstance(e, ContextWindowExceededError)} force={force} in_context_msg_count={len(in_context_messages)}",
@@ -1721,12 +1755,12 @@ class LettaAgent(BaseAgent):
     @trace_method
     async def _rebuild_context_window(
         self,
-        in_context_messages: List[Message],
-        new_letta_messages: List[Message],
+        in_context_messages: list[Message],
+        new_letta_messages: list[Message],
         llm_config: LLMConfig,
-        total_tokens: Optional[int] = None,
+        total_tokens: int | None = None,
         force: bool = False,
-    ) -> List[Message]:
+    ) -> list[Message]:
         # If total tokens is reached, we truncate down
         # TODO: This can be broken by bad configs, e.g. lower bound too high, initial messages too fat, etc.
         debug_log(
@@ -1806,12 +1840,12 @@ class LettaAgent(BaseAgent):
     async def _create_llm_request_data_async(
         self,
         llm_client: LLMClientBase,
-        in_context_messages: List[Message],
+        in_context_messages: list[Message],
         agent_state: AgentState,
         tool_rules_solver: ToolRulesSolver,
         step_index: int = 0,
-        step_id: Optional[str] = None,
-    ) -> Tuple[dict, List[str]]:
+        step_id: str | None = None,
+    ) -> tuple[dict, list[str]]:
         async def _timed_message_size():
             _log = self._task_id or self._consultant_id in TASK_LATENCY_CONSULTANT_IDS
             _t0 = get_utc_timestamp_ns() if _log else None
@@ -1841,8 +1875,9 @@ class LettaAgent(BaseAgent):
 
         self._current_step_index = step_index
         try:
-            from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
             import json as _json
+
+            from letta.llm_api.anthropic_client import _is_user_in_cache_obs_sample
 
             _chain_uid = getattr(self, "at_user_id", None)
             if _chain_uid and _is_user_in_cache_obs_sample(_chain_uid):
@@ -1968,17 +2003,17 @@ class LettaAgent(BaseAgent):
     async def _handle_ai_response(
         self,
         tool_call: ToolCall,
-        valid_tool_names: List[str],
+        valid_tool_names: list[str],
         agent_state: AgentState,
         tool_rules_solver: ToolRulesSolver,
         usage: UsageStatistics,
-        reasoning_content: Optional[List[Union[TextContent, ReasoningContent, RedactedReasoningContent, OmittedReasoningContent]]] = None,
-        pre_computed_assistant_message_id: Optional[str] = None,
+        reasoning_content: list[TextContent | ReasoningContent | RedactedReasoningContent | OmittedReasoningContent] | None = None,
+        pre_computed_assistant_message_id: str | None = None,
         step_id: str | None = None,
-        initial_messages: Optional[List[Message]] = None,
+        initial_messages: list[Message] | None = None,
         agent_step_span: Optional["Span"] = None,
-        is_final_step: Optional[bool] = None,
-    ) -> Tuple[List[Message], bool, Optional[LettaStopReason]]:
+        is_final_step: bool | None = None,
+    ) -> tuple[list[Message], bool, LettaStopReason | None]:
         """
         Now that streaming is done, handle the final AI response.
         This might yield additional SSE tokens if we do stalling.
@@ -2236,7 +2271,7 @@ class LettaAgent(BaseAgent):
                 name="tool_execution_completed",
                 attributes={
                     "tool_name": target_tool.name,
-                    "duration_ms": ns_to_ms((end_time - start_time)),
+                    "duration_ms": ns_to_ms(end_time - start_time),
                     "success": tool_execution_result.success_flag,
                     "tool_type": target_tool.tool_type,
                     "tool_id": target_tool.id,
@@ -2246,7 +2281,7 @@ class LettaAgent(BaseAgent):
         return tool_execution_result
 
     @trace_method
-    def _load_last_function_response(self, in_context_messages: List[Message]):
+    def _load_last_function_response(self, in_context_messages: list[Message]):
         """Load the last function response from message history"""
         for msg in reversed(in_context_messages):
             if msg.role == MessageRole.tool and msg.content and len(msg.content) == 1 and isinstance(msg.content[0], TextContent):
