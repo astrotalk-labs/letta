@@ -875,12 +875,10 @@ class AnthropicClient(LLMClientBase):
             prefix_fill = False
 
         elif "sonnet-5-5" in (llm_config.model or ""):
-            # claude-sonnet-5-5: thinking: {type: "disabled"} is rejected (400).
-            # between_tools triggers reasoning_extraction refusal on every request
-            # when the system prompt contains reasoning confidentiality instructions.
-            # Omitting the thinking field entirely avoids the refusal at zero extra cost.
-            # Sampling params (temperature/top_p/top_k) must be omitted — non-default
-            # values return a 400 on this model.
+            # claude-sonnet-5-5: "disabled" is rejected (400); "between_tools" is the
+            # lowest setting — no up-front thinking, only between tool calls.
+            # Sampling params must be omitted — non-default values return a 400.
+            data["thinking"] = {"type": "between_tools"}
             data["output_config"] = {"effort": "low"}
             data.pop("temperature", None)
             prefix_fill = False
