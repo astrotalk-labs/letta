@@ -47,6 +47,11 @@ from letta.llm_api.anthropic_cache_v4 import (
     split_system_message_v4,
     strip_message_cache_control,
 )
+from letta.llm_api.anthropic_cache_v5 import (
+    apply_single_history_breakpoint,
+    build_cache_blocks_v5,
+    split_system_message_v5,
+)
 from letta.llm_api.bedrock_inference_profiles import (
     COHORT_INFERENCE_PROFILES,
     FALLBACK_INFERENCE_PROFILE,
@@ -976,11 +981,19 @@ class AnthropicClient(LLMClientBase):
         # request (the summarizer path sends no tools). Falls back to the layouts below
         # when the system prompt markers are missing.
         history_end = self.history_message_count
+
+        # v5/v6: same system split; v6 additionally uses the freed 4th bp for message history.
+        v5_split = None
+        if (self.cache_history_v5 or self.cache_history_v6) and use_v3_caching:
+            v5_split = split_system_message_v5(system_content)
+
         v4_split = None
-        if self.cache_history_v4 and tools and history_end is not None and 1 <= history_end <= len(messages):
+        if v5_split is None and self.cache_history_v4 and tools and history_end is not None and 1 <= history_end <= len(messages):
             v4_split = split_system_message_v4(system_content)
 
-        if v4_split is not None:
+        if v5_split is not None:
+            data["system"] = build_cache_blocks_v5(*v5_split)
+        elif v4_split is not None:
             data["system"] = build_system_blocks_v4(v4_split[0], v4_split[1])
         elif use_v3_caching:
             data["system"] = self._build_system_blocks_v3(system_content)
@@ -1009,6 +1022,14 @@ class AnthropicClient(LLMClientBase):
         # v4 bp3: last message of the persisted history (messages[1:history_end]).
         if v4_split is not None and history_end > 1:
             mark_last_cacheable_block(data["messages"][history_end - 2])
+
+        # v5/v6 logging + v6 history breakpoint.
+        if v5_split is not None:
+            if self.cache_history_v6:
+                applied = apply_single_history_breakpoint(data["messages"], interval=8)
+                self._log_cache_v5(v5_split, history_bp=applied)
+            else:
+                self._log_cache_v5(v5_split, history_bp=False)
 
         # Ensure first message is user
         if not data["messages"] or data["messages"][0]["role"] != "user":
@@ -1194,6 +1215,31 @@ class AnthropicClient(LLMClientBase):
             )
         except Exception as e:
             logger.warning("[CACHE_V4] log failed: %s", e)
+
+    def _log_cache_v5(self, v5_split: tuple, *, history_bp: bool = False) -> None:
+        at_user_id = getattr(self, "at_user_id", None)
+        if not _is_user_in_cache_obs_sample(at_user_id):
+            return
+        try:
+            from letta.llm_api.anthropic_cache_v5 import block_fingerprints_v5
+
+            stable_block, dynamic_summary, dynamic_human, dynamic_metadata = v5_split
+            fps = block_fingerprints_v5(stable_block, dynamic_summary, dynamic_human, dynamic_metadata)
+            version = "v6" if history_bp else "v5"
+            logger.info(
+                "[CACHE_%s] %s",
+                version,
+                json.dumps(
+                    {
+                        "at_user_id": at_user_id,
+                        "agent_id": getattr(self, "_cache_obs_agent_id", None),
+                        "history_bp": history_bp,
+                        **fps,
+                    }
+                ),
+            )
+        except (ValueError, TypeError, AttributeError) as e:
+            logger.warning("[CACHE_V5] log failed: %s", e)
 
     def _build_system_blocks_v3(self, system_content: str) -> list:
         from letta.llm_api.anthropic_cache_v3 import (

@@ -798,6 +798,8 @@ async def send_message(
             llm_provider=request.llm_provider,
             consultant_id=request.consultant_id,
             cache_history_v4=request.cache_history_v4,
+            cache_history_v5=request.cache_history_v5,
+            cache_history_v6=request.cache_history_v6,
             main_llm_model=request.main_llm_model,
             chat_order_id=request.chat_order_id,
         )

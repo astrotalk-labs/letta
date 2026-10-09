@@ -129,6 +129,25 @@ class LettaRequest(BaseModel):
         ),
     )
 
+    cache_history_v5: bool = Field(
+        default=False,
+        description=(
+            "When True, uses the v5 system-prompt cache layout: merges base+persona+tool_rules into one "
+            "stable breakpoint, then gives <conversation_summary> and <human> their own breakpoints (3 "
+            "system bps total). A human memory edit only invalidates the last bp; bp1 and bp2 still hit. "
+            "Takes precedence over v4/v3 when set."
+        ),
+    )
+
+    cache_history_v6: bool = Field(
+        default=False,
+        description=(
+            "When True, uses the v6 layout: same 3 system breakpoints as v5, plus the freed 4th slot is "
+            "used to cache conversation history at the last complete 8-message boundary before the current "
+            "turn. Takes precedence over v5/v4/v3 when set."
+        ),
+    )
+
     @field_validator("task_id", mode="before")
     @classmethod
     def coerce_task_id_to_str(cls, v: Any) -> Optional[str]:
