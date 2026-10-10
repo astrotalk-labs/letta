@@ -14,6 +14,8 @@ from letta.services.summarizer.enums import SummarizationMode
 
 logger = get_logger(__name__)
 
+TOKEN_TRIGGER_THRESHOLD = 0.8
+
 
 class Summarizer:
     """
@@ -28,6 +30,7 @@ class Summarizer:
         summarizer_agent: Optional[Union[EphemeralSummaryAgent, "VoiceSleeptimeAgent"]] = None,
         message_buffer_limit: int = 10,
         message_buffer_min: int = 3,
+        user_id: Optional[str] = None,
     ):
         self.mode = mode
 
@@ -35,11 +38,27 @@ class Summarizer:
         self.message_buffer_limit = message_buffer_limit
         self.message_buffer_min = message_buffer_min
         self.summarizer_agent = summarizer_agent
+        self.user_id = user_id
         # TODO: Move this to config
+
+    def _use_token_based_trigger(self) -> bool:
+        """10% rollout: use token-based summarization trigger instead of message count."""
+        if not self.user_id:
+            return False
+        try:
+            return int(self.user_id) % 10 == 0
+        except (ValueError, TypeError):
+            return False
 
     @trace_method
     def summarize(
-        self, in_context_messages: List[Message], new_letta_messages: List[Message], force: bool = False, clear: bool = False
+        self,
+        in_context_messages: List[Message],
+        new_letta_messages: List[Message],
+        force: bool = False,
+        clear: bool = False,
+        total_tokens: Optional[int] = None,
+        context_window: Optional[int] = None,
     ) -> Tuple[List[Message], bool]:
         """
         Summarizes or trims in_context_messages according to the chosen mode,
@@ -49,6 +68,8 @@ class Summarizer:
             in_context_messages: The existing messages in the conversation's context.
             new_letta_messages: The newly added Letta messages (just appended).
             force: Force summarize even if the criteria is not met
+            total_tokens: Total tokens used in the current context (for token-based trigger).
+            context_window: Max token context window of the model (for token-based trigger).
 
         Returns:
             (updated_messages, summary_message)
@@ -57,7 +78,9 @@ class Summarizer:
                              (could be appended to the conversation if desired)
         """
         if self.mode == SummarizationMode.STATIC_MESSAGE_BUFFER:
-            return self._static_buffer_summarization(in_context_messages, new_letta_messages, force=force, clear=clear)
+            return self._static_buffer_summarization(
+                in_context_messages, new_letta_messages, force=force, clear=clear, total_tokens=total_tokens, context_window=context_window
+            )
         else:
             # Fallback or future logic
             return in_context_messages, False
@@ -75,15 +98,33 @@ class Summarizer:
         return task
 
     def _static_buffer_summarization(
-        self, in_context_messages: List[Message], new_letta_messages: List[Message], force: bool = False, clear: bool = False
+        self,
+        in_context_messages: List[Message],
+        new_letta_messages: List[Message],
+        force: bool = False,
+        clear: bool = False,
+        total_tokens: Optional[int] = None,
+        context_window: Optional[int] = None,
     ) -> Tuple[List[Message], bool]:
         all_in_context_messages = in_context_messages + new_letta_messages
 
-        if len(all_in_context_messages) <= self.message_buffer_limit and not force:
-            logger.info(
-                f"Nothing to evict, returning in context messages as is. Current buffer length is {len(all_in_context_messages)}, limit is {self.message_buffer_limit}."
-            )
-            return all_in_context_messages, False
+        if not force:
+            if self._use_token_based_trigger() and total_tokens and context_window:
+                # Token-based trigger: summarize at 80% of context window
+                threshold = TOKEN_TRIGGER_THRESHOLD * context_window
+                if total_tokens < threshold:
+                    logger.info(
+                        f"Token-based trigger: {total_tokens}/{context_window} tokens ({total_tokens/context_window:.0%}), below {TOKEN_TRIGGER_THRESHOLD:.0%} threshold. Skipping."
+                    )
+                    return all_in_context_messages, False
+                logger.info(
+                    f"Token-based trigger: {total_tokens}/{context_window} tokens ({total_tokens/context_window:.0%}) exceeds {TOKEN_TRIGGER_THRESHOLD:.0%} threshold, summarizing."
+                )
+            elif len(all_in_context_messages) <= self.message_buffer_limit:
+                logger.info(
+                    f"Nothing to evict, returning in context messages as is. Current buffer length is {len(all_in_context_messages)}, limit is {self.message_buffer_limit}."
+                )
+                return all_in_context_messages, False
 
         retain_count = 0 if clear else self.message_buffer_min
 
@@ -107,45 +148,34 @@ class Summarizer:
 
         if self.summarizer_agent:
             # Only invoke if summarizer agent is passed in
-            # Format
             formatted_evicted_messages = format_transcript(evicted_messages)
-            formatted_in_context_messages = format_transcript(updated_in_context_messages)
 
             # TODO: This is hyperspecific to voice, generalize!
             # Update the message transcript of the memory agent
             if not isinstance(self.summarizer_agent, EphemeralSummaryAgent):
+                formatted_in_context_messages = format_transcript(updated_in_context_messages)
                 self.summarizer_agent.update_message_transcript(
                     message_transcripts=formatted_evicted_messages + formatted_in_context_messages
                 )
 
-            # Add line numbers to the formatted messages
-            offset = len(formatted_evicted_messages)
-            formatted_evicted_messages = [f"{i}. {msg}" for (i, msg) in enumerate(formatted_evicted_messages)]
-            formatted_in_context_messages = [f"{i + offset}. {msg}" for (i, msg) in enumerate(formatted_in_context_messages)]
+            # Add line numbers and build prompt from evicted messages only
+            numbered_evicted = [f"{i}. {msg}" for (i, msg) in enumerate(formatted_evicted_messages)]
+            evicted_messages_str = "\n".join(numbered_evicted)
 
-            evicted_messages_str = "\n".join(formatted_evicted_messages)
-            in_context_messages_str = "\n".join(formatted_in_context_messages)
-            # Base prompt
-            prompt_header = (
-                f"You’re a memory-recall helper for an AI that can only keep the last {retain_count} messages. "
-                "Scan the conversation history, focusing on messages about to drop out of that window, "
-                "and write crisp notes that capture any important facts or insights about the conversation history so they aren’t lost."
-            )
-
-            # Sections
-            evicted_section = f"\n\n(Older) Evicted Messages:\n{evicted_messages_str}" if evicted_messages_str.strip() else ""
-            in_context_section = ""
-
-            if retain_count > 0 and in_context_messages_str.strip():
-                in_context_section = f"\n\n(Newer) In-Context Messages:\n{in_context_messages_str}"
-            elif retain_count == 0:
+            if retain_count == 0:
                 prompt_header = (
-                    "You’re a memory-recall helper for an AI that is about to forget all prior messages. "
+                    "You're a memory-recall helper for an AI that is about to forget all prior messages. "
                     "Scan the conversation history and write crisp notes that capture any important facts or insights about the conversation history."
                 )
+            else:
+                prompt_header = (
+                    f"You're a memory-recall helper for an AI that can only keep the last {retain_count} messages. "
+                    "The following messages are about to be dropped from context. "
+                    "Write crisp notes capturing any important facts or insights so they aren't lost."
+                )
 
-            # Compose final prompt
-            summary_request_text = prompt_header + evicted_section + in_context_section
+            evicted_section = f"\n\nEvicted Messages:\n{evicted_messages_str}" if evicted_messages_str.strip() else ""
+            summary_request_text = prompt_header + evicted_section
 
             # Fire-and-forget the summarization task
             self.fire_and_forget(
