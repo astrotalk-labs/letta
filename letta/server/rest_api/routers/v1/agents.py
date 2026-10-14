@@ -713,7 +713,7 @@ async def send_message(
     add_ctx_attribute("latency_optimisation_flow", _lof_attr)
 
     logger.warning(
-        f"[SEND_MESSAGE] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}, model_override={request.model_override}, llm_provider={request.llm_provider}, main_llm_model={request.main_llm_model}"
+        f"[SEND_MESSAGE] use_vertex_experiment={request.use_vertex_experiment}, use_bedrock_experiment={request.use_bedrock_experiment}, model_override={request.model_override}, llm_provider={request.llm_provider}, main_llm_model={request.main_llm_model}, max_steps={request.max_steps}"
     )
 
     try:

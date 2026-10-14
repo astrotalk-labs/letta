@@ -16,11 +16,11 @@ MODEL_INFERENCE_PROFILES: dict = {
 
 # Cohort-based routing: gated users get a dedicated inference profile per cohort.
 COHORT_INFERENCE_PROFILES: dict = {
-    "AT_NATIVE": "v9a7gf6hhoqm",
-    "AT_FOREIGN": "ngef7rrnxwrh",
-    "INDIAN_AT": "rg76qwszdgvo",
-    "PANDITJI": "18c7gtd1mst5",
-    "LUMUS": "9gx7yplss61x",
+    "AT_NATIVE": "8fzsefawomq9",
+    "AT_FOREIGN": "ig3s2vdheodo",
+    "INDIAN_AT": "o1vgfp9mx4eu",
+    "PANDITJI": "4at9g7c6ugh9",
+    "LUMUS": "73kcqlfiwgc4",
     "LETTA_CONTROL_VARIATION": "n4y5wim2o5gx",
     "LETTA_EXPERIMENT_VARIATION": "4qkesixe4j2v",
 }

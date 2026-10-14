@@ -72,6 +72,8 @@ from letta.utils import log_telemetry, validate_function_response
 
 logger = get_logger(__name__)
 
+_DEFAULT_MAIN_MODEL = "claude-sonnet-4-6"
+
 
 def _log_step_timing(step: str, elapsed_ms: float, **kwargs) -> None:
     """Emit a single structured timing log line with a latency-threshold bracket.
@@ -253,6 +255,8 @@ class LettaAgent(BaseAgent):
             agent_state.llm_config.model = main_llm_model
             agent_state.llm_config.model_endpoint_type = "anthropic"
             return
+
+        agent_state.llm_config.model = _DEFAULT_MAIN_MODEL
 
         # Runtime model override: swap the model name before any endpoint-type remapping
         # so that downstream (e.g. Bedrock ARN selection based on model substring) sees the
