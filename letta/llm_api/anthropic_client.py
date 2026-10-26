@@ -415,9 +415,10 @@ class AnthropicClient(LLMClientBase):
                 # Sonnet 5 rejects budget_tokens outright (400) on every endpoint, including Bedrock —
                 # thinking must stay adaptive-only and must never be downgraded to enabled+budget_tokens.
                 _adaptive_only_model = "sonnet-5" in _requested_model
-                _supports_thinking = (
-                    _adaptive_only_model or "claude-sonnet-4-6" in _requested_model or "claude-opus-4-6" in _requested_model
-                )
+                # claude-sonnet-4-6 is intentionally absent: thinking is dropped for it on Bedrock,
+                # the same as for sonnet-4-5, so reasoner agents don't start sending thinking
+                # when the default Bedrock model moves to 4.6.
+                _supports_thinking = _adaptive_only_model or "claude-opus-4-6" in _requested_model
                 if _supports_thinking:
                     _thinking_val = request_data["thinking"]
                     if isinstance(_thinking_val, dict) and _thinking_val.get("type") == "adaptive" and not _adaptive_only_model:
