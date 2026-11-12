@@ -156,11 +156,11 @@ _PRIMARY_RESERVED_TOOLS: frozenset = frozenset(
 _HAIKU_MODEL_ANTHROPIC: str = "claude-haiku-4-5-20251001"
 _HAIKU_MODEL_VERTEX: str = "claude-haiku-4-5@20251001"
 _HAIKU_MODEL_BEDROCK_ARN: str = (
-    # Global system inference profile for Claude Haiku 4.5.
-    # Routes worldwide when ap-south-1 is degraded — eliminates the Jun 1 2026
-    # incident where the single-region AIP (8y2dovlqcwlc) slowed to 24s/call.
-    # Confirmed ACTIVE via list_inference_profiles; latency ~850ms vs ~1240ms.
-    "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+    # Application inference profile `letta-haiku-4-5` (tagged map-migrated, so spend is
+    # attributable for MAP 2.0). Its model sources are identical to the global system
+    # profile global.anthropic.claude-haiku-4-5-20251001-v1:0 (global + ap-south-1), so
+    # routing is the same. The previous hardcoded system profile was untagged.
+    "arn:aws:bedrock:ap-south-1:441618926843:application-inference-profile/8y2dovlqcwlc"
 )
 
 _HAIKU_MODEL_BY_PROVIDER: dict = {
