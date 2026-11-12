@@ -1307,7 +1307,7 @@ class LettaAgent(BaseAgent):
                     "step_index": i,
                     "model": _step_model_used,
                     "endpoint_type": agent_state.llm_config.model_endpoint_type,
-                    "is_haiku": "haiku" in _step_model_used.lower(),
+                    "is_haiku": _step_used_haiku or "haiku" in _step_model_used.lower(),  # ARN has no model name
                     "input_tokens": response.usage.prompt_tokens,
                     "output_tokens": response.usage.completion_tokens,
                     "cache_write_tokens": response.usage.cache_creation_input_tokens,
